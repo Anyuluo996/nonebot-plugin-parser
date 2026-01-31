@@ -194,8 +194,8 @@ class BilibiliParser(BaseParser):
         dynamic_info = dynamic_data.item
 
         # 如果是转发类型，尝试获取原动态的内容
-        if dynamic_data.orig and dynamic_data.orig.type == "DYNAMIC_TYPE_OPUS":
-            # 原动态是 opus 类型，使用原动态的内容
+        if dynamic_data.orig:
+            # 使用原动态的内容（不管是 OPUS 还是 DRAW 等其他类型）
             dynamic_info = dynamic_data.orig
 
         author = self.create_author(dynamic_info.name, dynamic_info.avatar)

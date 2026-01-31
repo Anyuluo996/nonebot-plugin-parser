@@ -234,26 +234,27 @@ class BaseParser:
             convert_to_gif: 是否转换为 GIF，默认 False
         """
         from .data import DynamicContent
+        import asyncio
 
         contents: list[DynamicContent] = []
         for url in dynamic_urls:
             task = DOWNLOADER.download_video(url, ext_headers=self.headers)
             if convert_to_gif:
-                # 创建转换任务
-                convert_task = self._convert_to_gif(task)
+                # 创建转换任务（使用 asyncio.create_task 包装异步调用）
+                convert_task = asyncio.create_task(self._convert_to_gif(task))
                 contents.append(DynamicContent(task, gif_path=convert_task))
             else:
                 contents.append(DynamicContent(task))
         return contents
 
-    async def _convert_to_gif(self, video_task: Task[Path]) -> Task[Path]:
+    async def _convert_to_gif(self, video_task: Task[Path]) -> Path:
         """将下载的视频转换为 GIF
 
         Args:
             video_task: 视频下载任务
 
         Returns:
-            GIF 文件路径任务
+            GIF 文件路径
         """
         from ..utils import convert_video_to_gif, has_audio_stream
 
@@ -267,9 +268,11 @@ class BaseParser:
             # 有音频流，这是普通视频，不转换
             from nonebot import logger
             logger.debug(f"检测到音频流，跳过 GIF 转换: {video_path.name}")
-            return video_task
+            return video_path
 
         # 无音频流，转换为 GIF
+        from nonebot import logger
+        logger.info(f"开始转换视频到 GIF: {video_path.name}")
         return await convert_video_to_gif(video_path)
 
     def create_audio_content(

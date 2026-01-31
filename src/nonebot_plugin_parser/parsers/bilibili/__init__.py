@@ -81,26 +81,27 @@ class BilibiliParser(BaseParser):
         return output_path
 
     async def _capture_opus_screenshot(self, opus_id: int) -> bytes:
-        """使用 htmlrender 截取图文动态页面"""
+        """使用 htmlrender 截取图文动态页面 (优化版: 元素级截图，去除留白)"""
         if not HAS_HTMLRENDER:
             raise ImportError("htmlrender not installed")
 
         url = f"https://m.bilibili.com/opus/{opus_id}"
 
-        # 获取浏览器实例 (复用 htmlrender 的浏览器)
+        # 获取浏览器实例
         browser = await get_browser()
 
-        # 创建上下文 (模拟手机端，布局更紧凑)
+        # 优化视口：宽度 414 (iPhone Max) 能容纳更多内容，同时保持移动端布局
+        # device_scale_factor=3 提升文字清晰度
         context = await browser.new_context(
-            viewport={"width": 450, "height": 800},
-            device_scale_factor=2,
+            viewport={"width": 414, "height": 800},
+            device_scale_factor=3,
             is_mobile=True,
             has_touch=True,
-            user_agent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+            user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
         )
 
         try:
-            # 注入 Cookie
+            # 注入 Cookie (避免弹窗)
             cookies = await self._get_playwright_cookies()
             if cookies:
                 await context.add_cookies(cookies)
@@ -110,63 +111,88 @@ class BilibiliParser(BaseParser):
             # 访问页面
             await page.goto(url, wait_until="networkidle", timeout=20000)
 
-            # 等待核心元素
+            # 等待核心内容加载
             try:
-                await page.wait_for_selector(".opus-detail", timeout=5000)
+                await page.wait_for_selector(".opus-modules, .opus-detail", timeout=6000)
             except:
                 pass
 
-            # 注入 CSS/JS 清理页面干扰元素
+            # === 核心优化：注入 CSS 清理页面 ===
             await page.evaluate("""() => {
-                const selectors = [
-                    '.m-navbar',          // 顶部导航
-                    '.launch-app-btn',    // 底部唤起App
-                    '.open-app-float',    // 悬浮按钮
-                    '.m-float-openapp',   // 另一种悬浮
-                    '.to-app-btn',        // 详情页的去APP按钮
-                    '.opus-read-more'     // "阅读更多"按钮(如果有)
-                ];
-                selectors.forEach(s => {
-                    const els = document.querySelectorAll(s);
-                    els.forEach(el => el.style.display = 'none');
-                });
-                // 强制白色背景
-                document.body.style.backgroundColor = '#ffffff';
+                const style = document.createElement('style');
+                style.innerHTML = `
+                    /* 隐藏顶部导航 */
+                    .m-navbar { display: none !important; }
+
+                    /* 隐藏底部 APP 按钮、悬浮窗 */
+                    .launch-app-btn, .open-app-float, .m-float-openapp, .to-app-btn { display: none !important; }
+
+                    /* 隐藏评论区、标签栏、推荐列表 */
+                    .comment-app, .v-switcher, .opus-read-more { display: none !important; }
+
+                    /* 隐藏新版底部的"UP主投稿视频" */
+                    .opus-footer { display: none !important; }
+
+                    /* 强制背景白底 */
+                    body, html { background-color: #ffffff !important; }
+
+                    /* 调整容器边距，让内容贴边 */
+                    .opus-detail, .opus-modules {
+                        margin: 0 !important;
+                        padding-top: 10px !important;
+                        padding-bottom: 20px !important;
+                        box-shadow: none !important;
+                        min-height: auto !important;
+                    }
+                `;
+                document.head.appendChild(style);
             }""")
 
-            # 滚动加载图片
+            # 滚动一下确保图片懒加载触发
             await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             await asyncio.sleep(0.5)
             await page.evaluate("window.scrollTo(0, 0)")
             await asyncio.sleep(0.5)
 
-            # 截图
+            # === 核心优化：智能截图 ===
+            # 1. 尝试新版 OPUS 结构
+            target = page.locator(".opus-detail")
+            if await target.count() > 0 and await target.is_visible():
+                return await target.screenshot(type="jpeg", quality=85)
+
+            # 2. 尝试 opus-modules 结构
+            target = page.locator(".opus-modules")
+            if await target.count() > 0 and await target.is_visible():
+                return await target.screenshot(type="jpeg", quality=85)
+
+            # 3. 兜底：全页截图
             return await page.screenshot(full_page=True, type="jpeg", quality=85)
 
         finally:
             await context.close()
 
     async def _capture_dynamic_screenshot(self, dynamic_id: int) -> bytes:
-        """使用 htmlrender 截取动态页面"""
+        """使用 htmlrender 截取动态页面 (优化版: 元素级截图，去除留白)"""
         if not HAS_HTMLRENDER:
             raise ImportError("htmlrender not installed")
 
         url = f"https://m.bilibili.com/dynamic/{dynamic_id}"
 
-        # 获取浏览器实例 (复用 htmlrender 的浏览器)
+        # 获取浏览器实例
         browser = await get_browser()
 
-        # 创建上下文 (模拟手机端，布局更紧凑)
+        # 优化视口：宽度 414 (iPhone Max) 能容纳更多内容，同时保持移动端布局
+        # device_scale_factor=3 提升文字清晰度
         context = await browser.new_context(
-            viewport={"width": 450, "height": 800},
-            device_scale_factor=2,
+            viewport={"width": 414, "height": 800},
+            device_scale_factor=3,
             is_mobile=True,
             has_touch=True,
-            user_agent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+            user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
         )
 
         try:
-            # 注入 Cookie
+            # 注入 Cookie (避免弹窗)
             cookies = await self._get_playwright_cookies()
             if cookies:
                 await context.add_cookies(cookies)
@@ -176,38 +202,73 @@ class BilibiliParser(BaseParser):
             # 访问页面
             await page.goto(url, wait_until="networkidle", timeout=20000)
 
-            # 等待核心元素
+            # 等待核心内容加载 (支持新版 Opus 和旧版 Dynamic)
             try:
-                await page.wait_for_selector(".dyn-card", timeout=5000)
+                await page.wait_for_selector(".opus-modules, .dyn-card, .opus-detail", timeout=6000)
             except:
                 pass
 
-            # 注入 CSS/JS 清理页面干扰元素
+            # === 核心优化：注入 CSS 清理页面 ===
+            # 隐藏顶部、底部、评论区、推荐列表、APP引流按钮
             await page.evaluate("""() => {
-                const selectors = [
-                    '.m-navbar',          // 顶部导航
-                    '.launch-app-btn',    // 底部唤起App
-                    '.open-app-float',    // 悬浮按钮
-                    '.m-float-openapp',   // 另一种悬浮
-                    '.dyn-header',        // 动态页面的顶部头
-                    '.to-app-btn',        // 详情页的去APP按钮
-                    '.opus-read-more'     // "阅读更多"按钮(如果有)
-                ];
-                selectors.forEach(s => {
-                    const els = document.querySelectorAll(s);
-                    els.forEach(el => el.style.display = 'none');
-                });
-                // 强制白色背景
-                document.body.style.backgroundColor = '#ffffff';
+                const style = document.createElement('style');
+                style.innerHTML = `
+                    /* 隐藏顶部导航 */
+                    .m-navbar, .dyn-header { display: none !important; }
+
+                    /* 隐藏底部 APP 按钮、悬浮窗 */
+                    .launch-app-btn, .open-app-float, .m-float-openapp, .to-app-btn { display: none !important; }
+
+                    /* 隐藏评论区、标签栏、推荐列表 (这是底部留白的主要原因) */
+                    .comment-app, .v-switcher, .dyn-card-recommend, .opus-read-more { display: none !important; }
+
+                    /* 隐藏新版底部的"UP主投稿视频" */
+                    .opus-footer { display: none !important; }
+
+                    /* 强制背景白底 */
+                    body, html { background-color: #ffffff !important; }
+
+                    /* 调整容器边距，让内容贴边，利用率更高 */
+                    .opus-detail, .dyn-card {
+                        margin: 0 !important;
+                        padding-top: 10px !important;
+                        padding-bottom: 20px !important;
+                        box-shadow: none !important;
+                        min-height: auto !important;
+                    }
+                `;
+                document.head.appendChild(style);
             }""")
 
-            # 滚动加载图片
+            # 展开可能存在的折叠文本 (针对旧版动态)
+            try:
+                expand_btn = page.locator(".dyn-content__expand")
+                if await expand_btn.count() > 0 and await expand_btn.is_visible():
+                    await expand_btn.click()
+            except:
+                pass
+
+            # 滚动一下确保图片懒加载触发
             await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             await asyncio.sleep(0.5)
             await page.evaluate("window.scrollTo(0, 0)")
             await asyncio.sleep(0.5)
 
-            # 截图
+            # === 核心优化：智能截图 ===
+            # 优先尝试截取具体的"动态卡片"元素，而不是全屏
+            # 这样可以自动适应高度，并且裁剪掉左右多余的 <body> 边距
+
+            # 1. 尝试新版 OPUS 结构
+            target = page.locator(".opus-detail")
+            if await target.count() > 0 and await target.is_visible():
+                return await target.screenshot(type="jpeg", quality=85)
+
+            # 2. 尝试旧版/通用 Dynamic 结构
+            target = page.locator(".dyn-card")
+            if await target.count() > 0 and await target.is_visible():
+                return await target.screenshot(type="jpeg", quality=85)
+
+            # 3. 兜底：如果找不到特定容器，截取 body 但裁剪掉视口外的留白
             return await page.screenshot(full_page=True, type="jpeg", quality=85)
 
         finally:

@@ -164,6 +164,11 @@ class DynamicInfo(Struct):
         return self.modules.pub_ts
 
     @property
+    def desc_text(self) -> str | None:
+        """获取描述文本（转发评论）"""
+        return self.modules.desc_text
+
+    @property
     def title(self) -> str | None:
         """获取标题"""
         major_info = self.modules.major_info

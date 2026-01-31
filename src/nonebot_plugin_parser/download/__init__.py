@@ -12,6 +12,12 @@ from ..config import pconfig
 from ..constants import COMMON_HEADER, DOWNLOAD_TIMEOUT
 from ..exception import DownloadException, ZeroSizeException, SizeLimitException
 
+try:
+    from curl_cffi import requests as curl_requests
+    CURL_CFFI_AVAILABLE = True
+except ImportError:
+    CURL_CFFI_AVAILABLE = False
+
 
 class StreamDownloader:
     """Downloader class for downloading files with stream"""
@@ -46,10 +52,45 @@ class StreamDownloader:
         if not file_name:
             file_name = generate_file_name(url)
         file_path = self.cache_dir / file_name
-        # 如果文件存在，则直接返回
-        if file_path.exists():
-            return file_path
 
+        # 检查文件是否已存在
+        if file_path.exists():
+            # 简单校验一下大小，防止之前留下了0字节空文件
+            if file_path.stat().st_size > 0:
+                return file_path
+            else:
+                await safe_unlink(file_path)
+
+        # ================== 针对 NGA 使用 curl_cffi 下载 ==================
+        if "nga.178.com" in url and CURL_CFFI_AVAILABLE:
+            logger.info(f"检测到 NGA 图片，使用 curl_cffi 下载: {url}")
+
+            try:
+                # 在线程池中执行同步的 curl_cffi 请求
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(
+                    None,
+                    self._download_with_curl_cffi,
+                    url,
+                    file_path,
+                    file_name,
+                )
+
+                if file_path.exists() and file_path.stat().st_size > 0:
+                    logger.success(f"curl_cffi 下载成功: {file_path}")
+                    return file_path
+                else:
+                    await safe_unlink(file_path)
+                    raise DownloadException("NGA 图片下载失败 (curl_cffi)")
+
+            except Exception as e:
+                logger.exception(f"curl_cffi 下载异常: {e}")
+                await safe_unlink(file_path)
+                # 回退到普通 httpx 下载
+                logger.info("回退到 httpx 下载")
+        # ====================================================================
+
+        # === 以下是原有的 httpx 下载逻辑 ===
         headers = {**self.headers, **(ext_headers or {})}
 
         try:
@@ -59,10 +100,10 @@ class StreamDownloader:
                 content_length = int(content_length) if content_length else 0
 
                 if content_length == 0:
-                    logger.warning(f"媒体 url: {url}, 大小为 0, 取消下载")
-                    raise ZeroSizeException
+                    # 有些服务器不返回 Content-Length，尝试读取流
+                    pass
 
-                if (file_size := content_length / 1024 / 1024) > pconfig.max_size:
+                if content_length > 0 and (file_size := content_length / 1024 / 1024) > pconfig.max_size:
                     logger.warning(f"媒体 url: {url} 大小 {file_size:.2f} MB 超过 {pconfig.max_size} MB, 取消下载")
                     raise SizeLimitException
 
@@ -77,6 +118,52 @@ class StreamDownloader:
             logger.exception(f"下载失败 | url: {url}, file_path: {file_path}")
             raise DownloadException("媒体下载失败")
         return file_path
+
+    def _download_with_curl_cffi(self, url: str, file_path: Path, file_name: str) -> None:
+        """使用 curl_cffi 下载文件（同步方法）
+
+        Args:
+            url: 下载地址
+            file_path: 保存路径
+            file_name: 文件名（用于进度条）
+        """
+        # 使用 Chrome 的 TLS 指纹来绕过检测
+        headers = {
+            "Referer": "https://bbs.nga.cn/",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        }
+
+        response = curl_requests.get(
+            url,
+            headers=headers,
+            impersonate="chrome110",  # 模拟 Chrome 110 浏览器
+            timeout=30,
+            stream=True,
+        )
+
+        response.raise_for_status()
+        content_length = response.headers.get("Content-Length")
+        content_length = int(content_length) if content_length else 0
+
+        if content_length > 0 and (file_size := content_length / 1024 / 1024) > pconfig.max_size:
+            logger.warning(f"媒体 url: {url} 大小 {file_size:.2f} MB 超过 {pconfig.max_size} MB, 取消下载")
+            raise SizeLimitException
+
+        # 使用 tqdm 显示进度条（同步版本）
+        with tqdm(
+            total=content_length,
+            unit="B",
+            unit_scale=True,
+            unit_divisor=1024,
+            dynamic_ncols=True,
+            colour="green",
+            desc=file_name,
+        ) as bar:
+            with open(file_path, "wb") as file:
+                for chunk in response.iter_content(1024 * 1024):
+                    if chunk:
+                        file.write(chunk)
+                        bar.update(len(chunk))
 
     @staticmethod
     def get_progress_bar(desc: str, total: int | None = None) -> tqdm:

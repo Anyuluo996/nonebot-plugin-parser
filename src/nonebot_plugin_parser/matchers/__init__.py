@@ -4,8 +4,10 @@ from typing import TypeVar
 from nonebot import logger, get_driver, on_command
 from nonebot.params import CommandArg
 from nonebot.adapters import Message
+from nonebot_plugin_uninfo import Session, UniSession
 
 from .rule import SUPER_PRIVATE, Searched, SearchResult, on_keyword_regex
+from .filter import is_platform_enabled
 from ..utils import LimitedSizeDict
 from ..config import pconfig
 from ..helper import UniHelper, UniMessage
@@ -64,26 +66,34 @@ def clear_result_cache():
 @UniHelper.with_reaction
 async def parser_handler(
     sr: SearchResult = Searched(),
+    session: Session = UniSession(),
 ):
     """统一的解析处理器"""
-    # 1. 获取缓存结果
+    # 1. 获取对应平台 parser
+    parser = get_parser(sr.keyword)
+
+    # 2. 检查平台是否在当前群组被禁用
+    if not is_platform_enabled(session, parser.platform.name):
+        logger.debug(f"平台 {parser.platform.name} 在群组 {session.scene_path} 中已被禁用，跳过解析")
+        return
+
+    # 3. 获取缓存结果
     cache_key = sr.searched.group(0)
     result = _RESULT_CACHE.get(cache_key)
 
     if result is None:
-        # 2. 获取对应平台 parser
-        parser = get_parser(sr.keyword)
+        # 4. 执行解析
         result = await parser.parse(sr.keyword, sr.searched)
         logger.debug(f"解析结果: {result}")
     else:
         logger.debug(f"命中缓存: {cache_key}, 结果: {result}")
 
-    # 3. 渲染内容消息并发送
+    # 5. 渲染内容消息并发送
     renderer = get_renderer(result.platform.name)
     async for message in renderer.render_messages(result):
         await message.send()
 
-    # 4. 缓存解析结果
+    # 6. 缓存解析结果
     _RESULT_CACHE[cache_key] = result
 
 

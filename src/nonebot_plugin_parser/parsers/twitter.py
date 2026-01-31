@@ -22,15 +22,14 @@ class TwitterParser(BaseParser):
             **self.headers,
         }
         data = {"q": url, "lang": "zh-cn"}
-        async with AsyncClient(headers=headers, timeout=self.timeout) as client:
-            # 支持代理
-            from ..config import pconfig
-            proxies = None
-            if pconfig.proxy:
-                proxies = {"http://": pconfig.proxy, "https://": pconfig.proxy}
 
+        # 支持代理
+        from ..config import pconfig
+        proxy = pconfig.proxy if pconfig.proxy else None
+
+        async with AsyncClient(headers=headers, timeout=self.timeout, proxy=proxy) as client:
             api_url = "https://xdown.app/api/ajaxSearch"
-            response = await client.post(api_url, data=data, proxies=proxies)
+            response = await client.post(api_url, data=data)
             return response.json()
 
     @handle("x.com", r"x.com/[0-9-a-zA-Z_]{1,20}/status/([0-9]+)")

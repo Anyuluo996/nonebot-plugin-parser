@@ -3,7 +3,8 @@ from typing import TypeVar
 
 from nonebot import logger, get_driver, on_command
 from nonebot.params import CommandArg
-from nonebot.adapters import Message
+from nonebot.adapters import Message, Event
+from nonebot.adapters.nonebot import current_event
 from nonebot_plugin_uninfo import Session, UniSession
 
 from .rule import SUPER_PRIVATE, Searched, SearchResult, on_keyword_regex
@@ -63,7 +64,6 @@ def clear_result_cache():
     _RESULT_CACHE.clear()
 
 
-@UniHelper.with_reaction
 async def parser_handler(
     sr: SearchResult = Searched(),
     session: Session = UniSession(),
@@ -77,24 +77,46 @@ async def parser_handler(
         logger.debug(f"平台 {parser.platform.name} 在群组 {session.scene_path} 中已被禁用，跳过解析")
         return
 
-    # 3. 获取缓存结果
-    cache_key = sr.searched.group(0)
-    result = _RESULT_CACHE.get(cache_key)
+    # 3. 添加"处理中"表情
+    event = current_event.get()
+    try:
+        await UniHelper.message_reaction(event, "resolving")
+    except Exception:
+        pass  # 如果不支持表情，忽略错误
 
-    if result is None:
-        # 4. 执行解析
-        result = await parser.parse(sr.keyword, sr.searched)
-        logger.debug(f"解析结果: {result}")
-    else:
-        logger.debug(f"命中缓存: {cache_key}, 结果: {result}")
+    try:
+        # 4. 获取缓存结果
+        cache_key = sr.searched.group(0)
+        result = _RESULT_CACHE.get(cache_key)
 
-    # 5. 渲染内容消息并发送
-    renderer = get_renderer(result.platform.name)
-    async for message in renderer.render_messages(result):
-        await message.send()
+        if result is None:
+            # 5. 执行解析
+            result = await parser.parse(sr.keyword, sr.searched)
+            logger.debug(f"解析结果: {result}")
+        else:
+            logger.debug(f"命中缓存: {cache_key}, 结果: {result}")
 
-    # 6. 缓存解析结果
-    _RESULT_CACHE[cache_key] = result
+        # 6. 渲染内容消息并发送
+        renderer = get_renderer(result.platform.name)
+        async for message in renderer.render_messages(result):
+            await message.send()
+
+        # 7. 缓存解析结果
+        _RESULT_CACHE[cache_key] = result
+
+        # 8. 添加"完成"表情
+        try:
+            await UniHelper.message_reaction(event, "done")
+        except Exception:
+            pass
+
+    except Exception:
+        # 发生错误，添加"失败"表情
+        try:
+            await UniHelper.message_reaction(event, "fail")
+        except Exception:
+            pass
+        raise
 
 
 @on_command("bm", priority=3, block=True).handle()

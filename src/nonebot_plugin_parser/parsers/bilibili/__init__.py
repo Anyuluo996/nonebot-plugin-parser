@@ -65,7 +65,7 @@ class BilibiliParser(BaseParser):
 
         return await self.parse_video(avid=avid, page_num=page_num)
 
-    @handle("/dynamic/", r"bilibili\.com/dynamic/(?P<dynamic_id>\d+)")
+    @handle("/dynamic/", r"(?:m\.)?bilibili\.com/dynamic/(?P<dynamic_id>\d+)")
     @handle("t.bili", r"t\.bilibili\.com/(?P<dynamic_id>\d+)")
     async def _parse_dynamic(self, searched: Match[str]):
         """解析动态信息"""
@@ -84,17 +84,25 @@ class BilibiliParser(BaseParser):
         fav_id = int(searched.group("fav_id"))
         return await self.parse_favlist(fav_id)
 
-    @handle("/read/", r"bilibili\.com/read/cv(?P<read_id>\d+)")
+    @handle("/read/", r"(?:m\.)?bilibili\.com/read/cv(?P<read_id>\d+)")
     async def _parse_read(self, searched: Match[str]):
         """解析专栏信息"""
         read_id = int(searched.group("read_id"))
         return await self.parse_read_with_opus(read_id)
 
-    @handle("/opus/", r"bilibili\.com/opus/(?P<opus_id>\d+)")
+    @handle("/opus/", r"(?:m\.)?bilibili\.com/opus/(?P<opus_id>\d+)")
     async def _parse_opus(self, searched: Match[str]):
         """解析图文动态信息"""
         opus_id = int(searched.group("opus_id"))
-        return await self.parse_opus(opus_id)
+        try:
+            return await self.parse_opus(opus_id)
+        except Exception as e:
+            from bilibili_api.exceptions import ArgsException
+            if isinstance(e, ArgsException):
+                # Opus 接口解析失败，降级使用 Dynamic 接口
+                logger.info(f"Opus 接口解析失败 {opus_id}，尝试使用 Dynamic 接口")
+                return await self.parse_dynamic(opus_id)
+            raise
 
     async def parse_video(
         self,

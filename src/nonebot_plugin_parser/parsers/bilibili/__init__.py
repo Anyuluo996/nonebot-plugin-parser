@@ -194,45 +194,55 @@ class BilibiliParser(BaseParser):
         dynamic_data = convert(raw_data, DynamicData)
 
         # 手动处理 orig 字段（msgspec 可能无法正确转换嵌套的 orig）
-        orig_info: DynamicInfo | None = None
-        if raw_data.get('item', {}).get('orig'):
+        orig_info: DynamicInfo | None = dynamic_data.orig
+        if raw_data.get('item', {}).get('orig') and not orig_info:
             try:
                 orig_info = convert(raw_data['item']['orig'], DynamicInfo)
             except Exception as e:
-                logger.warning(f"转换 orig 数据失败: {e}")
+                logger.warning(f"手动转换 orig 数据失败: {e}")
 
-        # 获取主要动态信息
-        dynamic_info = dynamic_data.item
+        # 当前动态信息 (转发者 或 原作者)
+        current_info = dynamic_data.item
 
-        # 如果是转发类型，尝试获取原动态的内容
+        # 作者信息始终显示当前动态的作者
+        author = self.create_author(current_info.name, current_info.avatar)
+
+        # 默认内容来源是当前动态
+        content_source = current_info
+
+        # 转发逻辑处理
+        text = current_info.text  # 如果是转发，这里通常是转发评论；如果是原创，这里是正文
+
         is_forward = orig_info is not None
         if is_forward:
-            # 使用原动态的内容（不管是 OPUS 还是 DRAW 等其他类型）
-            dynamic_info = orig_info
+            # 如果是转发，图片/媒体内容来源于原动态
+            content_source = orig_info
 
-        author = self.create_author(dynamic_info.name, dynamic_info.avatar)
+            # 构建文本：转发评论 + 分割线 + 原动态作者/内容
+            forward_comment = current_info.desc_text or "转发动态"
 
-        # 下载图片
+            # 获取原动态内容 (优先取 text，没有则取 desc_text)
+            orig_text = orig_info.text or orig_info.desc_text or "[原动态内容为空或无法解析]"
+
+            text = f"{forward_comment}\n\n---\n\n@{orig_info.name}：\n{orig_text}"
+
+        # 标题处理
+        title = content_source.title
+        if not title:
+            # 如果没有标题，截取一部分文本作为标题
+            preview_text = text.replace("\n", " ") if text else ""
+            title = preview_text[:30] + "..." if len(preview_text) > 30 else preview_text
+
+        # 下载图片 (从 content_source 获取，这样转发动态就能下载原动态的图)
         contents: list[MediaContent] = []
-        for image_url in dynamic_info.image_urls:
+        for image_url in content_source.image_urls:
             img_task = DOWNLOADER.download_img(image_url, ext_headers=self.headers)
             contents.append(ImageContent(img_task))
 
-        # 如果有转发评论，添加为文本
-        text = dynamic_info.text
-        if is_forward:
-            # 这是转发类型，添加转发者的评论
-            forward_comment = dynamic_data.item.desc_text
-            if forward_comment:
-                if text:
-                    text = f"{forward_comment}\n\n---\n\n{text}"
-                else:
-                    text = forward_comment
-
         return self.result(
-            title=dynamic_info.title,
+            title=title or "Bilibili 动态",
             text=text,
-            timestamp=dynamic_info.timestamp,
+            timestamp=current_info.timestamp,
             author=author,
             contents=contents,
         )

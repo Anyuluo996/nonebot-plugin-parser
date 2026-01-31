@@ -11,11 +11,6 @@ class AuthorInfo(Struct):
     mid: int
     pub_time: str
     pub_ts: int
-    # jump_url: str
-    # following: bool = False
-    # official_verify: dict[str, Any] | None = None
-    # vip: dict[str, Any] | None = None
-    # pendant: dict[str, Any] | None = None
 
 
 class VideoArchive(Struct):
@@ -26,28 +21,18 @@ class VideoArchive(Struct):
     title: str
     desc: str
     cover: str
-    # duration_text: str
-    # jump_url: str
-    # stat: dict[str, str]
-    # badge: dict[str, Any] | None = None
 
 
 class OpusImage(Struct):
     """图文动态图片信息"""
 
     url: str
-    # width: int
-    # height: int
-    # size: float
-    # aigc: dict[str, Any] | None = None
-    # live_url: str | None = None
 
 
 class OpusSummary(Struct):
     """图文动态摘要"""
 
     text: str
-    # rich_text_nodes: list[dict[str, Any]]
 
 
 class OpusContent(Struct):
@@ -57,7 +42,21 @@ class OpusContent(Struct):
     pics: list[OpusImage]
     summary: OpusSummary
     title: str | None = None
-    # fold_action: list[str] | None = None
+
+
+class DrawItem(Struct):
+    """普通图文动态图片项"""
+
+    src: str
+    width: int
+    height: int
+
+
+class Draw(Struct):
+    """普通图文动态内容"""
+
+    id: int
+    items: list[DrawItem]
 
 
 class DynamicMajor(Struct):
@@ -66,12 +65,14 @@ class DynamicMajor(Struct):
     type: str
     archive: VideoArchive | None = None
     opus: OpusContent | None = None
+    draw: Draw | None = None  # 新增：普通图文支持
 
     @property
     def title(self) -> str | None:
         """获取标题"""
         if self.type == "MAJOR_TYPE_ARCHIVE" and self.archive:
             return self.archive.title
+        # draw 类型通常没有单独的标题，opus 有
         return None
 
     @property
@@ -81,6 +82,7 @@ class DynamicMajor(Struct):
             return self.archive.desc
         elif self.type == "MAJOR_TYPE_OPUS" and self.opus:
             return self.opus.summary.text
+        # MAJOR_TYPE_DRAW 的文本通常在 desc 字段中，不在这里
         return None
 
     @property
@@ -90,6 +92,9 @@ class DynamicMajor(Struct):
             return [pic.url for pic in self.opus.pics]
         elif self.type == "MAJOR_TYPE_ARCHIVE" and self.archive and self.archive.cover:
             return [self.archive.cover]
+        elif self.type == "MAJOR_TYPE_DRAW" and self.draw:
+            # 新增：处理普通图文动态的图片
+            return [item.src for item in self.draw.items]
         return []
 
     @property
@@ -97,6 +102,10 @@ class DynamicMajor(Struct):
         """获取封面URL"""
         if self.type == "MAJOR_TYPE_ARCHIVE" and self.archive:
             return self.archive.cover
+        # 如果是图文，取第一张图作为封面
+        images = self.image_urls
+        if images:
+            return images[0]
         return None
 
 
@@ -131,7 +140,7 @@ class DynamicModule(Struct):
 
     @property
     def desc_text(self) -> str | None:
-        """获取描述文本（转发评论）"""
+        """获取描述文本（转发评论 或 普通动态正文）"""
         if self.module_dynamic:
             desc = self.module_dynamic.get("desc")
             if desc:
@@ -165,7 +174,7 @@ class DynamicInfo(Struct):
 
     @property
     def desc_text(self) -> str | None:
-        """获取描述文本（转发评论）"""
+        """获取描述文本（转发评论 或 普通动态正文）"""
         return self.modules.desc_text
 
     @property
@@ -179,12 +188,16 @@ class DynamicInfo(Struct):
 
     @property
     def text(self) -> str | None:
-        """获取文本内容"""
+        """获取主要内容文本"""
+        # 优先尝试获取 Major 中的文本 (Opus/Archive)
         major_info = self.modules.major_info
         if major_info:
             major = convert(major_info, DynamicMajor)
-            return major.text
-        return None
+            if t := major.text:
+                return t
+
+        # 如果 Major 中没有文本（例如 MAJOR_TYPE_DRAW 或 MAJOR_TYPE_NONE），则返回 desc_text
+        return self.desc_text
 
     @property
     def image_urls(self) -> list[str]:

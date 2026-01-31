@@ -129,6 +129,15 @@ class DynamicModule(Struct):
             return self.module_dynamic.get("major")
         return None
 
+    @property
+    def desc_text(self) -> str | None:
+        """获取描述文本（转发评论）"""
+        if self.module_dynamic:
+            desc = self.module_dynamic.get("desc")
+            if desc:
+                return desc.get("text")
+        return None
+
 
 class DynamicInfo(Struct):
     """动态信息"""

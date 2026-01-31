@@ -65,10 +65,11 @@ class Draw(Struct):
 class DynamicMajor(Struct):
     """动态主要内容"""
 
-    type: str
+    type: str | None = None
     archive: VideoArchive | None = None
     opus: OpusContent | None = None
     draw: Draw | None = None  # 支持普通图文动态
+    desc: OpusSummary | None = None  # 原项目新增
 
     @property
     def title(self) -> str | None:
@@ -87,6 +88,8 @@ class DynamicMajor(Struct):
             return self.archive.desc
         elif self.type == "MAJOR_TYPE_OPUS" and self.opus and self.opus.summary:
             return self.opus.summary.text
+        elif self.desc:
+            return self.desc.text
         return None
 
     @property
@@ -134,7 +137,10 @@ class DynamicModule(Struct):
     @property
     def major_info(self) -> dict[str, Any] | None:
         if self.module_dynamic:
-            return self.module_dynamic.get("major")
+            if major := self.module_dynamic.get("major"):
+                return major
+            # 转发类型动态没有 major
+            return self.module_dynamic
         return None
 
     @property

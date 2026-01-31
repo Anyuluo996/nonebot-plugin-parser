@@ -185,18 +185,29 @@ class BilibiliParser(BaseParser):
         """
         from bilibili_api.dynamic import Dynamic
 
-        from .dynamic import DynamicData
+        from .dynamic import DynamicData, DynamicInfo
 
         dynamic = Dynamic(dynamic_id, await self.credential)
-        dynamic_data = convert(await dynamic.get_info(), DynamicData)
+        raw_data = await dynamic.get_info()
+
+        # msgspec 转换主数据
+        dynamic_data = convert(raw_data, DynamicData)
+
+        # 手动处理 orig 字段（msgspec 可能无法正确转换嵌套的 orig）
+        orig_info: DynamicInfo | None = None
+        if raw_data.get('item', {}).get('orig'):
+            try:
+                orig_info = convert(raw_data['item']['orig'], DynamicInfo)
+            except Exception as e:
+                logger.warning(f"转换 orig 数据失败: {e}")
 
         # 获取主要动态信息
         dynamic_info = dynamic_data.item
 
         # 如果是转发类型，尝试获取原动态的内容
-        if dynamic_data.orig:
+        if orig_info:
             # 使用原动态的内容（不管是 OPUS 还是 DRAW 等其他类型）
-            dynamic_info = dynamic_data.orig
+            dynamic_info = orig_info
 
         author = self.create_author(dynamic_info.name, dynamic_info.avatar)
 
@@ -208,7 +219,7 @@ class BilibiliParser(BaseParser):
 
         # 如果有转发评论，添加为文本
         text = dynamic_info.text
-        if dynamic_data.orig and dynamic_info != dynamic_data.orig:
+        if orig_info and dynamic_info != orig_info:
             # 这是转发类型，添加转发者的评论
             forward_comment = dynamic_data.item.text
             if forward_comment:

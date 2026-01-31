@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(uv sync)",
+      "Bash(uv run python:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git pull:*)",
+      "Bash(cd:*)",
+      "Bash(git -C \"D:\\\\app\\\\nonebot-plugin-parser\" status)",
+      "Bash(git -C \"D:\\\\app\\\\nonebot-plugin-parser\" diff src/nonebot_plugin_parser/renders/base.py)",
+      "Bash(git -C \"D:\\\\app\\\\nonebot-plugin-parser\" diff src/nonebot_plugin_parser/parsers/base.py)",
+      "Bash(git -C \"D:\\\\app\\\\nonebot-plugin-parser\" add src/nonebot_plugin_parser/parsers/base.py src/nonebot_plugin_parser/renders/base.py)",
+      "Bash(git -C \"D:\\\\app\\\\nonebot-plugin-parser\" commit -m \"$\\(cat <<''EOF''\nfeat: 自动转换无音轨视频为GIF并合并发送\n\n- parsers/base.py: 自动检测视频音轨，无音轨则转换为GIF\n- renders/base.py: 将GIF与缩略图合并到同一条消息中发送\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git -C \"D:\\\\app\\\\nonebot-plugin-parser\" diff src/nonebot_plugin_parser/matchers/__init__.py)",
+      "Bash(git -C \"D:\\\\app\\\\nonebot-plugin-parser\" add src/nonebot_plugin_parser/matchers/__init__.py)",
+      "Bash(git -C \"D:\\\\app\\\\nonebot-plugin-parser\" commit -m \"$\\(cat <<''EOF''\nfix: 平台被禁用时不添加表情反应\n\n- 移除@UniHelper.with_reaction装饰器\n- 手动管理表情：仅在平台启用后才添加表情\n- 平台被禁用时直接返回，不贴任何表情\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git -C \"D:\\\\app\\\\nonebot-plugin-parser\" commit -m \"$\\(cat <<''EOF''\nfix: 修复 current_event 导入路径错误\n\n- 将导入从 nonebot.adapters.nonebot 改为 nonebot.matcher\n- 移除不需要的 Event 导入\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git -C \"D:\\\\app\\\\nonebot-plugin-parser\" push)",
+      "Bash(pip install:*)",
+      "Bash(git -C \"D:\\\\app\\\\nonebot-plugin-parser\" show c02c06b --no-stat)",
+      "Bash(dir:*)",
+      "Bash(git remote add:*)",
+      "Bash(git fetch:*)",
+      "Bash(git remote set-url:*)",
+      "Bash(git branch:*)",
+      "Bash(git checkout:*)",
+      "Bash(git merge:*)",
+      "Bash(git stash push:*)",
+      "Bash(git stash:*)"
+    ]
+  }
+}

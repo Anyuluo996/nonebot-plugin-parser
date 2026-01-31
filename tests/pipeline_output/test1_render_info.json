@@ -1,0 +1,29 @@
+{
+  "test_case": "普通图文动态",
+  "id": 1159504791855955984,
+  "data": {
+    "has_text": true,
+    "text": "分享图片",
+    "has_images": true,
+    "image_count": 1,
+    "images": [
+      {
+        "index": 1,
+        "filename": "test1_image1.jpg",
+        "path": "tests\\pipeline_output\\test1_image1.jpg",
+        "size": 1448956,
+        "url": "http://i0.hdslb.com/bfs/new_dyn/a2235c8a1051ae11c8b61105f5b2f33f1344099355.jpg"
+      }
+    ]
+  },
+  "expected": {
+    "has_text": true,
+    "has_images": true,
+    "image_count": 1
+  },
+  "status": {
+    "text_match": true,
+    "images_match": true,
+    "all_match": true
+  }
+}

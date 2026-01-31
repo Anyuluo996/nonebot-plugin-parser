@@ -1,0 +1,280 @@
+{
+  "item": {
+    "basic": {
+      "comment_id_str": "381842715",
+      "comment_type": 11,
+      "like_icon": {
+        "action_url": "",
+        "end_url": "",
+        "id": 0,
+        "start_url": ""
+      },
+      "rid_str": "381842715",
+      "title": "略nd的动态 - 哔哩哔哩",
+      "uid": 1344099355
+    },
+    "id_str": "1159504791855955984",
+    "modules": [
+      {
+        "module_top": {
+          "display": {
+            "album": {
+              "pics": [
+                {
+                  "height": 1500,
+                  "size": 1415,
+                  "url": "http://i0.hdslb.com/bfs/new_dyn/a2235c8a1051ae11c8b61105f5b2f33f1344099355.jpg",
+                  "width": 2000
+                }
+              ]
+            },
+            "type": 1
+          }
+        },
+        "module_type": "MODULE_TYPE_TOP"
+      },
+      {
+        "module_author": {
+          "avatar": {
+            "container_size": {
+              "height": 1.35,
+              "width": 1.35
+            },
+            "fallback_layers": {
+              "is_critical_group": true,
+              "layers": [
+                {
+                  "general_spec": {
+                    "pos_spec": {
+                      "axis_x": 0.675,
+                      "axis_y": 0.675,
+                      "coordinate_pos": 2
+                    },
+                    "render_spec": {
+                      "opacity": 1
+                    },
+                    "size_spec": {
+                      "height": 1,
+                      "width": 1
+                    }
+                  },
+                  "layer_config": {
+                    "is_critical": true,
+                    "tags": {
+                      "AVATAR_LAYER": {},
+                      "GENERAL_CFG": {
+                        "config_type": 1,
+                        "general_config": {
+                          "web_css_style": {
+                            "borderRadius": "50%"
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "resource": {
+                    "res_image": {
+                      "image_src": {
+                        "placeholder": 6,
+                        "remote": {
+                          "bfs_style": "widget-layer-avatar",
+                          "url": "https://i1.hdslb.com/bfs/face/1e17ed6e7c3fe0c46d9d0d22a85b169e6b4179ef.jpg"
+                        },
+                        "src_type": 1
+                      }
+                    },
+                    "res_type": 3
+                  },
+                  "visible": true
+                },
+                {
+                  "general_spec": {
+                    "pos_spec": {
+                      "axis_x": 0.8000000000000002,
+                      "axis_y": 0.8000000000000002,
+                      "coordinate_pos": 1
+                    },
+                    "render_spec": {
+                      "opacity": 1
+                    },
+                    "size_spec": {
+                      "height": 0.41666666666666663,
+                      "width": 0.41666666666666663
+                    }
+                  },
+                  "layer_config": {
+                    "tags": {
+                      "GENERAL_CFG": {
+                        "config_type": 1,
+                        "general_config": {
+                          "web_css_style": {
+                            "background-color": "rgb(255,255,255)",
+                            "border": "2px solid rgba(255,255,255,1)",
+                            "borderRadius": "50%",
+                            "boxSizing": "border-box"
+                          }
+                        }
+                      },
+                      "ICON_LAYER": {}
+                    }
+                  },
+                  "resource": {
+                    "res_image": {
+                      "image_src": {
+                        "local": 3,
+                        "src_type": 2
+                      }
+                    },
+                    "res_type": 3
+                  },
+                  "visible": true
+                }
+              ]
+            },
+            "mid": "1344099355"
+          },
+          "decorate_card": {
+            "big_card_url": "https://i0.hdslb.com/bfs/garb/dbd73096fa7403ebd7b22aee24e0b7a5f569ae35.png",
+            "card_type": 2,
+            "card_type_name": "免费",
+            "card_url": "https://i0.hdslb.com/bfs/garb/dbd73096fa7403ebd7b22aee24e0b7a5f569ae35.png",
+            "fan": {},
+            "id": 1689315522001,
+            "image_enhance": "https://i0.hdslb.com/bfs/garb/dbd73096fa7403ebd7b22aee24e0b7a5f569ae35.png",
+            "item_id": 1689315522001,
+            "jump_url": "https://www.bilibili.com/h5/mall/equity-link/collect-home?item_id=1689315522001&isdiy=0&part=card&from=post&f_source=garb&vmid=1344099355&native.theme=1&navhide=1",
+            "name": "系统预警"
+          },
+          "face": "https://i1.hdslb.com/bfs/face/1e17ed6e7c3fe0c46d9d0d22a85b169e6b4179ef.jpg",
+          "face_nft": false,
+          "following": null,
+          "jump_url": "//space.bilibili.com/1344099355",
+          "label": "",
+          "mid": 1344099355,
+          "more": {
+            "three_point_items": [
+              {
+                "label": "举报",
+                "type": "THREE_POINT_REPORT"
+              }
+            ]
+          },
+          "name": "略nd",
+          "official": {
+            "desc": "",
+            "role": 1,
+            "title": "bilibili 知名UP主",
+            "type": 0
+          },
+          "pendant": {
+            "expire": 0,
+            "image": "",
+            "image_enhance": "",
+            "image_enhance_frame": "",
+            "n_pid": 0,
+            "name": "",
+            "pid": 0
+          },
+          "pub_location_text": "",
+          "pub_time": "2026年01月19日 15:10",
+          "pub_ts": 1768806647,
+          "views_text": "",
+          "vip": {
+            "avatar_icon": {
+              "icon_resource": {},
+              "icon_type": 1
+            },
+            "avatar_subscript": 1,
+            "avatar_subscript_url": "",
+            "due_date": 1771516800000,
+            "label": {
+              "bg_color": "#FB7299",
+              "bg_style": 1,
+              "border_color": "",
+              "img_label_uri_hans": "https://i0.hdslb.com/bfs/activity-plat/static/20220608/e369244d0b14644f5e1a06431e22a4d5/0DFy9BHgwE.gif",
+              "img_label_uri_hans_static": "https://i0.hdslb.com/bfs/vip/8d7e624d13d3e134251e4174a7318c19a8edbd71.png",
+              "img_label_uri_hant": "",
+              "img_label_uri_hant_static": "https://i0.hdslb.com/bfs/activity-plat/static/20220614/e369244d0b14644f5e1a06431e22a4d5/uckjAv3Npy.png",
+              "label_theme": "annual_vip",
+              "path": "http://i0.hdslb.com/bfs/vip/label_annual.png",
+              "text": "年度大会员",
+              "text_color": "#FFFFFF",
+              "use_img_label": true
+            },
+            "nickname_color": "#FB7299",
+            "role": 3,
+            "status": 1,
+            "theme_type": 0,
+            "tv_due_date": 1771516800,
+            "tv_vip_pay_type": 0,
+            "tv_vip_status": 1,
+            "type": 2,
+            "vip_pay_type": 1
+          }
+        },
+        "module_type": "MODULE_TYPE_AUTHOR"
+      },
+      {
+        "module_content": {
+          "paragraphs": [
+            {
+              "align": 0,
+              "format": {
+                "align": 0,
+                "indent": null
+              },
+              "para_type": 1,
+              "text": {
+                "nodes": [
+                  {
+                    "type": "TEXT_NODE_TYPE_WORD",
+                    "word": {
+                      "bg_style": {
+                        "color": {}
+                      },
+                      "color": null,
+                      "font_level": "regular",
+                      "font_size": 17,
+                      "style": {},
+                      "words": "分享图片"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "module_type": "MODULE_TYPE_CONTENT"
+      },
+      {
+        "module_stat": {
+          "coin": {
+            "count": 0,
+            "forbidden": false,
+            "hidden": true
+          },
+          "comment": {
+            "count": 51,
+            "forbidden": false
+          },
+          "favorite": {
+            "count": 25,
+            "forbidden": false,
+            "status": false
+          },
+          "forward": {
+            "count": 1,
+            "forbidden": false
+          },
+          "like": {
+            "count": 1848,
+            "forbidden": false,
+            "status": false
+          }
+        },
+        "module_type": "MODULE_TYPE_STAT"
+      }
+    ],
+    "type": 0
+  }
+}

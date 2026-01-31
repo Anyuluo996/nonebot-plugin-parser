@@ -75,7 +75,8 @@ class BaseRenderer(ABC):
                     # 优先使用 gif_path（如果存在）
                     if dynamic.gif_path is not None:
                         gif_path = await dynamic.gif_path
-                        yield UniMessage(UniHelper.video_seg(gif_path))
+                        # GIF 应该作为图片发送，而不是视频
+                        yield UniMessage(UniHelper.img_seg(gif_path))
                     else:
                         dynamic_segs.append(UniHelper.video_seg(path))
                 case GraphicsContent() as graphics:

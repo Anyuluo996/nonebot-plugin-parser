@@ -1,7 +1,7 @@
 import json
 import asyncio
 from re import Match
-from typing import ClassVar
+from typing import ClassVar, Any
 from collections.abc import AsyncGenerator
 
 from msgspec import convert
@@ -10,6 +10,14 @@ from bilibili_api import HEADERS, Credential, select_client, request_settings
 from bilibili_api.opus import Opus
 from bilibili_api.video import Video
 from bilibili_api.login_v2 import QrCodeLogin, QrCodeLoginEvents
+
+# 尝试导入 htmlrender
+try:
+    from nonebot_plugin_htmlrender import get_browser
+    HAS_HTMLRENDER = True
+except ImportError:
+    HAS_HTMLRENDER = False
+    logger.warning("未检测到 nonebot_plugin_htmlrender，B站动态将仅使用文本/图片解析模式")
 
 from ..base import (
     DOWNLOADER,
@@ -41,6 +49,90 @@ class BilibiliParser(BaseParser):
         self.headers = HEADERS.copy()
         self._credential: Credential | None = None
         self._cookies_file = pconfig.config_dir / "bilibili_cookies.json"
+
+    async def _get_playwright_cookies(self) -> list[dict[str, Any]]:
+        """将 API 的 Cookie 转换为 Playwright 格式"""
+        cred = await self.credential
+        if not cred:
+            return []
+
+        cookies_dict = cred.get_cookies()
+        pw_cookies = []
+        for k, v in cookies_dict.items():
+            pw_cookies.append({
+                "name": k,
+                "value": v,
+                "domain": ".bilibili.com",
+                "path": "/"
+            })
+        return pw_cookies
+
+    async def _capture_dynamic_screenshot(self, dynamic_id: int) -> bytes:
+        """使用 htmlrender 截取动态页面"""
+        if not HAS_HTMLRENDER:
+            raise ImportError("htmlrender not installed")
+
+        url = f"https://m.bilibili.com/dynamic/{dynamic_id}"
+
+        # 获取浏览器实例 (复用 htmlrender 的浏览器)
+        browser = await get_browser()
+
+        # 创建上下文 (模拟手机端，布局更紧凑)
+        context = await browser.new_context(
+            viewport={"width": 450, "height": 800},
+            device_scale_factor=2,
+            is_mobile=True,
+            has_touch=True,
+            user_agent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+        )
+
+        try:
+            # 注入 Cookie
+            cookies = await self._get_playwright_cookies()
+            if cookies:
+                await context.add_cookies(cookies)
+
+            page = await context.new_page()
+
+            # 访问页面
+            await page.goto(url, wait_until="networkidle", timeout=20000)
+
+            # 等待核心元素
+            try:
+                await page.wait_for_selector(".dyn-card", timeout=5000)
+            except:
+                pass
+
+            # 注入 CSS/JS 清理页面干扰元素
+            await page.evaluate("""() => {
+                const selectors = [
+                    '.m-navbar',          // 顶部导航
+                    '.launch-app-btn',    // 底部唤起App
+                    '.open-app-float',    // 悬浮按钮
+                    '.m-float-openapp',   // 另一种悬浮
+                    '.dyn-header',        // 动态页面的顶部头
+                    '.to-app-btn',        // 详情页的去APP按钮
+                    '.opus-read-more'     // "阅读更多"按钮(如果有)
+                ];
+                selectors.forEach(s => {
+                    const els = document.querySelectorAll(s);
+                    els.forEach(el => el.style.display = 'none');
+                });
+                // 强制白色背景
+                document.body.style.backgroundColor = '#ffffff';
+            }""")
+
+            # 滚动加载图片
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await asyncio.sleep(0.5)
+            await page.evaluate("window.scrollTo(0, 0)")
+            await asyncio.sleep(0.5)
+
+            # 截图
+            return await page.screenshot(full_page=True, type="jpeg", quality=85)
+
+        finally:
+            await context.close()
 
     @handle("b23.tv", r"b23\.tv/[A-Za-z\d\._?%&+\-=/#]+")
     @handle("bili2233", r"bili2233\.cn/[A-Za-z\d\._?%&+\-=/#]+")
@@ -180,6 +272,8 @@ class BilibiliParser(BaseParser):
     async def parse_dynamic(self, dynamic_id: int):
         """解析动态信息
 
+        策略: 优先使用浏览器截图 -> 失败则回退到原解析逻辑
+
         Args:
             dynamic_id (int): 动态 ID
         """
@@ -198,51 +292,82 @@ class BilibiliParser(BaseParser):
         # msgspec 转换主数据
         dynamic_data = convert(raw_data, DynamicData)
 
-        # 手动处理 orig 字段（msgspec 可能无法正确转换嵌套的 orig）
-        orig_info: DynamicInfo | None = dynamic_data.orig
-        if raw_data.get('item', {}).get('orig') and not orig_info:
-            try:
-                orig_info = convert(raw_data['item']['orig'], DynamicInfo)
-            except Exception as e:
-                logger.warning(f"手动转换 orig 数据失败: {e}")
-
-        # 当前动态信息 (转发者 或 原作者)
+        # 当前动态信息 (用于标题、作者等基础信息)
         current_info = dynamic_data.item
 
         # 作者信息始终显示当前动态的作者
         author = self.create_author(current_info.name, current_info.avatar)
 
-        # 默认内容来源是当前动态
-        content_source = current_info
-
-        # 转发逻辑处理
-        text = current_info.text  # 如果是转发，这里通常是转发评论；如果是原创，这里是正文
-
-        is_forward = orig_info is not None
-        if is_forward:
-            # 如果是转发，图片/媒体内容来源于原动态
-            content_source = orig_info
-
-            # 构建文本：转发评论 + 分割线 + 原动态作者/内容
-            forward_comment = current_info.desc_text or "转发动态"
-
-            # 获取原动态内容 (优先取 text，没有则取 desc_text)
-            orig_text = orig_info.text or orig_info.desc_text or "[原动态内容为空或无法解析]"
-
-            text = f"{forward_comment}\n\n---\n\n@{orig_info.name}：\n{orig_text}"
-
-        # 标题处理
-        title = content_source.title
+        # 尝试构建标题
+        title = current_info.title
         if not title:
-            # 如果没有标题，截取一部分文本作为标题
-            preview_text = text.replace("\n", " ") if text else ""
-            title = preview_text[:30] + "..." if len(preview_text) > 30 else preview_text
+            # 尝试从描述中截取标题
+            desc = current_info.desc_text or current_info.text or ""
+            title = desc[:30].replace("\n", " ") + "..." if desc else f"{author.name} 的动态"
 
-        # 下载图片 (从 content_source 获取，这样转发动态就能下载原动态的图)
-        contents: list[MediaContent] = []
-        for image_url in content_source.image_urls:
-            img_task = DOWNLOADER.download_img(image_url, ext_headers=self.headers)
-            contents.append(ImageContent(img_task))
+        # 尝试截图渲染路径
+        screenshot_success = False
+        contents = []
+        text = None
+
+        if HAS_HTMLRENDER:
+            try:
+                logger.debug(f"尝试使用浏览器截图渲染动态: {dynamic_id}")
+                img_bytes = await self._capture_dynamic_screenshot(dynamic_id)
+                contents.append(ImageContent(img_bytes))
+                screenshot_success = True
+                # 截图模式下，文本置空，因为内容都在图里了
+                text = None
+            except Exception as e:
+                logger.error(f"动态截图失败，将回退到普通解析模式: {e}")
+                screenshot_success = False
+        else:
+            logger.debug("未启用 htmlrender，使用普通解析模式")
+
+        # 回退路径 (Original Logic)
+        if not screenshot_success:
+            # --- 以下是原本的解析逻辑 ---
+
+            # 手动处理 orig 字段（msgspec 可能无法正确转换嵌套的 orig）
+            orig_info: DynamicInfo | None = dynamic_data.orig
+            if raw_data.get('item', {}).get('orig') and not orig_info:
+                try:
+                    orig_info = convert(raw_data['item']['orig'], DynamicInfo)
+                except Exception as e:
+                    logger.warning(f"手动转换 orig 数据失败: {e}")
+
+            # 默认内容来源是当前动态
+            content_source = current_info
+
+            # 文本处理
+            text = current_info.text  # 如果是转发，这里通常是转发评论；如果是原创，这里是正文
+
+            is_forward = orig_info is not None
+            if is_forward:
+                # 如果是转发，图片/媒体内容来源于原动态
+                content_source = orig_info
+
+                # 构建文本：转发评论 + 分割线 + 原动态作者/内容
+                forward_comment = current_info.desc_text or "转发动态"
+
+                # 获取原动态内容 (优先取 text，没有则取 desc_text)
+                orig_text = orig_info.text or orig_info.desc_text or "[原动态内容为空或无法解析]"
+
+                text = f"{forward_comment}\n\n---\n\n@{orig_info.name}：\n{orig_text}"
+
+            # 如果之前没有提取到标题，这里再尝试一次基于文本的标题提取
+            if not title or title == f"{author.name} 的动态":
+                preview_text = text.replace("\n", " ") if text else ""
+                title = preview_text[:30] + "..." if len(preview_text) > 30 else preview_text
+
+            # 下载图片 (从 content_source 获取，这样转发动态就能下载原动态的图)
+            for image_url in content_source.image_urls:
+                img_task = DOWNLOADER.download_img(image_url, ext_headers=self.headers)
+                contents.append(ImageContent(img_task))
+
+            # 如果是转发且原动态被删或者是空内容
+            if not contents and is_forward and not orig_info.text:
+                 text += "\n[原动态可能已被删除或暂不支持解析]"
 
         return self.result(
             title=title or "Bilibili 动态",
@@ -250,6 +375,7 @@ class BilibiliParser(BaseParser):
             timestamp=current_info.timestamp,
             author=author,
             contents=contents,
+            url=f"https://t.bilibili.com/{dynamic_id}"
         )
 
     async def parse_opus(self, opus_id: int):

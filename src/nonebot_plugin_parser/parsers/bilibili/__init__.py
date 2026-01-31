@@ -181,14 +181,22 @@ class BilibiliParser(BaseParser):
         """解析动态信息
 
         Args:
-            url (str): 动态链接
+            dynamic_id (int): 动态 ID
         """
         from bilibili_api.dynamic import Dynamic
 
         from .dynamic import DynamicData
 
         dynamic = Dynamic(dynamic_id, await self.credential)
-        dynamic_info = convert(await dynamic.get_info(), DynamicData).item
+        dynamic_data = convert(await dynamic.get_info(), DynamicData)
+
+        # 获取主要动态信息
+        dynamic_info = dynamic_data.item
+
+        # 如果是转发类型，尝试获取原动态的内容
+        if dynamic_data.orig and dynamic_data.orig.type == "DYNAMIC_TYPE_OPUS":
+            # 原动态是 opus 类型，使用原动态的内容
+            dynamic_info = dynamic_data.orig
 
         author = self.create_author(dynamic_info.name, dynamic_info.avatar)
 
@@ -198,9 +206,20 @@ class BilibiliParser(BaseParser):
             img_task = DOWNLOADER.download_img(image_url, ext_headers=self.headers)
             contents.append(ImageContent(img_task))
 
+        # 如果有转发评论，添加为文本
+        text = dynamic_info.text
+        if dynamic_data.orig and dynamic_info != dynamic_data.orig:
+            # 这是转发类型，添加转发者的评论
+            forward_comment = dynamic_data.item.text
+            if forward_comment:
+                if text:
+                    text = f"{forward_comment}\n\n---\n\n{text}"
+                else:
+                    text = forward_comment
+
         return self.result(
             title=dynamic_info.title,
-            text=dynamic_info.text,
+            text=text,
             timestamp=dynamic_info.timestamp,
             author=author,
             contents=contents,

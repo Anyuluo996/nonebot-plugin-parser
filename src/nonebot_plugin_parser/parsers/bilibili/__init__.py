@@ -67,6 +67,72 @@ class BilibiliParser(BaseParser):
             })
         return pw_cookies
 
+    async def _capture_opus_screenshot(self, opus_id: int) -> bytes:
+        """使用 htmlrender 截取图文动态页面"""
+        if not HAS_HTMLRENDER:
+            raise ImportError("htmlrender not installed")
+
+        url = f"https://m.bilibili.com/opus/{opus_id}"
+
+        # 获取浏览器实例 (复用 htmlrender 的浏览器)
+        browser = await get_browser()
+
+        # 创建上下文 (模拟手机端，布局更紧凑)
+        context = await browser.new_context(
+            viewport={"width": 450, "height": 800},
+            device_scale_factor=2,
+            is_mobile=True,
+            has_touch=True,
+            user_agent="Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+        )
+
+        try:
+            # 注入 Cookie
+            cookies = await self._get_playwright_cookies()
+            if cookies:
+                await context.add_cookies(cookies)
+
+            page = await context.new_page()
+
+            # 访问页面
+            await page.goto(url, wait_until="networkidle", timeout=20000)
+
+            # 等待核心元素
+            try:
+                await page.wait_for_selector(".opus-detail", timeout=5000)
+            except:
+                pass
+
+            # 注入 CSS/JS 清理页面干扰元素
+            await page.evaluate("""() => {
+                const selectors = [
+                    '.m-navbar',          // 顶部导航
+                    '.launch-app-btn',    // 底部唤起App
+                    '.open-app-float',    // 悬浮按钮
+                    '.m-float-openapp',   // 另一种悬浮
+                    '.to-app-btn',        // 详情页的去APP按钮
+                    '.opus-read-more'     // "阅读更多"按钮(如果有)
+                ];
+                selectors.forEach(s => {
+                    const els = document.querySelectorAll(s);
+                    els.forEach(el => el.style.display = 'none');
+                });
+                // 强制白色背景
+                document.body.style.backgroundColor = '#ffffff';
+            }""")
+
+            # 滚动加载图片
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await asyncio.sleep(0.5)
+            await page.evaluate("window.scrollTo(0, 0)")
+            await asyncio.sleep(0.5)
+
+            # 截图
+            return await page.screenshot(full_page=True, type="jpeg", quality=85)
+
+        finally:
+            await context.close()
+
     async def _capture_dynamic_screenshot(self, dynamic_id: int) -> bytes:
         """使用 htmlrender 截取动态页面"""
         if not HAS_HTMLRENDER:
@@ -381,11 +447,54 @@ class BilibiliParser(BaseParser):
     async def parse_opus(self, opus_id: int):
         """解析图文动态信息
 
+        策略: 优先使用浏览器截图 -> 失败则回退到原解析逻辑
+
         Args:
             opus_id (int): 图文动态 id
         """
         opus = Opus(opus_id, await self.credential)
-        return await self._parse_opus_obj(opus)
+
+        # 尝试截图渲染路径
+        screenshot_success = False
+        title = None
+        author = None
+        timestamp = None
+        contents = []
+        text = None
+
+        if HAS_HTMLRENDER:
+            try:
+                logger.debug(f"尝试使用浏览器截图渲染图文动态: {opus_id}")
+                img_bytes = await self._capture_opus_screenshot(opus_id)
+                contents.append(ImageContent(img_bytes))
+                screenshot_success = True
+
+                # 从 API 获取基础元数据（标题、作者等）
+                from .opus import OpusItem
+                opus_info = await opus.get_info()
+                if isinstance(opus_info, dict):
+                    opus_data = convert(opus_info, OpusItem)
+                    title = opus_data.title
+                    author = self.create_author(*opus_data.name_avatar)
+                    timestamp = opus_data.timestamp
+            except Exception as e:
+                logger.error(f"图文动态截图失败，将回退到普通解析模式: {e}")
+                screenshot_success = False
+        else:
+            logger.debug("未启用 htmlrender，使用普通解析模式")
+
+        # 回退路径 (Original Logic)
+        if not screenshot_success:
+            return await self._parse_opus_obj(opus)
+
+        return self.result(
+            title=title,
+            author=author,
+            timestamp=timestamp,
+            contents=contents,
+            text=text,
+            url=f"https://m.bilibili.com/opus/{opus_id}"
+        )
 
     async def parse_read_with_opus(self, read_id: int):
         """解析专栏信息, 使用 Opus 接口

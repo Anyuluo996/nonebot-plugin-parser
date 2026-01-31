@@ -3,8 +3,8 @@ from typing import TypeVar
 
 from nonebot import logger, get_driver, on_command
 from nonebot.params import CommandArg
-from nonebot.adapters import Message, Event
-from nonebot.adapters.nonebot import current_event
+from nonebot.adapters import Message
+from nonebot.matcher import current_event
 from nonebot_plugin_uninfo import Session, UniSession
 
 from .rule import SUPER_PRIVATE, Searched, SearchResult, on_keyword_regex

@@ -125,7 +125,7 @@ async def convert_video_to_gif(
     output_path: Path | None = None,
     fps: int = 15,
     width: int = 480,
-    optimize: bool = True,
+    optimize: bool = False,
 ) -> Path:
     """将视频转换为高质量 GIF（使用 palettegen 滤镜）
 
@@ -134,7 +134,7 @@ async def convert_video_to_gif(
         output_path (Path | None): 输出 GIF 路径，默认为视频同目录的 .gif 文件
         fps (int): 输出 GIF 的帧率，默认 15
         width (int): 输出 GIF 的宽度，默认 480（高度自动计算）
-        optimize (bool): 是否优化 GIF，默认 True
+        optimize (bool): 是否优化 GIF，默认 False
 
     Returns:
         Path: 输出 GIF 文件路径
@@ -186,8 +186,8 @@ async def convert_video_to_gif(
     if optimize:
         try:
             await optimize_gif(output_path)
-        except RuntimeError:
-            logger.debug("gifsicle 不可用，跳过优化")
+        except (RuntimeError, FileNotFoundError):
+            logger.debug("gifsicle 不可用或优化失败，跳过优化")
 
     return output_path
 

@@ -205,7 +205,8 @@ class BilibiliParser(BaseParser):
         dynamic_info = dynamic_data.item
 
         # 如果是转发类型，尝试获取原动态的内容
-        if orig_info:
+        is_forward = orig_info is not None
+        if is_forward:
             # 使用原动态的内容（不管是 OPUS 还是 DRAW 等其他类型）
             dynamic_info = orig_info
 
@@ -219,9 +220,9 @@ class BilibiliParser(BaseParser):
 
         # 如果有转发评论，添加为文本
         text = dynamic_info.text
-        if orig_info and dynamic_info != orig_info:
+        if is_forward:
             # 这是转发类型，添加转发者的评论
-            forward_comment = dynamic_data.item.text
+            forward_comment = dynamic_data.item.desc_text
             if forward_comment:
                 if text:
                     text = f"{forward_comment}\n\n---\n\n{text}"

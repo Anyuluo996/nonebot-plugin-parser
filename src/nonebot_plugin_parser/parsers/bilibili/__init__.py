@@ -155,13 +155,13 @@ class BilibiliParser(BaseParser):
             await asyncio.sleep(0.5)
 
             # === 核心优化：智能截图 ===
-            # 1. 尝试新版 OPUS 结构
-            target = page.locator(".opus-detail")
+            # 1. 尝试 opus-modules 结构 (Opus 页面的主要容器)
+            target = page.locator(".opus-modules")
             if await target.count() > 0 and await target.is_visible():
                 return await target.screenshot(type="jpeg", quality=85)
 
-            # 2. 尝试 opus-modules 结构
-            target = page.locator(".opus-modules")
+            # 2. 尝试 opus-detail (某些 Opus 变体可能使用)
+            target = page.locator(".opus-detail")
             if await target.count() > 0 and await target.is_visible():
                 return await target.screenshot(type="jpeg", quality=85)
 
@@ -229,7 +229,7 @@ class BilibiliParser(BaseParser):
                     body, html { background-color: #ffffff !important; }
 
                     /* 调整容器边距，让内容贴边，利用率更高 */
-                    .opus-detail, .dyn-card {
+                    .opus-modules, .opus-detail, .dyn-card {
                         margin: 0 !important;
                         padding-top: 10px !important;
                         padding-bottom: 20px !important;
@@ -258,17 +258,22 @@ class BilibiliParser(BaseParser):
             # 优先尝试截取具体的"动态卡片"元素，而不是全屏
             # 这样可以自动适应高度，并且裁剪掉左右多余的 <body> 边距
 
-            # 1. 尝试新版 OPUS 结构
+            # 1. 尝试 opus-modules (Opus 内容的主要容器)
+            target = page.locator(".opus-modules")
+            if await target.count() > 0 and await target.is_visible():
+                return await target.screenshot(type="jpeg", quality=85)
+
+            # 2. 尝试 opus-detail (某些 Opus 变体)
             target = page.locator(".opus-detail")
             if await target.count() > 0 and await target.is_visible():
                 return await target.screenshot(type="jpeg", quality=85)
 
-            # 2. 尝试旧版/通用 Dynamic 结构
+            # 3. 尝试 dyn-card (通用动态容器)
             target = page.locator(".dyn-card")
             if await target.count() > 0 and await target.is_visible():
                 return await target.screenshot(type="jpeg", quality=85)
 
-            # 3. 兜底：如果找不到特定容器，截取 body 但裁剪掉视口外的留白
+            # 4. 兜底：如果找不到特定容器，截取 body 但裁剪掉视口外的留白
             return await page.screenshot(full_page=True, type="jpeg", quality=85)
 
         finally:

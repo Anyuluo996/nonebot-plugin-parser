@@ -24,11 +24,13 @@ from ..base import (
 from ..data import Platform, ImageContent, MediaContent
 from ..cookie import ck2dict
 
-# 选择客户端
-select_client("curl_cffi")
-# 模拟浏览器，第二参数数值参考 curl_cffi 文档
-# https://curl-cffi.readthedocs.io/en/latest/impersonate.html
-request_settings.set("impersonate", "chrome131")
+# 使用 httpx 客户端（curl_cffi 会被重定向到 t.bilibili.com）
+# select_client("curl_cffi")
+# request_settings.set("impersonate", "chrome131")
+
+# 设置正确的 Referer，避免风控
+HEADERS["Referer"] = "https://www.bilibili.com/"
+HEADERS["Origin"] = "https://www.bilibili.com"
 
 
 class BilibiliParser(BaseParser):

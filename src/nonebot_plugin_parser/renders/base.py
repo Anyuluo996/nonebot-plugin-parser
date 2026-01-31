@@ -71,8 +71,13 @@ class BaseRenderer(ABC):
                     yield UniMessage(UniHelper.record_seg(path))
                 case ImageContent():
                     forwardable_segs.append(UniHelper.img_seg(path))
-                case DynamicContent():
-                    dynamic_segs.append(UniHelper.video_seg(path))
+                case DynamicContent() as dynamic:
+                    # 优先使用 gif_path（如果存在）
+                    if dynamic.gif_path is not None:
+                        gif_path = await dynamic.gif_path
+                        yield UniMessage(UniHelper.video_seg(gif_path))
+                    else:
+                        dynamic_segs.append(UniHelper.video_seg(path))
                 case GraphicsContent() as graphics:
                     graphics_msg = UniHelper.img_seg(path)
                     if graphics.text is not None:

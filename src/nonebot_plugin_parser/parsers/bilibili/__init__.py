@@ -188,6 +188,11 @@ class BilibiliParser(BaseParser):
         from .dynamic import DynamicData, DynamicInfo
 
         dynamic = Dynamic(dynamic_id, await self.credential)
+
+        # 原项目新增：is_article() 检测
+        if await dynamic.is_article():
+            return await self._parse_bilibili_api_opus(dynamic.turn_to_opus())
+
         raw_data = await dynamic.get_info()
 
         # msgspec 转换主数据

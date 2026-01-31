@@ -195,3 +195,4 @@ class DynamicData(Struct):
     """动态项目"""
 
     item: DynamicInfo
+    orig: DynamicInfo | None = None  # 转发的原动态

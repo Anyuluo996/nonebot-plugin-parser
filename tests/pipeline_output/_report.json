@@ -1,0 +1,38 @@
+{
+  "test_time": "2026-01-31 15:54:40",
+  "total_tests": 2,
+  "test_cases": [
+    {
+      "name": "普通图文动态",
+      "id": 1159504791855955984,
+      "expected": {
+        "has_text": true,
+        "has_images": true,
+        "image_count": 1
+      }
+    },
+    {
+      "name": "转发动态",
+      "id": 1156587796127809560,
+      "expected": {
+        "has_text": true,
+        "has_images": true,
+        "image_count": 2
+      }
+    }
+  ],
+  "output_directory": "tests\\pipeline_output",
+  "files_generated": [
+    "tests\\pipeline_output\\test1_converted.json",
+    "tests\\pipeline_output\\test1_download_info.json",
+    "tests\\pipeline_output\\test1_image1.jpg",
+    "tests\\pipeline_output\\test1_raw_api.json",
+    "tests\\pipeline_output\\test1_render_info.json",
+    "tests\\pipeline_output\\test2_converted.json",
+    "tests\\pipeline_output\\test2_download_info.json",
+    "tests\\pipeline_output\\test2_raw_api.json",
+    "tests\\pipeline_output\\test2_render_info.json",
+    "tests\\pipeline_output\\_render_test.png",
+    "tests\\pipeline_output\\_report.json"
+  ]
+}

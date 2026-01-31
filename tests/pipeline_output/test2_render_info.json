@@ -1,0 +1,21 @@
+{
+  "test_case": "转发动态",
+  "id": 1156587796127809560,
+  "data": {
+    "has_text": false,
+    "text": null,
+    "has_images": false,
+    "image_count": 0,
+    "images": []
+  },
+  "expected": {
+    "has_text": true,
+    "has_images": true,
+    "image_count": 2
+  },
+  "status": {
+    "text_match": false,
+    "images_match": false,
+    "all_match": false
+  }
+}

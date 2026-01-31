@@ -1,6 +1,6 @@
 [project]
 name = "nonebot-plugin-parser"
-version = "2.3.8"
+version = "2.3.9"
 description = "NoneBot2 链接分享解析 Alconna 版, 通用媒体卡片渲染(PIL 实现), 支持 B站/抖音/快手/微博/小红书/youtube/tiktok/twitter/acfun/nga"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -63,12 +63,12 @@ Repository = "https://github.com/fllesser/nonebot-plugin-parser"
 [project.optional-dependencies]
 htmlkit = ["nonebot-plugin-htmlkit>=0.1.0rc4"]
 htmlrender = ["nonebot-plugin-htmlrender>=0.6.7"]
-ytdlp = ["yt-dlp[default]>=2025.1.29"]
+ytdlp = ["yt-dlp[default]>=2026.1.29"]
 emosvg = ["emosvg>=0.1.6"]
 all = [
   "nonebot-plugin-htmlkit>=0.1.0rc4",
   "nonebot-plugin-htmlrender>=0.6.7",
-  "yt-dlp[default]>=2025.1.29",
+  "yt-dlp[default]>=2026.1.29",
   "emosvg>=0.1.6",
 ]
 
@@ -84,8 +84,8 @@ extras = [
   "emosvg>=0.1.6",
   "nonebot-plugin-htmlkit>=0.1.0rc4",
   "nonebot-plugin-htmlrender>=0.6.7",
-  "yt-dlp[default]>=2025.1.29",
-  "types-yt-dlp>=2025.1.29.20250120",
+  "yt-dlp[default]>=2026.1.29",
+  "types-yt-dlp>=2026.1.29.20260131",
 ]
 test = [
   "nonebug>=0.4.3,<1.0.0",
@@ -118,7 +118,7 @@ nonebug = { git = "https://github.com/nonebot/nonebug" }
 [tool.bumpversion]
 tag = true
 commit = true
-current_version = "2.3.8"
+current_version = "2.3.9"
 message = "release: bump vesion from {current_version} to {new_version}"
 
 [[tool.bumpversion.files]]

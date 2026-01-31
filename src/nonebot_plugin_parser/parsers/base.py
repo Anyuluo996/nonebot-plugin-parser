@@ -225,15 +225,52 @@ class BaseParser:
     def create_dynamic_contents(
         self,
         dynamic_urls: list[str],
+        convert_to_gif: bool = False,
     ):
-        """创建动态图片内容列表"""
+        """创建动态图片内容列表
+
+        Args:
+            dynamic_urls: 动态图片 URL 列表
+            convert_to_gif: 是否转换为 GIF，默认 False
+        """
         from .data import DynamicContent
 
         contents: list[DynamicContent] = []
         for url in dynamic_urls:
             task = DOWNLOADER.download_video(url, ext_headers=self.headers)
-            contents.append(DynamicContent(task))
+            if convert_to_gif:
+                # 创建转换任务
+                convert_task = self._convert_to_gif(task)
+                contents.append(DynamicContent(task, gif_path=convert_task))
+            else:
+                contents.append(DynamicContent(task))
         return contents
+
+    async def _convert_to_gif(self, video_task: Task[Path]) -> Task[Path]:
+        """将下载的视频转换为 GIF
+
+        Args:
+            video_task: 视频下载任务
+
+        Returns:
+            GIF 文件路径任务
+        """
+        from ..utils import convert_video_to_gif, has_audio_stream
+
+        # 等待视频下载完成
+        video_path = await video_task
+
+        # 检测是否有音频流（有音频流的不是 GIF）
+        has_audio = await has_audio_stream(video_path)
+
+        if has_audio:
+            # 有音频流，这是普通视频，不转换
+            from nonebot import logger
+            logger.debug(f"检测到音频流，跳过 GIF 转换: {video_path.name}")
+            return video_task
+
+        # 无音频流，转换为 GIF
+        return await convert_video_to_gif(video_path)
 
     def create_audio_content(
         self,

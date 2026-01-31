@@ -65,6 +65,168 @@ async def exec_ffmpeg_cmd(cmd: list[str]) -> None:
         raise RuntimeError(f"ffmpeg 执行失败: {error_msg}")
 
 
+async def exec_ffprobe_cmd(cmd: list[str]) -> str:
+    """执行 ffprobe 命令
+
+    Args:
+        cmd (list[str]): 命令序列
+
+    Returns:
+        str: ffprobe 输出
+    """
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+        return_code = process.returncode
+    except FileNotFoundError:
+        raise RuntimeError("ffprobe 未安装或无法找到可执行文件")
+
+    if return_code != 0:
+        error_msg = stderr.decode().strip()
+        raise RuntimeError(f"ffprobe 执行失败: {error_msg}")
+
+    return stdout.decode()
+
+
+async def has_audio_stream(video_path: Path) -> bool:
+    """检测视频文件是否包含音频流
+
+    Args:
+        video_path (Path): 视频文件路径
+
+    Returns:
+        bool: 是否包含音频流
+    """
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "a",  # 只选择音频流
+        "-show_entries",
+        "stream=codec_type",
+        "-of",
+        "csv=p=0",
+        str(video_path),
+    ]
+
+    try:
+        output = await exec_ffprobe_cmd(cmd)
+        return bool(output.strip())
+    except RuntimeError:
+        logger.warning(f"检测音频流失败: {video_path}")
+        return False
+
+
+async def convert_video_to_gif(
+    video_path: Path,
+    output_path: Path | None = None,
+    fps: int = 15,
+    width: int = 480,
+    optimize: bool = True,
+) -> Path:
+    """将视频转换为高质量 GIF（使用 palettegen 滤镜）
+
+    Args:
+        video_path (Path): 输入视频路径
+        output_path (Path | None): 输出 GIF 路径，默认为视频同目录的 .gif 文件
+        fps (int): 输出 GIF 的帧率，默认 15
+        width (int): 输出 GIF 的宽度，默认 480（高度自动计算）
+        optimize (bool): 是否优化 GIF，默认 True
+
+    Returns:
+        Path: 输出 GIF 文件路径
+    """
+    if output_path is None:
+        output_path = video_path.with_suffix(".gif")
+
+    logger.info(f"转换视频到 GIF: {video_path.name} -> {output_path.name}")
+
+    # 生成调色板的临时文件
+    palette_path = video_path.with_name(f"{video_path.stem}_palette.png")
+
+    # 第一步：生成调色板
+    # 使用 palettegen 滤镜生成自定义调色板，提高 GIF 质量
+    palette_cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video_path),
+        "-vf",
+        f"fps={fps},scale={width}:-1:flags=lanczos,palettegen",
+        str(palette_path),
+    ]
+
+    await exec_ffmpeg_cmd(palette_cmd)
+
+    # 第二步：使用调色板生成 GIF
+    # 使用 paletteuse 滤镜应用自定义调色板
+    gif_cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video_path),
+        "-i",
+        str(palette_path),
+        "-lavfi",
+        f"fps={fps},scale={width}:-1:flags=lanczos[x];[x][1:v]paletteuse",
+        str(output_path),
+    ]
+
+    await exec_ffmpeg_cmd(gif_cmd)
+
+    # 清理临时调色板文件
+    await safe_unlink(palette_path)
+
+    logger.success(f"GIF 转换成功: {output_path.name}, {fmt_size(output_path)}")
+
+    # 如果启用了优化，进一步使用 gifsicle 优化（如果可用）
+    if optimize:
+        try:
+            await optimize_gif(output_path)
+        except RuntimeError:
+            logger.debug("gifsicle 不可用，跳过优化")
+
+    return output_path
+
+
+async def optimize_gif(gif_path: Path) -> None:
+    """使用 gifsicle 优化 GIF 文件
+
+    Args:
+        gif_path (Path): GIF 文件路径
+    """
+    # 创建临时文件
+    temp_path = gif_path.with_name(f"{gif_path.stem}_temp.gif")
+
+    cmd = [
+        "gifsicle",
+        "-O3",  # 最大优化级别
+        "--lossy=30",  # 有损压缩，30 表示损失 30% 的质量
+        "--colors",
+        "256",  # 限制颜色数量
+        "-o",
+        str(temp_path),
+        str(gif_path),
+    ]
+
+    process = await asyncio.create_subprocess_exec(
+        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    _, stderr = await process.communicate()
+
+    if process.returncode == 0:
+        # 替换原文件
+        await asyncio.to_thread(temp_path.replace, gif_path)
+        logger.success(f"GIF 优化成功: {gif_path.name}, {fmt_size(gif_path)}")
+    else:
+        # 清理临时文件
+        await safe_unlink(temp_path)
+        raise RuntimeError(f"gifsicle 执行失败")
+
+
 async def merge_av(
     *,
     v_path: Path,

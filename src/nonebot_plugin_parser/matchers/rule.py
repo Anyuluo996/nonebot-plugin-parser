@@ -12,7 +12,7 @@ from nonebot.permission import Permission
 from nonebot_plugin_uninfo import Session, UniSession
 from nonebot_plugin_alconna.uniseg import Hyper, UniMsg
 
-from .filter import is_enabled
+from .filter import is_enabled, is_platform_enabled
 from ..config import gconfig
 
 # 统一的状态键

@@ -23,8 +23,14 @@ class TwitterParser(BaseParser):
         }
         data = {"q": url, "lang": "zh-cn"}
         async with AsyncClient(headers=headers, timeout=self.timeout) as client:
-            url = "https://xdown.app/api/ajaxSearch"
-            response = await client.post(url, data=data)
+            # 支持代理
+            from ..config import pconfig
+            proxies = None
+            if pconfig.proxy:
+                proxies = {"http://": pconfig.proxy, "https://": pconfig.proxy}
+
+            api_url = "https://xdown.app/api/ajaxSearch"
+            response = await client.post(api_url, data=data, proxies=proxies)
             return response.json()
 
     @handle("x.com", r"x.com/[0-9-a-zA-Z_]{1,20}/status/([0-9]+)")
@@ -62,12 +68,18 @@ class TwitterParser(BaseParser):
         video_url = None
         images_urls = []
         dynamic_urls = []
+        is_animated_gif = False  # 标记是否为动画 GIF
 
-        # 1. 提取缩略图链接
+        # 1. 检查缩略图 URL (tweet_video_thumb 通常是 GIF)
         thumb_tag = soup.find("img")
         if isinstance(thumb_tag, Tag):
             if cover := thumb_tag.get("src"):
                 cover_url = str(cover)
+                # 检查缩略图 URL 是否包含 tweet_video_thumb
+                if "tweet_video_thumb" in cover_url:
+                    is_animated_gif = True
+                    from nonebot import logger
+                    logger.info(f"检测到 tweet_video_thumb 缩略图，判断为 GIF")
 
         # 2. 提取下载链接
         tw_button_tags = soup.find_all("a", class_="tw-button-dl")
@@ -81,13 +93,18 @@ class TwitterParser(BaseParser):
 
             href = str(href)
             text = tag.get_text(strip=True)
+
             if "下载 MP4" in text:
                 video_url = href
                 break
             elif "下载图片" in text:
                 images_urls.append(href)
-            elif "下载 gif" in text:
+            elif "下载 gif" in text or "(gif)" in text.lower():
                 dynamic_urls.append(href)
+                # 通过下载链接文本确认是 GIF
+                is_animated_gif = True
+                from nonebot import logger
+                logger.info(f"检测到 '下载 gif' 链接，判断为 GIF")
 
         # 3. 提取标题
         title_tag = soup.find("h3")
@@ -105,9 +122,9 @@ class TwitterParser(BaseParser):
         if images_urls:
             contents.extend(self.create_image_contents(images_urls))
 
-        # 添加动态内容
+        # 添加动态内容（如果检测到是 GIF，则转换）
         if dynamic_urls:
-            contents.extend(self.create_dynamic_contents(dynamic_urls))
+            contents.extend(self.create_dynamic_contents(dynamic_urls, convert_to_gif=is_animated_gif))
 
         return self.result(
             title=title,

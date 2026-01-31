@@ -231,7 +231,7 @@ class BaseParser:
 
         Args:
             dynamic_urls: 动态图片 URL 列表
-            convert_to_gif: 是否转换为 GIF，默认 False
+            convert_to_gif: 是否转换为 GIF，默认 False（但会通过音轨检测自动判断）
         """
         from .data import DynamicContent
         import asyncio
@@ -239,19 +239,17 @@ class BaseParser:
         contents: list[DynamicContent] = []
         for url in dynamic_urls:
             task = DOWNLOADER.download_video(url, ext_headers=self.headers)
-            if convert_to_gif:
-                # 创建转换任务（使用 asyncio.create_task 包装异步调用）
-                convert_task = asyncio.create_task(self._convert_to_gif(task))
-                contents.append(DynamicContent(task, gif_path=convert_task))
-            else:
-                contents.append(DynamicContent(task))
+            # 始终创建转换任务，会在内部检测是否有音轨来决定是否转换
+            convert_task = asyncio.create_task(self._convert_to_gif(task, force_convert=convert_to_gif))
+            contents.append(DynamicContent(task, gif_path=convert_task))
         return contents
 
-    async def _convert_to_gif(self, video_task: Task[Path]) -> Path:
-        """将下载的视频转换为 GIF
+    async def _convert_to_gif(self, video_task: Task[Path], force_convert: bool = False) -> Path:
+        """将下载的视频转换为 GIF（如果没有音轨）
 
         Args:
             video_task: 视频下载任务
+            force_convert: 强制转换，默认 False
 
         Returns:
             GIF 文件路径
@@ -264,16 +262,16 @@ class BaseParser:
         # 检测是否有音频流（有音频流的不是 GIF）
         has_audio = await has_audio_stream(video_path)
 
-        if has_audio:
-            # 有音频流，这是普通视频，不转换
+        if has_audio and not force_convert:
+            # 有音频流且非强制转换，这是普通视频，不转换
             from nonebot import logger
             logger.debug(f"检测到音频流，跳过 GIF 转换: {video_path.name}")
             return video_path
 
-        # 无音频流，转换为 GIF
+        # 无音频流 或强制转换，转换为 GIF
         from nonebot import logger
         logger.info(f"开始转换视频到 GIF: {video_path.name}")
-        return await convert_video_to_gif(video_path)
+        return await convert_video_to_gif(video_path, optimize=False)
 
     def create_audio_content(
         self,

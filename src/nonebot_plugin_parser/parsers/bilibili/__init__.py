@@ -3,6 +3,7 @@ import asyncio
 from re import Match
 from typing import ClassVar, Any
 from collections.abc import AsyncGenerator
+from pathlib import Path
 
 from msgspec import convert
 from nonebot import logger
@@ -66,6 +67,18 @@ class BilibiliParser(BaseParser):
                 "path": "/"
             })
         return pw_cookies
+
+    async def _save_screenshot(self, img_bytes: bytes, content_type: str, content_id: int) -> Path:
+        """保存截图到缓存目录并返回路径"""
+        cache_dir = pconfig.cache_dir
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        filename = f"bili_{content_type}_{content_id}.jpg"
+        output_path = cache_dir / filename
+
+        # 写入文件
+        output_path.write_bytes(img_bytes)
+        return output_path
 
     async def _capture_opus_screenshot(self, opus_id: int) -> bytes:
         """使用 htmlrender 截取图文动态页面"""
@@ -380,7 +393,8 @@ class BilibiliParser(BaseParser):
             try:
                 logger.debug(f"尝试使用浏览器截图渲染动态: {dynamic_id}")
                 img_bytes = await self._capture_dynamic_screenshot(dynamic_id)
-                contents.append(ImageContent(img_bytes))
+                img_path = await self._save_screenshot(img_bytes, "dynamic", dynamic_id)
+                contents.append(ImageContent(img_path))
                 screenshot_success = True
                 # 截图模式下，文本置空，因为内容都在图里了
                 text = None
@@ -466,7 +480,8 @@ class BilibiliParser(BaseParser):
             try:
                 logger.debug(f"尝试使用浏览器截图渲染图文动态: {opus_id}")
                 img_bytes = await self._capture_opus_screenshot(opus_id)
-                contents.append(ImageContent(img_bytes))
+                img_path = await self._save_screenshot(img_bytes, "opus", opus_id)
+                contents.append(ImageContent(img_path))
                 screenshot_success = True
 
                 # 从 API 获取基础元数据（标题、作者等）

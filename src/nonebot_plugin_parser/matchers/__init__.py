@@ -76,9 +76,13 @@ async def parser_handler(
 
     # 2. 检查是否使用前缀强制触发
     force_parse = state.get(PSR_FORCE_PARSE_KEY, False) if state else False
+    logger.debug(f"强制解析标记: {force_parse}, state keys: {list(state.keys()) if state else 'None'}")
 
     # 3. 检查平台是否在当前群组被禁用（强制解析时跳过此检查）
-    if not force_parse and not is_platform_enabled(session, parser.platform.name):
+    platform_enabled = is_platform_enabled(session, parser.platform.name)
+    logger.debug(f"平台 {parser.platform.name} 启用状态: {platform_enabled}")
+
+    if not force_parse and not platform_enabled:
         logger.debug(f"平台 {parser.platform.name} 在群组 {session.scene_path} 中已被禁用，跳过解析")
         return
 

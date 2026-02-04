@@ -155,6 +155,7 @@ class KeywordRegexRule:
         # 检查是否使用了解析前缀强制触发
         force_parse = False
         parse_prefix = pconfig.parse_prefix
+        logger.debug(f"原始文本: '{text[:50]}...', 解析前缀: '{parse_prefix}'")
 
         # 检查前缀模式: nickname+ 或 nickname（空格）
         if text.startswith(f"{parse_prefix}+") or text.startswith(f"{parse_prefix} "):
@@ -165,6 +166,7 @@ class KeywordRegexRule:
             else:
                 text = text[len(f"{parse_prefix} "):].lstrip()
             state[PSR_FORCE_PARSE_KEY] = True
+            logger.debug(f"检测到前缀强制解析，去除前缀后文本: '{text[:50]}...'")
         else:
             state[PSR_FORCE_PARSE_KEY] = False
 

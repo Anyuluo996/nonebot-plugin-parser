@@ -5,6 +5,7 @@ from nonebot import logger, get_driver, on_command
 from nonebot.params import CommandArg
 from nonebot.adapters import Message
 from nonebot.matcher import current_event
+from nonebot.typing import T_State
 from nonebot_plugin_uninfo import Session, UniSession
 
 from .rule import SUPER_PRIVATE, Searched, SearchResult, on_keyword_regex, PSR_FORCE_PARSE_KEY
@@ -67,16 +68,14 @@ def clear_result_cache():
 async def parser_handler(
     sr: SearchResult = Searched(),
     session: Session = UniSession(),
+    state: T_State = None,
 ):
     """统一的解析处理器"""
     # 1. 获取对应平台 parser
     parser = get_parser(sr.keyword)
 
     # 2. 检查是否使用前缀强制触发
-    from nonebot.matcher import current_matcher
-    matcher = current_matcher.get()
-    state = matcher.state
-    force_parse = state.get(PSR_FORCE_PARSE_KEY, False)
+    force_parse = state.get(PSR_FORCE_PARSE_KEY, False) if state else False
 
     # 3. 检查平台是否在当前群组被禁用（强制解析时跳过此检查）
     if not force_parse and not is_platform_enabled(session, parser.platform.name):

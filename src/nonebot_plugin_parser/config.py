@@ -61,6 +61,8 @@ class Config(BaseModel):
     """Pilmoji 表情 CDN"""
     parser_emoji_style: EmojiStyle = EmojiStyle.FACEBOOK
     """Pilmoji 表情样式"""
+    parser_force_prefix: str = ""
+    """解析前缀，用于强制触发解析"""
 
     @property
     def nickname(self) -> str:
@@ -169,8 +171,8 @@ class Config(BaseModel):
 
     @property
     def parse_prefix(self) -> str:
-        """解析前缀，使用机器人昵称"""
-        return _nickname
+        """解析前缀"""
+        return self.parser_force_prefix if self.parser_force_prefix else _nickname
 
 
 pconfig: Config = get_plugin_config(Config)

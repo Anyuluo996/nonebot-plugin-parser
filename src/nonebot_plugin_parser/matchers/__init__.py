@@ -7,7 +7,7 @@ from nonebot.adapters import Message
 from nonebot.matcher import current_event
 from nonebot_plugin_uninfo import Session, UniSession
 
-from .rule import SUPER_PRIVATE, Searched, SearchResult, on_keyword_regex
+from .rule import SUPER_PRIVATE, Searched, SearchResult, on_keyword_regex, PSR_FORCE_PARSE_KEY
 from .filter import is_platform_enabled
 from ..utils import LimitedSizeDict
 from ..config import pconfig
@@ -72,8 +72,14 @@ async def parser_handler(
     # 1. 获取对应平台 parser
     parser = get_parser(sr.keyword)
 
-    # 2. 检查平台是否在当前群组被禁用
-    if not is_platform_enabled(session, parser.platform.name):
+    # 2. 检查是否使用前缀强制触发
+    from nonebot.matcher import current_matcher
+    matcher = current_matcher.get()
+    state = matcher.state
+    force_parse = state.get(PSR_FORCE_PARSE_KEY, False)
+
+    # 3. 检查平台是否在当前群组被禁用（强制解析时跳过此检查）
+    if not force_parse and not is_platform_enabled(session, parser.platform.name):
         logger.debug(f"平台 {parser.platform.name} 在群组 {session.scene_path} 中已被禁用，跳过解析")
         return
 

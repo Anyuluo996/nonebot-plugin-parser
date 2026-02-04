@@ -14,6 +14,13 @@ _cache_dir: Path = _store.get_plugin_cache_dir()
 _config_dir: Path = _store.get_plugin_config_dir()
 _data_dir: Path = _store.get_plugin_data_dir()
 
+# 获取全局配置和昵称（需要在 pconfig 之前初始化）
+_driver = get_driver()
+gconfig = _driver.config
+"""全局配置"""
+_nickname: str = next(iter(gconfig.nickname), "nonebot-plugin-parser")
+"""机器人昵称"""
+
 
 class Config(BaseModel):
     parser_bili_ck: str | None = None
@@ -168,7 +175,3 @@ class Config(BaseModel):
 
 pconfig: Config = get_plugin_config(Config)
 """插件配置"""
-gconfig = get_driver().config
-"""全局配置"""
-_nickname: str = next(iter(gconfig.nickname), "nonebot-plugin-parser")
-"""机器人昵称"""

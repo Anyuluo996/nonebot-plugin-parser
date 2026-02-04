@@ -13,10 +13,11 @@ from nonebot_plugin_uninfo import Session, UniSession
 from nonebot_plugin_alconna.uniseg import Hyper, UniMsg
 
 from .filter import is_enabled, is_platform_enabled
-from ..config import gconfig
+from ..config import gconfig, pconfig
 
 # 统一的状态键
 PSR_SEARCHED_KEY: Literal["psr-searched"] = "psr-searched"
+PSR_FORCE_PARSE_KEY: Literal["psr-force-parse"] = "psr-force-parse"
 
 
 # 定义 JSON 卡片的数据结构
@@ -150,6 +151,22 @@ class KeywordRegexRule:
         text = _extract_text(message)
         if not text:
             return False
+
+        # 检查是否使用了解析前缀强制触发
+        force_parse = False
+        parse_prefix = pconfig.parse_prefix
+
+        # 检查前缀模式: nickname+ 或 nickname（空格）
+        if text.startswith(f"{parse_prefix}+") or text.startswith(f"{parse_prefix} "):
+            force_parse = True
+            # 去除前缀
+            if text.startswith(f"{parse_prefix}+"):
+                text = text[len(f"{parse_prefix}+"):].lstrip()
+            else:
+                text = text[len(f"{parse_prefix} "):].lstrip()
+            state[PSR_FORCE_PARSE_KEY] = True
+        else:
+            state[PSR_FORCE_PARSE_KEY] = False
 
         for keyword, pattern in self.key_pattern_list:
             if keyword not in text:

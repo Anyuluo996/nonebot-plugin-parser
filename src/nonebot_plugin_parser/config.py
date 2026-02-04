@@ -160,6 +160,11 @@ class Config(BaseModel):
         """Pilmoji 表情样式"""
         return self.parser_emoji_style
 
+    @property
+    def parse_prefix(self) -> str:
+        """解析前缀，使用机器人昵称"""
+        return _nickname
+
 
 pconfig: Config = get_plugin_config(Config)
 """插件配置"""

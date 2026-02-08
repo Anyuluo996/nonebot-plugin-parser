@@ -3,10 +3,10 @@ from pathlib import Path
 
 from nonebot import on_command
 from nonebot.rule import to_me
-from nonebot.matcher import Matcher
-from nonebot.permission import SUPERUSER
-from nonebot.adapters import Message
 from nonebot.params import CommandArg
+from nonebot.matcher import Matcher
+from nonebot.adapters import Message
+from nonebot.permission import SUPERUSER
 from nonebot_plugin_uninfo import ADMIN, Session, UniSession
 
 from ..config import pconfig
@@ -164,6 +164,7 @@ def get_enabled_platforms(session: Session) -> list[str]:
 
 # ==================== 指令定义 ====================
 
+
 @on_command("开启解析", aliases={"开启解析功能"}, rule=to_me(), permission=SUPERUSER | ADMIN(), block=True).handle()
 async def _(matcher: Matcher, session: Session = UniSession(), args: Message = CommandArg()):
     """开启解析
@@ -185,8 +186,7 @@ async def _(matcher: Matcher, session: Session = UniSession(), args: Message = C
         # 开启指定平台
         platform_value = get_platform_display_name(arg_text)
         if not platform_value:
-            await matcher.finish(f"未识别的平台: {arg_text}\n"
-                              f"支持的平台: {', '.join(p.value for p in PlatformEnum)}")
+            await matcher.finish(f"未识别的平台: {arg_text}\n支持的平台: {', '.join(p.value for p in PlatformEnum)}")
 
         disabled_platforms = _DISABLED_PLATFORMS_DICT.get(group_key, set())
         if platform_value in disabled_platforms:
@@ -220,8 +220,7 @@ async def _(matcher: Matcher, session: Session = UniSession(), args: Message = C
         # 关闭指定平台
         platform_value = get_platform_display_name(arg_text)
         if not platform_value:
-            await matcher.finish(f"未识别的平台: {arg_text}\n"
-                              f"支持的平台: {', '.join(p.value for p in PlatformEnum)}")
+            await matcher.finish(f"未识别的平台: {arg_text}\n支持的平台: {', '.join(p.value for p in PlatformEnum)}")
 
         disabled_platforms = _DISABLED_PLATFORMS_DICT.setdefault(group_key, set())
         if platform_value not in disabled_platforms:

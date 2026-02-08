@@ -233,8 +233,9 @@ class BaseParser:
             dynamic_urls: 动态图片 URL 列表
             convert_to_gif: 是否转换为 GIF，默认 False（仅推特平台使用）
         """
-        from .data import DynamicContent
         import asyncio
+
+        from .data import DynamicContent
 
         contents: list[DynamicContent] = []
         for url in dynamic_urls:
@@ -256,7 +257,7 @@ class BaseParser:
         Returns:
             GIF 文件路径
         """
-        from ..utils import convert_video_to_gif, has_audio_stream
+        from ..utils import has_audio_stream, convert_video_to_gif
 
         # 等待视频下载完成
         video_path = await video_task
@@ -267,11 +268,13 @@ class BaseParser:
         if has_audio:
             # 有音频流，这是普通视频，不转换
             from nonebot import logger
+
             logger.debug(f"检测到音频流，跳过 GIF 转换: {video_path.name}")
             return video_path
 
         # 无音频流，转换为 GIF
         from nonebot import logger
+
         logger.info(f"开始转换视频到 GIF: {video_path.name}")
         return await convert_video_to_gif(video_path, optimize=False)
 

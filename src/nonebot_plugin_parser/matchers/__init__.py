@@ -3,14 +3,14 @@ from typing import TypeVar
 
 from nonebot import logger, get_driver, on_command
 from nonebot.params import CommandArg
-from nonebot.adapters import Message
-from nonebot.matcher import current_event
 from nonebot.typing import T_State
+from nonebot.matcher import current_event
+from nonebot.adapters import Message
 from nonebot_plugin_uninfo import Session, UniSession
 
-from .rule import SUPER_PRIVATE, Searched, SearchResult, on_keyword_regex, PSR_FORCE_PARSE_KEY
-from .filter import is_platform_enabled
+from .rule import SUPER_PRIVATE, PSR_FORCE_PARSE_KEY, Searched, SearchResult, on_keyword_regex
 from ..utils import LimitedSizeDict
+from .filter import is_platform_enabled
 from ..config import pconfig
 from ..helper import UniHelper, UniMessage
 from ..parsers import BaseParser, ParseResult, BilibiliParser

@@ -1,4 +1,5 @@
 import asyncio
+from typing import ClassVar
 from pathlib import Path
 
 import aiofiles
@@ -10,10 +11,11 @@ from .task import auto_task
 from ..utils import merge_av, safe_unlink, generate_file_name
 from ..config import pconfig
 from ..constants import COMMON_HEADER, DOWNLOAD_TIMEOUT
-from ..exception import DownloadException, ZeroSizeException, SizeLimitException
+from ..exception import DownloadException, SizeLimitException
 
 try:
     from curl_cffi import requests as curl_requests
+
     CURL_CFFI_AVAILABLE = True
 except ImportError:
     CURL_CFFI_AVAILABLE = False
@@ -22,9 +24,14 @@ except ImportError:
 class StreamDownloader:
     """Downloader class for downloading files with stream"""
 
+    # 类级别的锁字典，用于防止同一个 URL 被并发下载
+    _download_locks: ClassVar[dict[str, asyncio.Lock]] = {}
+
     def __init__(self):
         self.headers: dict[str, str] = COMMON_HEADER.copy()
         self.cache_dir: Path = pconfig.cache_dir
+        # 确保缓存目录存在
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.client: AsyncClient = AsyncClient(timeout=DOWNLOAD_TIMEOUT, verify=False)
 
     @auto_task
@@ -48,6 +55,19 @@ class StreamDownloader:
         Raises:
             httpx.HTTPError: When download fails
         """
+
+        # 获取或创建该 URL 的锁，防止并发下载同一文件
+        lock = self._download_locks.setdefault(url, asyncio.Lock())
+        async with lock:
+            return await self._download_file_internal(url, file_name, ext_headers)
+
+    async def _download_file_internal(
+        self,
+        url: str,
+        file_name: str | None = None,
+        ext_headers: dict[str, str] | None = None,
+    ) -> Path:
+        """内部下载实现（已在锁保护下）"""
 
         if not file_name:
             file_name = generate_file_name(url)
@@ -130,7 +150,11 @@ class StreamDownloader:
         # 使用 Chrome 的 TLS 指纹来绕过检测
         headers = {
             "Referer": "https://bbs.nga.cn/",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/120.0.0.0 Safari/537.36"
+            ),
         }
 
         response = curl_requests.get(

@@ -1,13 +1,13 @@
 import json
 import asyncio
 from re import Match
-from typing import ClassVar, Any
-from collections.abc import AsyncGenerator
+from typing import Any, ClassVar
 from pathlib import Path
+from collections.abc import AsyncGenerator
 
 from msgspec import convert
 from nonebot import logger
-from bilibili_api import HEADERS, Credential, select_client, request_settings
+from bilibili_api import HEADERS, Credential
 from bilibili_api.opus import Opus
 from bilibili_api.video import Video
 from bilibili_api.login_v2 import QrCodeLogin, QrCodeLoginEvents
@@ -15,6 +15,7 @@ from bilibili_api.login_v2 import QrCodeLogin, QrCodeLoginEvents
 # 尝试导入 htmlrender
 try:
     from nonebot_plugin_htmlrender import get_browser
+
     HAS_HTMLRENDER = True
 except ImportError:
     HAS_HTMLRENDER = False
@@ -60,12 +61,7 @@ class BilibiliParser(BaseParser):
         cookies_dict = cred.get_cookies()
         pw_cookies = []
         for k, v in cookies_dict.items():
-            pw_cookies.append({
-                "name": k,
-                "value": v,
-                "domain": ".bilibili.com",
-                "path": "/"
-            })
+            pw_cookies.append({"name": k, "value": v, "domain": ".bilibili.com", "path": "/"})
         return pw_cookies
 
     async def _save_screenshot(self, img_bytes: bytes, content_type: str, content_id: int) -> Path:
@@ -97,7 +93,11 @@ class BilibiliParser(BaseParser):
             device_scale_factor=3,
             is_mobile=True,
             has_touch=True,
-            user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
+            user_agent=(
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
+                "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+                "Version/16.6 Mobile/15E148 Safari/604.1"
+            ),
         )
 
         try:
@@ -114,7 +114,7 @@ class BilibiliParser(BaseParser):
             # 等待核心内容加载
             try:
                 await page.wait_for_selector(".opus-modules, .opus-detail", timeout=6000)
-            except:
+            except Exception:
                 pass
 
             # === 核心优化：注入 CSS 清理页面 ===
@@ -188,7 +188,11 @@ class BilibiliParser(BaseParser):
             device_scale_factor=3,
             is_mobile=True,
             has_touch=True,
-            user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1"
+            user_agent=(
+                "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
+                "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+                "Version/16.6 Mobile/15E148 Safari/604.1"
+            ),
         )
 
         try:
@@ -205,7 +209,7 @@ class BilibiliParser(BaseParser):
             # 等待核心内容加载 (支持新版 Opus 和旧版 Dynamic)
             try:
                 await page.wait_for_selector(".opus-modules, .dyn-card, .opus-detail", timeout=6000)
-            except:
+            except Exception:
                 pass
 
             # === 核心优化：注入 CSS 清理页面 ===
@@ -245,7 +249,7 @@ class BilibiliParser(BaseParser):
                 expand_btn = page.locator(".dyn-content__expand")
                 if await expand_btn.count() > 0 and await expand_btn.is_visible():
                     await expand_btn.click()
-            except:
+            except Exception:
                 pass
 
             # 滚动一下确保图片懒加载触发
@@ -337,6 +341,7 @@ class BilibiliParser(BaseParser):
             return await self.parse_opus(opus_id)
         except Exception as e:
             from bilibili_api.exceptions import ArgsException
+
             if isinstance(e, ArgsException):
                 # Opus 接口解析失败，降级使用 Dynamic 接口
                 logger.info(f"Opus 接口解析失败 {opus_id}，尝试使用 Dynamic 接口")
@@ -476,9 +481,9 @@ class BilibiliParser(BaseParser):
 
             # 手动处理 orig 字段（msgspec 可能无法正确转换嵌套的 orig）
             orig_info: DynamicInfo | None = dynamic_data.orig
-            if raw_data.get('item', {}).get('orig') and not orig_info:
+            if raw_data.get("item", {}).get("orig") and not orig_info:
                 try:
-                    orig_info = convert(raw_data['item']['orig'], DynamicInfo)
+                    orig_info = convert(raw_data["item"]["orig"], DynamicInfo)
                 except Exception as e:
                     logger.warning(f"手动转换 orig 数据失败: {e}")
 
@@ -513,7 +518,7 @@ class BilibiliParser(BaseParser):
 
             # 如果是转发且原动态被删或者是空内容
             if not contents and is_forward and not orig_info.text:
-                 text += "\n[原动态可能已被删除或暂不支持解析]"
+                text += "\n[原动态可能已被删除或暂不支持解析]"
 
         return self.result(
             title=title or "Bilibili 动态",
@@ -521,7 +526,7 @@ class BilibiliParser(BaseParser):
             timestamp=current_info.timestamp,
             author=author,
             contents=contents,
-            url=f"https://t.bilibili.com/{dynamic_id}"
+            url=f"https://t.bilibili.com/{dynamic_id}",
         )
 
     async def parse_opus(self, opus_id: int):
@@ -552,6 +557,7 @@ class BilibiliParser(BaseParser):
 
                 # 从 API 获取基础元数据（标题、作者等）
                 from .opus import OpusItem
+
                 opus_info = await opus.get_info()
                 if isinstance(opus_info, dict):
                     opus_data = convert(opus_info, OpusItem)
@@ -574,7 +580,7 @@ class BilibiliParser(BaseParser):
             timestamp=timestamp,
             contents=contents,
             text=text,
-            url=f"https://m.bilibili.com/opus/{opus_id}"
+            url=f"https://m.bilibili.com/opus/{opus_id}",
         )
 
     async def parse_read_with_opus(self, read_id: int):

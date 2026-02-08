@@ -30,7 +30,21 @@
       "Bash(git merge:*)",
       "Bash(git stash push:*)",
       "Bash(git stash:*)",
-      "Bash(playwright install:*)"
+      "Bash(playwright install:*)",
+      "Bash(.venvScriptspython.exe tests/test_force_parse.py)",
+      "Bash(.venv/Scripts/python:*)",
+      "Bash(go build:*)",
+      "Bash(./goProxyPool.exe:*)",
+      "Bash(for:*)",
+      "Bash(do)",
+      "Bash(echo:*)",
+      "Bash(curl:*)",
+      "Bash(done)",
+      "Bash(git log:*)",
+      "Bash(xargs:*)",
+      "Bash(uv lock:*)",
+      "Bash(uv run ruff check:*)",
+      "Bash(uv run ruff format:*)"
     ]
   }
 }

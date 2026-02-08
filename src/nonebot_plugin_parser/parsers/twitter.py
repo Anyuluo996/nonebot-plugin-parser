@@ -25,6 +25,7 @@ class TwitterParser(BaseParser):
 
         # 支持代理
         from ..config import pconfig
+
         proxy = pconfig.proxy if pconfig.proxy else None
 
         async with AsyncClient(headers=headers, timeout=self.timeout, proxy=proxy) as client:
@@ -78,7 +79,8 @@ class TwitterParser(BaseParser):
                 if "tweet_video_thumb" in cover_url:
                     is_animated_gif = True
                     from nonebot import logger
-                    logger.info(f"检测到 tweet_video_thumb 缩略图，判断为 GIF")
+
+                    logger.info("检测到 tweet_video_thumb 缩略图，判断为 GIF")
 
         # 2. 提取下载链接
         tw_button_tags = soup.find_all("a", class_="tw-button-dl")
@@ -103,7 +105,8 @@ class TwitterParser(BaseParser):
                 # 通过下载链接文本确认是 GIF
                 is_animated_gif = True
                 from nonebot import logger
-                logger.info(f"检测到 '下载 gif' 链接，判断为 GIF")
+
+                logger.info("检测到 '下载 gif' 链接，判断为 GIF")
 
         # 3. 提取标题
         title_tag = soup.find("h3")

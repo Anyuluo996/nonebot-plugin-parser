@@ -12,7 +12,7 @@ from nonebot.permission import Permission
 from nonebot_plugin_uninfo import Session, UniSession
 from nonebot_plugin_alconna.uniseg import Hyper, UniMsg
 
-from .filter import is_enabled, is_platform_enabled
+from .filter import is_enabled
 from ..config import gconfig, pconfig
 
 # 统一的状态键
@@ -153,7 +153,6 @@ class KeywordRegexRule:
             return False
 
         # 检查是否使用了解析前缀强制触发
-        force_parse = False
         parse_prefix = pconfig.parse_prefix
 
         # 如果没有设置前缀，跳过前缀检查
@@ -162,12 +161,11 @@ class KeywordRegexRule:
         else:
             # 检查前缀模式: prefix+ 或 prefix（空格）
             if text.startswith(f"{parse_prefix}+") or text.startswith(f"{parse_prefix} "):
-                force_parse = True
                 # 去除前缀
                 if text.startswith(f"{parse_prefix}+"):
-                    text = text[len(f"{parse_prefix}+"):].lstrip()
+                    text = text[len(f"{parse_prefix}+") :].lstrip()
                 else:
-                    text = text[len(f"{parse_prefix} "):].lstrip()
+                    text = text[len(f"{parse_prefix} ") :].lstrip()
                 logger.debug(f"检测到前缀 '{parse_prefix}' 强制解析，去除后: '{text[:50]}...'")
                 state[PSR_FORCE_PARSE_KEY] = True
             else:

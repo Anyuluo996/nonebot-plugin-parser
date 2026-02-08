@@ -212,10 +212,8 @@ async def optimize_gif(gif_path: Path) -> None:
         str(gif_path),
     ]
 
-    process = await asyncio.create_subprocess_exec(
-        *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-    )
-    _, stderr = await process.communicate()
+    process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    _, _stderr = await process.communicate()
 
     if process.returncode == 0:
         # 替换原文件
@@ -224,7 +222,7 @@ async def optimize_gif(gif_path: Path) -> None:
     else:
         # 清理临时文件
         await safe_unlink(temp_path)
-        raise RuntimeError(f"gifsicle 执行失败")
+        raise RuntimeError("gifsicle 执行失败")
 
 
 async def merge_av(

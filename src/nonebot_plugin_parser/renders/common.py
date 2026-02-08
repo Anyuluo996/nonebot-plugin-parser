@@ -771,7 +771,7 @@ class CommonRenderer(ImageRenderer):
         Returns:
             处理后的图片对象，失败返回 None
         """
-        if not img_path.exists():
+        if not img_path.exists():  # noqa: ASYNC240
             return None
 
         with Image.open(img_path) as original_img:

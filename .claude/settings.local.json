@@ -46,7 +46,9 @@
       "Bash(uv run ruff check:*)",
       "Bash(uv run ruff format:*)",
       "Bash(git cherry-pick bc5446d 122896c)",
-      "Bash(uv run ruff fix src/)"
+      "Bash(uv run ruff fix src/)",
+      "WebFetch(domain:github.com)",
+      "Bash(gh repo view Anyuluo996/nonebot-plugin-parser --json files --jq '.files[].path')"
     ]
   }
 }

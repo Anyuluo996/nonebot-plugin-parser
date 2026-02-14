@@ -41,7 +41,7 @@ classifiers = [
 dependencies = [
   "nonebot2>=2.4.3,<3.0.0",
   "pillow>=11.0.0",
-  "tqdm>=4.67.1,<5.0.0",
+  "tqdm>=4.67.3,<5.0.0",
   "aiofiles>=25.1.0",
   "httpx>=0.27.2,<1.0.0",
   "msgspec>=0.20.0,<1.0.0",
@@ -49,7 +49,7 @@ dependencies = [
   "beautifulsoup4>=4.12.0,<5.0.0",
   "curl_cffi>=0.13.0,<1.0.0,!=0.14.0",
   "bilibili-api-python>=17.4.1,<18.0.0",
-  "nonebot-plugin-alconna>=0.59.4,<1.0.0",
+  "nonebot-plugin-alconna>=0.60.4,<1.0.0",
   "nonebot-plugin-apscheduler>=0.5.0,<1.0.0",
   "nonebot-plugin-localstore>=0.7.4,<1.0.0",
   "nonebot-plugin-uninfo>=0.10.1,<1.0.0",
@@ -207,6 +207,7 @@ ignore = [
   "RUF003", # ambiguous-unicode-character-comment
   "W191",   # indentation contains tabs
   "TID252", # relative-import
+  "ASYNC240", # blocking-path-method-in-async-function
 ]
 
 [tool.ruff.lint.isort]

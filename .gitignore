@@ -157,9 +157,5 @@ coverage*.xml
 .vscode/
 
 
-# env
-!.env.test
-.env.*
-render_result.md
-render_result_html.md
-render_result_combined.md*/原仓库/
+# 原仓库对比文件
+原仓库/

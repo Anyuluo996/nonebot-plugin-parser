@@ -105,7 +105,7 @@ class TwitterParser(BaseParser):
                     contents.append(self.create_video_content(media.url, media.thumbnail_url))
             elif media.type == "image":
                 # 图片内容
-                contents.append(self.create_image_content(media.url))
+                contents.extend(self.create_image_contents([media.url]))
 
         # 处理转发信息
         repost = self._collect_vx_result(data.qrt) if data.qrt else None
@@ -135,7 +135,7 @@ class TwitterParser(BaseParser):
                 else:
                     contents.append(self.create_video_content(media.url, media.thumbnail_url))
             elif media.type == "image":
-                contents.append(self.create_image_content(media.url))
+                contents.extend(self.create_image_contents([media.url]))
 
         return self.result(
             author=author,

@@ -226,12 +226,14 @@ class BaseParser:
         self,
         dynamic_urls: list[str],
         convert_to_gif: bool = False,
+        cover_url: str | None = None,
     ):
         """创建动态图片内容列表
 
         Args:
             dynamic_urls: 动态图片 URL 列表
             convert_to_gif: 是否转换为 GIF，默认 False（仅推特平台使用）
+            cover_url: 缩略图 URL
         """
         import asyncio
 
@@ -240,12 +242,18 @@ class BaseParser:
         contents: list[DynamicContent] = []
         for url in dynamic_urls:
             task = DOWNLOADER.download_video(url, ext_headers=self.headers)
+
+            # 处理缩略图
+            cover_task = None
+            if cover_url:
+                cover_task = DOWNLOADER.download_img(cover_url, ext_headers=self.headers)
+
             if convert_to_gif:
                 # 创建转换任务（仅在指定时才进行GIF转换）
                 convert_task = asyncio.create_task(self._convert_to_gif(task))
-                contents.append(DynamicContent(task, gif_path=convert_task))
+                contents.append(DynamicContent(task, gif_path=convert_task, cover=cover_task))
             else:
-                contents.append(DynamicContent(task))
+                contents.append(DynamicContent(task, cover=cover_task))
         return contents
 
     async def _convert_to_gif(self, video_task: Task[Path]) -> Path:

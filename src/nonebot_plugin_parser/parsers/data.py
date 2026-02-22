@@ -76,6 +76,17 @@ class DynamicContent(MediaContent):
     """动态内容 视频格式 后续转 gif"""
 
     gif_path: Path | None = None
+    cover: Path | Task[Path] | None = None
+    """视频封面（缩略图）"""
+
+    async def get_cover_path(self) -> Path | None:
+        """获取封面路径"""
+        if self.cover is None:
+            return None
+        if isinstance(self.cover, Path):
+            return self.cover
+        self.cover = await self.cover
+        return self.cover
 
 
 @dataclass(repr=False, slots=True)

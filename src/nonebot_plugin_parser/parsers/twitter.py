@@ -3,15 +3,167 @@ from typing import Any, ClassVar
 from itertools import chain
 
 from httpx import AsyncClient
+from msgspec import Struct, field
+from nonebot import logger
+from msgspec.json import Decoder
 
 from .base import BaseParser, PlatformEnum, handle
-from .data import Platform, ParseResult
+from .data import Platform, ParseResult, MediaContent
 from ..exception import ParseException
+
+
+class MediaElement(Struct):
+    """媒体元素"""
+    type: str
+    """媒体类型 video/image/gif"""
+    url: str
+    altText: str | None = None
+    thumbnail_url: str | None = None
+    duration_millis: int | None = None
+
+
+class VxTwitterResponse(Struct):
+    """vx Twitter API 响应"""
+    article: str | None
+    date_epoch: int
+    fetched_on: int
+    likes: int
+    text: str
+    user_name: str
+    """用户昵称（显示名称）"""
+    user_screen_name: str
+    """用户ID (@username)"""
+    user_profile_image_url: str
+    """用户头像 URL"""
+    qrt: "VxTwitterResponse | None" = None
+    """转发信息"""
+    qrtURL: str | None = None
+    media_extended: list[MediaElement] = field(default_factory=list)
+    """扩展媒体信息"""
+
+
+vx_decoder = Decoder(VxTwitterResponse)
 
 
 class TwitterParser(BaseParser):
     # 平台信息
     platform: ClassVar[Platform] = Platform(name=PlatformEnum.TWITTER, display_name="小蓝鸟")
+
+    @handle("x.com", r"x.com/[0-9-a-zA-Z_]{1,20}/status/([0-9]+)")
+    async def _parse(self, searched: re.Match[str]) -> ParseResult:
+        """解析 Twitter 链接（混合方案）"""
+        url = f"https://{searched.group(0)}"
+
+        try:
+            # 优先使用 vx Twitter API（获取完整信息）
+            logger.debug(f"尝试使用 vx Twitter API 解析: {url}")
+            return await self.parse_by_vxapi(url)
+        except Exception as e:
+            logger.warning(f"vx Twitter API 解析失败，降级到 xdown.app API: {e}")
+            # 降级到 xdown.app（保持 GIF 转换功能）
+            return await self.parse_by_xdown(url)
+
+    async def parse_by_vxapi(self, url: str) -> ParseResult:
+        """使用 vx Twitter API 解析（获取完整用户信息和元数据）
+
+        Args:
+            url: Twitter 链接
+
+        Returns:
+            ParseResult: 包含完整信息的解析结果
+        """
+        # API URL 转换: x.com/user/status/123 -> api.vxtwitter.com/user/status/123
+        api_url = url.replace("x.com/", "api.vxtwitter.com/")
+
+        # httpx 会自动使用环境变量的代理设置
+        async with AsyncClient(headers=self.headers, timeout=self.timeout, verify=False) as client:
+            response = await client.get(api_url)
+            response.raise_for_status()
+
+        # 解析 JSON 响应
+        data: VxTwitterResponse = vx_decoder.decode(response.content)
+
+        # 提取完整的作者信息
+        author = self.create_author(
+            name=data.user_screen_name,
+            avatar=data.user_profile_image_url
+        )
+
+        # 处理媒体内容
+        contents: list[MediaContent] = []
+        for media in data.media_extended:
+            if media.type in ("video", "gif"):
+                # 检测是否为 GIF（tweet_video 是 Twitter 的 GIF 格式）
+                is_gif = "tweet_video" in media.url or media.type == "gif"
+
+                if is_gif:
+                    # GIF 内容：保留转换功能
+                    logger.debug(f"检测到 GIF 内容，将转换为 GIF: {media.url}")
+                    contents.extend(self.create_dynamic_contents([media.url], convert_to_gif=True))
+                else:
+                    # 普通视频
+                    contents.append(self.create_video_content(media.url, media.thumbnail_url))
+            elif media.type == "image":
+                # 图片内容
+                contents.append(self.create_image_content(media.url))
+
+        # 处理转发信息
+        repost = self._collect_vx_result(data.qrt) if data.qrt else None
+
+        return self.result(
+            author=author,
+            title=data.article,
+            text=data.text,
+            timestamp=data.date_epoch,
+            contents=contents,
+            repost=repost,
+        )
+
+    def _collect_vx_result(self, data: VxTwitterResponse) -> ParseResult:
+        """递归收集转发信息"""
+        author = self.create_author(
+            name=data.user_screen_name,
+            avatar=data.user_profile_image_url
+        )
+
+        contents: list[MediaContent] = []
+        for media in data.media_extended:
+            if media.type in ("video", "gif"):
+                is_gif = "tweet_video" in media.url or media.type == "gif"
+                if is_gif:
+                    contents.extend(self.create_dynamic_contents([media.url], convert_to_gif=True))
+                else:
+                    contents.append(self.create_video_content(media.url, media.thumbnail_url))
+            elif media.type == "image":
+                contents.append(self.create_image_content(media.url))
+
+        return self.result(
+            author=author,
+            title=data.article,
+            text=data.text,
+            timestamp=data.date_epoch,
+            contents=contents,
+            repost=self._collect_vx_result(data.qrt) if data.qrt else None,
+        )
+
+    async def parse_by_xdown(self, url: str) -> ParseResult:
+        """使用 xdown.app API 解析（降级方案，保留 GIF 转换）
+
+        Args:
+            url: Twitter 链接
+
+        Returns:
+            ParseResult: 解析结果
+        """
+        resp = await self._req_xdown_api(url)
+        if resp.get("status") != "ok":
+            raise ParseException("xdown.app API 解析失败")
+
+        html_content = resp.get("data")
+        if html_content is None:
+            raise ParseException("xdown.app API 返回数据为空")
+
+        return self.parse_twitter_html(html_content)
 
     async def _req_xdown_api(self, url: str) -> dict[str, Any]:
         headers = {
@@ -32,22 +184,6 @@ class TwitterParser(BaseParser):
             api_url = "https://xdown.app/api/ajaxSearch"
             response = await client.post(api_url, data=data)
             return response.json()
-
-    @handle("x.com", r"x.com/[0-9-a-zA-Z_]{1,20}/status/([0-9]+)")
-    async def _parse(self, searched: re.Match[str]) -> ParseResult:
-        # 从匹配对象中获取原始URL
-        url = f"https://{searched.group(0)}"
-
-        resp = await self._req_xdown_api(url)
-        if resp.get("status") != "ok":
-            raise ParseException("解析失败")
-
-        html_content = resp.get("data")
-
-        if html_content is None:
-            raise ParseException("解析失败, 数据为空")
-
-        return self.parse_twitter_html(html_content)
 
     def parse_twitter_html(self, html_content: str) -> ParseResult:
         """解析 Twitter HTML 内容

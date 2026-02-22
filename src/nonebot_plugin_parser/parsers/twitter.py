@@ -86,7 +86,7 @@ class TwitterParser(BaseParser):
         # 提取完整的作者信息
         author = self.create_author(
             name=data.user_screen_name,
-            avatar=data.user_profile_image_url
+            avatar_url=data.user_profile_image_url
         )
 
         # 处理媒体内容
@@ -123,7 +123,7 @@ class TwitterParser(BaseParser):
         """递归收集转发信息"""
         author = self.create_author(
             name=data.user_screen_name,
-            avatar=data.user_profile_image_url
+            avatar_url=data.user_profile_image_url
         )
 
         contents: list[MediaContent] = []

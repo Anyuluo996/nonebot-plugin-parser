@@ -97,12 +97,16 @@ class TwitterParser(BaseParser):
                 is_gif = "tweet_video" in media.url or media.type == "gif"
 
                 if is_gif:
-                    # GIF 内容：保留转换功能
+                    # GIF 内容：使用 DynamicContent，保留转换功能并添加缩略图
                     logger.debug(f"检测到 GIF 内容，将转换为 GIF: {media.url}")
-                    contents.extend(self.create_dynamic_contents([media.url], convert_to_gif=True))
+                    contents.extend(self.create_dynamic_contents(
+                        [media.url],
+                        convert_to_gif=True,
+                        cover_url=media.thumbnail_url
+                    ))
                 else:
                     # 普通视频
-                    contents.append(self.create_video_content(media.url, media.thumbnail_url))
+                    contents.append(self.create_video_content(media.url, cover_url=media.thumbnail_url))
             elif media.type == "image":
                 # 图片内容
                 contents.extend(self.create_image_contents([media.url]))
@@ -131,9 +135,14 @@ class TwitterParser(BaseParser):
             if media.type in ("video", "gif"):
                 is_gif = "tweet_video" in media.url or media.type == "gif"
                 if is_gif:
-                    contents.extend(self.create_dynamic_contents([media.url], convert_to_gif=True))
+                    logger.debug(f"检测到 GIF 内容，将转换为 GIF: {media.url}")
+                    contents.extend(self.create_dynamic_contents(
+                        [media.url],
+                        convert_to_gif=True,
+                        cover_url=media.thumbnail_url
+                    ))
                 else:
-                    contents.append(self.create_video_content(media.url, media.thumbnail_url))
+                    contents.append(self.create_video_content(media.url, cover_url=media.thumbnail_url))
             elif media.type == "image":
                 contents.extend(self.create_image_contents([media.url]))
 

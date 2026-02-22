@@ -216,8 +216,14 @@ class ParseResult:
     async def cover_path(self) -> Path | None:
         """获取封面路径"""
         for cont in self.contents:
+            # 优先使用 VideoContent 的封面
             if isinstance(cont, VideoContent):
                 return await cont.get_cover_path()
+            # 其次使用 DynamicContent 的封面（GIF等）
+            elif isinstance(cont, DynamicContent):
+                cover = await cont.get_cover_path()
+                if cover:
+                    return cover
         return None
 
     @property

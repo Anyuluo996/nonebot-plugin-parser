@@ -1,220 +1,187 @@
-"""
-测试解析前缀功能
-
-测试场景：
-1. 测试前缀解析逻辑（带+号）
-2. 测试前缀解析逻辑（带空格）
-3. 测试正常解析（不带前缀）
-4. 测试禁用后无法解析
-5. 测试禁用后使用前缀可以强制解析
-"""
-
-import re
 import pytest
-from pathlib import Path
-
-# 添加项目根目录到 Python 路径
-import sys
-project_root = Path(__file__).parent.parent
-sys.path.insert(0, str(project_root / "src"))
 
 
-def test_parse_prefix_config():
-    """测试解析前缀配置"""
+def _text_message(text: str):
+    from nonebot_plugin_alconna.uniseg import Text, UniMessage
+
+    return UniMessage([Text(text)])
+
+
+def test_config_parse_prefix_requires_explicit_setting():
+    from nonebot_plugin_parser.config import Config
+
+    assert Config().parse_prefix == ""
+    assert Config(parser_force_prefix="  bot  ").parse_prefix == "bot"
+
+
+@pytest.mark.asyncio
+async def test_keyword_regex_rule_does_not_use_nickname_as_default_prefix(monkeypatch):
     from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.matchers.rule import (
+        PSR_FORCE_PARSE_KEY,
+        PSR_SEARCHED_KEY,
+        KeyPatternList,
+        KeywordRegexRule,
+    )
 
-    prefix = pconfig.parse_prefix
-    assert prefix is not None
-    assert isinstance(prefix, str)
-    print(f"✓ 解析前缀配置: {prefix}")
+    monkeypatch.setattr(pconfig, "parser_force_prefix", "")
+    text = f"{pconfig.nickname}+https://www.bilibili.com/video/BV1xx411c7mD"
+    rule = KeywordRegexRule(KeyPatternList(("bilibili", r"bilibili\.com/video/([A-Za-z0-9]+)")))
+    state = {}
 
+    matched = await rule(_text_message(text), state)
 
-def test_force_parse_constant():
-    """测试强制解析常量已定义"""
-    from nonebot_plugin_parser.matchers.rule import PSR_FORCE_PARSE_KEY
-
-    assert PSR_FORCE_PARSE_KEY == "psr-force-parse"
-    print(f"✓ 强制解析状态键: {PSR_FORCE_PARSE_KEY}")
-
-
-def test_keyword_regex_rule_with_plus_prefix():
-    """测试带+号的前缀解析"""
-    from nonebot_plugin_parser.matchers.rule import KeywordRegexRule, KeyPatternList, PSR_FORCE_PARSE_KEY
-    from nonebot_plugin_alconna.uniseg import UniMsg
-    from nonebot.typing import T_State
-
-    # 模拟 B 站链接模式
-    patterns = KeyPatternList(("bilibili", r"bilibili\.com/video/([A-Za-z0-9]+)"))
-    rule = KeywordRegexRule(patterns)
-
-    # 测试用例
-    test_cases = [
-        # (输入文本, 是否应该匹配, 是否应该强制解析)
-        ("https://www.bilibili.com/video/BV1xx411c7mD", True, False),
-        ("bot+https://www.bilibili.com/video/BV1xx411c7mD", True, True),
-        ("bot+ https://www.bilibili.com/video/BV1xx411c7mD", True, True),
-        ("bot https://www.bilibili.com/video/BV1xx411c7mD", True, True),
-    ]
-
-    for text, should_match, should_force in test_cases:
-        state = {}
-        message = UniMsg.from_text(text)
-        result = rule.__await__().__next__()
-
-        # 由于 rule 是 async 的，我们需要使用 asyncio.run 或直接调用内部逻辑
-        # 这里我们简化测试，直接检查文本处理逻辑
-        if should_force:
-            if text.startswith("bot+"):
-                assert text.startswith("bot+"), f"文本 '{text}' 应该以 bot+ 开头"
-            elif text.startswith("bot "):
-                assert text.startswith("bot "), f"文本 '{text}' 应该以 bot 开头"
-
-    print("✓ 前缀解析逻辑测试通过")
+    assert matched is True
+    assert state[PSR_FORCE_PARSE_KEY] is False
+    assert state[PSR_SEARCHED_KEY].text == text
 
 
-def test_prefix_parsing_logic():
-    """测试前缀解析核心逻辑"""
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text",
+    [
+        "bot+ https://www.bilibili.com/video/BV1xx411c7mD",
+        "bot https://www.bilibili.com/video/BV1xx411c7mD",
+    ],
+)
+async def test_keyword_regex_rule_force_parse_with_explicit_prefix(monkeypatch, text: str):
     from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.matchers.rule import (
+        PSR_FORCE_PARSE_KEY,
+        PSR_SEARCHED_KEY,
+        KeyPatternList,
+        KeywordRegexRule,
+    )
 
-    prefix = pconfig.parse_prefix
+    monkeypatch.setattr(pconfig, "parser_force_prefix", " bot ")
+    rule = KeywordRegexRule(KeyPatternList(("bilibili", r"bilibili\.com/video/([A-Za-z0-9]+)")))
+    state = {}
 
-    # 测试用例
-    test_cases = [
-        # (输入文本, 预期清理后的文本, 是否强制解析)
-        (f"{prefix}+https://www.bilibili.com/video/BV1xx411c7mD", "https://www.bilibili.com/video/BV1xx411c7mD", True),
-        (f"{prefix} https://www.bilibili.com/video/BV1xx411c7mD", "https://www.bilibili.com/video/BV1xx411c7mD", True),
-        ("https://www.bilibili.com/video/BV1xx411c7mD", "https://www.bilibili.com/video/BV1xx411c7mD", False),
-        (f"{prefix}+ BV1xx411c7mD", "BV1xx411c7mD", True),
-        (f"{prefix} BV1xx411c7mD", "BV1xx411c7mD", True),
-    ]
+    matched = await rule(_text_message(text), state)
 
-    for original_text, expected_text, should_force in test_cases:
-        # 模拟前缀去除逻辑
-        text = original_text
-        force_parse = False
-
-        if text.startswith(f"{prefix}+") or text.startswith(f"{prefix} "):
-            force_parse = True
-            if text.startswith(f"{prefix}+"):
-                text = text[len(f"{prefix}+"):].lstrip()
-            else:
-                text = text[len(f"{prefix} "):].lstrip()
-
-        assert text == expected_text, f"文本清理失败: 期望 '{expected_text}', 得到 '{text}'"
-        assert force_parse == should_force, f"强制解析标志错误: 期望 {should_force}, 得到 {force_parse}"
-
-    print(f"✓ 前缀解析逻辑测试通过（前缀: {prefix}）")
+    assert matched is True
+    assert state[PSR_FORCE_PARSE_KEY] is True
+    assert state[PSR_SEARCHED_KEY].text == "https://www.bilibili.com/video/BV1xx411c7mD"
 
 
-def test_bilibili_patterns():
-    """测试 B 站链接模式匹配"""
+def test_bilibili_parser_initializes_base_fields():
     from nonebot_plugin_parser.parsers import BilibiliParser
 
     parser = BilibiliParser()
 
-    # 测试链接
-    test_urls = [
-        "https://www.bilibili.com/video/BV1xx411c7mD",
-        "https://b23.tv/Video/BV1xx411c7mD",
-        "https://m.bilibili.com/video/BV1xx411c7mD",
-        "BV1xx411c7mD",
-    ]
-
-    for keyword, pattern in parser._key_patterns:
-        for url in test_urls:
-            if keyword in url:
-                match = pattern.search(url)
-                assert match is not None, f"链接 '{url}' 应该被匹配到"
-                print(f"✓ 链接匹配成功: {url} -> {match.group(0)}")
+    assert parser.timeout is not None
+    assert parser.ios_headers
+    assert parser.android_headers
+    assert parser.headers["Referer"] == "https://www.bilibili.com/"
 
 
-def test_filter_platform_enabled():
-    """测试平台启用/禁用逻辑"""
-    from nonebot_plugin_parser.matchers.filter import is_platform_enabled, get_group_key, _DISABLED_PLATFORMS_DICT
-    from nonebot_plugin_uninfo import Session
+def test_is_enabled_all_disabled_but_force_prefix_still_allowed(monkeypatch):
+    from nonebot_plugin_parser.constants import PlatformEnum
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.matchers.filter import _DISABLED_PLATFORMS_DICT, get_group_key, is_enabled
 
-    # 创建一个模拟的 Session
     class MockScene:
         is_private = False
 
     class MockSession:
         scene = MockScene()
-        scope = "QQ"
-        scene_path = "123456789"
+        scope = "qq"
+        scene_path = "force-parse-group"
 
     session = MockSession()
-
-    # 保存原始状态
     group_key = get_group_key(session)
-    original_disabled = _DISABLED_PLATFORMS_DICT.get(group_key, set()).copy()
+    original_disabled = _DISABLED_PLATFORMS_DICT.get(group_key)
+    monkeypatch.setattr(pconfig, "parser_force_prefix", "bot")
+    _DISABLED_PLATFORMS_DICT[group_key] = {platform.value for platform in PlatformEnum}
 
     try:
-        # 测试1: 默认情况下应该启用
-        assert is_platform_enabled(session, "bilibili"), "默认情况下 B 站应该启用"
-        print("✓ 默认情况下平台启用")
-
-        # 测试2: 禁用 B 站后
-        _DISABLED_PLATFORMS_DICT.setdefault(group_key, set()).add("bilibili")
-        assert not is_platform_enabled(session, "bilibili"), "禁用后 B 站不应该启用"
-        print("✓ 禁用后平台不启用")
-
-        # 测试3: 启用 B 站后
-        _DISABLED_PLATFORMS_DICT[group_key].remove("bilibili")
-        if not _DISABLED_PLATFORMS_DICT[group_key]:
-            del _DISABLED_PLATFORMS_DICT[group_key]
-        assert is_platform_enabled(session, "bilibili"), "启用后 B 站应该启用"
-        print("✓ 启用后平台启用")
-
+        assert is_enabled(_text_message("bot https://www.bilibili.com/video/BV1xx411c7mD"), session) is True
+        assert is_enabled(_text_message("https://www.bilibili.com/video/BV1xx411c7mD"), session) is False
     finally:
-        # 恢复原始状态
-        if original_disabled:
+        if original_disabled is None:
+            _DISABLED_PLATFORMS_DICT.pop(group_key, None)
+        else:
             _DISABLED_PLATFORMS_DICT[group_key] = original_disabled
-        elif group_key in _DISABLED_PLATFORMS_DICT:
-            del _DISABLED_PLATFORMS_DICT[group_key]
 
 
-def run_all_tests():
-    """运行所有测试"""
-    print("=" * 60)
-    print("开始测试解析前缀功能")
-    print("=" * 60)
+@pytest.mark.asyncio
+async def test_force_prefix_still_reaches_parser_handler_when_all_platforms_disabled(monkeypatch):
+    from nonebot.matcher import current_event
 
-    tests = [
-        ("解析前缀配置", test_parse_prefix_config),
-        ("强制解析常量", test_force_parse_constant),
-        ("B站链接模式", test_bilibili_patterns),
-        ("前缀解析逻辑", test_prefix_parsing_logic),
-        ("平台启用/禁用", test_filter_platform_enabled),
-    ]
+    from nonebot_plugin_parser.constants import PlatformEnum
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.matchers import parser_handler
+    from nonebot_plugin_parser.matchers.filter import _DISABLED_PLATFORMS_DICT, get_group_key, is_enabled
+    from nonebot_plugin_parser.matchers.rule import PSR_FORCE_PARSE_KEY, PSR_SEARCHED_KEY, KeyPatternList, KeywordRegexRule
+    from nonebot_plugin_parser.parsers import ParseResult, Platform
 
-    failed_tests = []
+    class MockScene:
+        is_private = False
 
-    for name, test_func in tests:
-        print(f"\n{'=' * 60}")
-        print(f"运行测试: {name}")
-        print(f"{'=' * 60}")
-        try:
-            test_func()
-            print(f"✅ {name} 测试通过")
-        except Exception as e:
-            print(f"❌ {name} 测试失败: {e}")
-            failed_tests.append((name, e))
+    class MockSession:
+        scene = MockScene()
+        scope = "qq"
+        scene_path = "force-handler-group"
 
-    print(f"\n{'=' * 60}")
-    print("测试结果汇总")
-    print(f"{'=' * 60}")
+    class FakeParser:
+        platform = Platform(name="bilibili", display_name="哔哩哔哩")
 
-    if failed_tests:
-        print(f"❌ 共有 {len(failed_tests)} 个测试失败:")
-        for name, error in failed_tests:
-            print(f"  - {name}: {error}")
-        return False
-    else:
-        print(f"✅ 所有 {len(tests)} 个测试通过!")
-        return True
+        def __init__(self):
+            self.calls: list[tuple[str, str]] = []
 
+        async def parse(self, keyword: str, searched):
+            self.calls.append((keyword, searched.group(0)))
+            return ParseResult(platform=self.platform, title="ok")
 
-if __name__ == "__main__":
-    import sys
-    success = run_all_tests()
-    sys.exit(0 if success else 1)
+    class FakeMessage:
+        def __init__(self, sent: list[str]):
+            self.sent = sent
+
+        async def send(self):
+            self.sent.append("sent")
+
+    class FakeRenderer:
+        def __init__(self, sent: list[str]):
+            self.sent = sent
+            self.results: list[ParseResult] = []
+
+        async def render_messages(self, result: ParseResult):
+            self.results.append(result)
+            yield FakeMessage(self.sent)
+
+    session = MockSession()
+    group_key = get_group_key(session)
+    original_disabled = _DISABLED_PLATFORMS_DICT.get(group_key)
+    fake_parser = FakeParser()
+    sent: list[str] = []
+    fake_renderer = FakeRenderer(sent)
+
+    async def fake_reaction(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(pconfig, "parser_force_prefix", "bot")
+    monkeypatch.setattr("nonebot_plugin_parser.matchers.get_parser", lambda keyword: fake_parser)
+    monkeypatch.setattr("nonebot_plugin_parser.matchers.get_renderer", lambda platform_name: fake_renderer)
+    monkeypatch.setattr("nonebot_plugin_parser.helper.UniHelper.message_reaction", fake_reaction)
+    _DISABLED_PLATFORMS_DICT[group_key] = {platform.value for platform in PlatformEnum}
+
+    message = _text_message("bot https://www.bilibili.com/video/BV1xx411c7mD")
+    rule = KeywordRegexRule(KeyPatternList(("bilibili", r"bilibili\.com/video/([A-Za-z0-9]+)")))
+    state = {}
+
+    token = current_event.set(object())
+    try:
+        assert is_enabled(message, session) is True
+        assert await rule(message, state) is True
+        assert state[PSR_FORCE_PARSE_KEY] is True
+        await parser_handler(state[PSR_SEARCHED_KEY], session, state)
+    finally:
+        current_event.reset(token)
+        if original_disabled is None:
+            _DISABLED_PLATFORMS_DICT.pop(group_key, None)
+        else:
+            _DISABLED_PLATFORMS_DICT[group_key] = original_disabled
+
+    assert fake_parser.calls == [("bilibili", "bilibili.com/video/BV1xx411c7mD")]
+    assert sent == ["sent"]
+    assert len(fake_renderer.results) == 1

@@ -1,8 +1,8 @@
-from typing import Any
 from asyncio import Task
 from pathlib import Path
 from datetime import datetime
 from dataclasses import field, dataclass
+from typing import Any, TypedDict
 
 
 def repr_path_task(path_task: Path | Task[Path]) -> str:
@@ -10,6 +10,14 @@ def repr_path_task(path_task: Path | Task[Path]) -> str:
         return f"path={path_task.name}"
     else:
         return f"task={path_task.get_name()}, done={path_task.done()}"
+
+
+def is_pending_path_task(path_task: Path | Task[Path] | None) -> bool:
+    return isinstance(path_task, Task)
+
+
+def path_task_exists(path_task: Path | Task[Path] | None) -> bool:
+    return isinstance(path_task, Path) and path_task.exists()
 
 
 @dataclass(repr=False, slots=True)
@@ -25,6 +33,12 @@ class MediaContent:
     def __repr__(self) -> str:
         prefix = self.__class__.__name__
         return f"{prefix}({repr_path_task(self.path_task)})"
+
+    def has_pending_resources(self) -> bool:
+        return is_pending_path_task(self.path_task)
+
+    def has_local_resources(self) -> bool:
+        return path_task_exists(self.path_task)
 
 
 @dataclass(repr=False, slots=True)
@@ -63,6 +77,12 @@ class VideoContent(MediaContent):
             repr += f", cover={repr_path_task(self.cover)}"
         return repr + ")"
 
+    def has_pending_resources(self) -> bool:
+        return super().has_pending_resources() or is_pending_path_task(self.cover)
+
+    def has_local_resources(self) -> bool:
+        return super().has_local_resources() and (self.cover is None or path_task_exists(self.cover))
+
 
 @dataclass(repr=False, slots=True)
 class ImageContent(MediaContent):
@@ -75,7 +95,7 @@ class ImageContent(MediaContent):
 class DynamicContent(MediaContent):
     """动态内容 视频格式 后续转 gif"""
 
-    gif_path: Path | None = None
+    gif_path: Path | Task[Path] | None = None
     cover: Path | Task[Path] | None = None
     """视频封面（缩略图）"""
 
@@ -87,6 +107,29 @@ class DynamicContent(MediaContent):
             return self.cover
         self.cover = await self.cover
         return self.cover
+
+    async def get_gif_path(self) -> Path | None:
+        """获取 GIF 路径"""
+        if self.gif_path is None:
+            return None
+        if isinstance(self.gif_path, Path):
+            return self.gif_path
+        self.gif_path = await self.gif_path
+        return self.gif_path
+
+    def has_pending_resources(self) -> bool:
+        return (
+            super().has_pending_resources()
+            or is_pending_path_task(self.gif_path)
+            or is_pending_path_task(self.cover)
+        )
+
+    def has_local_resources(self) -> bool:
+        return (
+            super().has_local_resources()
+            and (self.gif_path is None or path_task_exists(self.gif_path))
+            and (self.cover is None or path_task_exists(self.cover))
+        )
 
 
 @dataclass(repr=False, slots=True)
@@ -143,6 +186,12 @@ class Author:
         if self.description:
             repr += f", description={self.description}"
         return repr + ")"
+
+    def has_pending_resources(self) -> bool:
+        return is_pending_path_task(self.avatar)
+
+    def has_local_resources(self) -> bool:
+        return self.avatar is None or path_task_exists(self.avatar)
 
 
 @dataclass(repr=False, slots=True)
@@ -245,9 +294,23 @@ class ParseResult:
             f"render_image: {self.render_image.name if self.render_image else 'None'}"
         )
 
+    def has_pending_resources(self) -> bool:
+        return (
+            (self.author.has_pending_resources() if self.author else False)
+            or any(content.has_pending_resources() for content in self.contents)
+            or (self.repost.has_pending_resources() if self.repost else False)
+        )
 
-from typing import Any, TypedDict
-from dataclasses import field, dataclass
+    def has_local_resources(self) -> bool:
+        return (
+            (self.author.has_local_resources() if self.author else True)
+            and all(content.has_local_resources() for content in self.contents)
+            and (self.repost.has_local_resources() if self.repost else True)
+            and (self.render_image is None or self.render_image.exists())
+        )
+
+    def is_cache_valid(self) -> bool:
+        return not self.has_pending_resources() and self.has_local_resources()
 
 
 class ParseResultKwargs(TypedDict, total=False):

@@ -73,8 +73,8 @@ class BaseRenderer(ABC):
                     forwardable_segs.append(UniHelper.img_seg(path))
                 case DynamicContent() as dynamic:
                     # 优先使用 gif_path（如果存在）
-                    if dynamic.gif_path is not None:
-                        gif_path = await dynamic.gif_path
+                    gif_path = await dynamic.get_gif_path()
+                    if gif_path is not None:
                         # GIF 应该作为图片发送，并与缩略图一起合并发送
                         forwardable_segs.append(UniHelper.img_seg(gif_path))
                     else:
@@ -153,7 +153,7 @@ class ImageRenderer(BaseRenderer):
         Returns:
             Image: 图片 Segment
         """
-        if result.render_image is None:
+        if result.render_image is None or not result.render_image.exists():
             image_raw = await self.render_image(result)
             image_path = await self.save_img(image_raw)
             result.render_image = image_path

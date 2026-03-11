@@ -1,4 +1,5 @@
 import re
+from copy import deepcopy
 from typing import TypeVar
 
 from nonebot import logger, get_driver, on_command
@@ -61,6 +62,24 @@ def register_parser_matcher():
 _RESULT_CACHE = LimitedSizeDict[str, ParseResult](max_size=50)
 
 
+def _get_cached_result(cache_key: str) -> ParseResult | None:
+    result = _RESULT_CACHE.get(cache_key)
+    if result is None:
+        return None
+    if not result.is_cache_valid():
+        logger.debug(f"缓存失效，移除结果: {cache_key}")
+        _RESULT_CACHE.pop(cache_key, None)
+        return None
+    return deepcopy(result)
+
+
+def _cache_result(cache_key: str, result: ParseResult) -> None:
+    if not result.is_cache_valid():
+        logger.debug(f"跳过缓存运行态结果: {cache_key}")
+        return
+    _RESULT_CACHE[cache_key] = deepcopy(result)
+
+
 def clear_result_cache():
     _RESULT_CACHE.clear()
 
@@ -96,7 +115,7 @@ async def parser_handler(
     try:
         # 4. 获取缓存结果
         cache_key = sr.searched.group(0)
-        result = _RESULT_CACHE.get(cache_key)
+        result = _get_cached_result(cache_key)
 
         if result is None:
             # 5. 执行解析
@@ -111,7 +130,7 @@ async def parser_handler(
             await message.send()
 
         # 7. 缓存解析结果
-        _RESULT_CACHE[cache_key] = result
+        _cache_result(cache_key, result)
 
         # 8. 添加"完成"表情
         try:

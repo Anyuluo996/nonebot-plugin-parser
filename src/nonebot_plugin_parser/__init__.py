@@ -1,6 +1,6 @@
 import asyncio
 
-from nonebot import logger, require
+from nonebot import logger, require, get_driver
 from nonebot.plugin import PluginMetadata, inherit_supported_adapters
 
 require("nonebot_plugin_alconna")
@@ -8,6 +8,7 @@ require("nonebot_plugin_uninfo")
 
 from .utils import safe_unlink
 from .config import Config, pconfig
+from .download import DOWNLOADER
 from .matchers import clear_result_cache
 
 __plugin_meta__ = PluginMetadata(
@@ -33,6 +34,11 @@ __plugin_meta__ = PluginMetadata(
 
 require("nonebot_plugin_apscheduler")
 from nonebot_plugin_apscheduler import scheduler
+
+
+@get_driver().on_shutdown
+async def close_downloader():
+    await DOWNLOADER.close()
 
 
 @scheduler.scheduled_job("cron", hour=1, minute=0, id="parser-clean-local-cache")

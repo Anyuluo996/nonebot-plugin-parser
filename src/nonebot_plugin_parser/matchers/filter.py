@@ -7,6 +7,7 @@ from nonebot.params import CommandArg
 from nonebot.matcher import Matcher
 from nonebot.adapters import Message
 from nonebot.permission import SUPERUSER
+from nonebot_plugin_alconna.uniseg import UniMsg
 from nonebot_plugin_uninfo import ADMIN, Session, UniSession
 
 from ..config import pconfig
@@ -36,8 +37,6 @@ def save_disabled_platforms():
 
 # 内存中关闭解析的配置，格式: {group_key: set(platform_names)}
 _DISABLED_PLATFORMS_DICT: dict[str, set[str]] = load_or_initialize_dict()
-# 兼容旧版本的禁用群组列表
-_DISABLED_GROUPS_SET: set[str] = set()
 
 
 def migrate_old_data():
@@ -67,12 +66,24 @@ def get_group_key(session: Session) -> str:
     return f"{session.scope}_{session.scene_path}"
 
 
-def is_enabled(session: Session = UniSession()) -> bool:
+def _starts_with_force_prefix(message: UniMsg | None) -> bool:
+    parse_prefix = pconfig.parse_prefix
+    if not parse_prefix or message is None:
+        return False
+
+    text = message.extract_plain_text().strip()
+    return text.startswith(f"{parse_prefix}+") or text.startswith(f"{parse_prefix} ")
+
+
+def is_enabled(message: UniMsg, session: Session = UniSession()) -> bool:
     """判断当前会话是否启用了任意解析功能
 
-    只要有一个平台未禁用，就返回 True
+    只要有一个平台未禁用，或者命中了显式强制解析前缀，就返回 True
     """
     if session.scene.is_private:
+        return True
+
+    if _starts_with_force_prefix(message):
         return True
 
     group_key = get_group_key(session)

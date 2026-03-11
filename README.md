@@ -245,6 +245,11 @@ parser_render_type="common"
 # [可选] 是否在解析结果中附加原始URL
 parser_append_url=False
 
+# [可选] 强制解析前缀
+# 仅在显式配置后生效；未配置时不会回退到机器人昵称
+# 示例: parser_force_prefix="bot" 后，可使用 "bot+链接" 或 "bot 链接" 强制触发解析
+parser_force_prefix=""
+
 # [可选] 自定义渲染字体
 # 配置字体文件名，并将字体文件放置于 localstore 生成的插件 data 目录下
 # 例如: ./data/nonebot_plugin_parser/

@@ -2,7 +2,7 @@ from pathlib import Path
 
 from nonebot import require, get_driver, get_plugin_config
 from apilmoji import ELK_SH_CDN, EmojiStyle
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from bilibili_api.video import VideoCodecs, VideoQuality
 
 from .constants import RenderType, PlatformEnum
@@ -41,13 +41,15 @@ class Config(BaseModel):
     """视频/音频最大时长"""
     parser_append_url: bool = False
     """是否在解析结果中附加原始URL"""
-    parser_disabled_platforms: list[PlatformEnum] = []
+    parser_disabled_platforms: list[PlatformEnum] = Field(default_factory=list)
     """禁止的解析器"""
-    parser_bili_video_codes: list[VideoCodecs] = [
-        VideoCodecs.AVC,
-        VideoCodecs.AV1,
-        VideoCodecs.HEV,
-    ]
+    parser_bili_video_codes: list[VideoCodecs] = Field(
+        default_factory=lambda: [
+            VideoCodecs.AVC,
+            VideoCodecs.AV1,
+            VideoCodecs.HEV,
+        ]
+    )
     """B站视频编码"""
     parser_bili_video_quality: VideoQuality = VideoQuality._1080P
     """B站视频分辨率"""
@@ -172,7 +174,7 @@ class Config(BaseModel):
     @property
     def parse_prefix(self) -> str:
         """解析前缀"""
-        return self.parser_force_prefix if self.parser_force_prefix else _nickname
+        return self.parser_force_prefix.strip()
 
 
 pconfig: Config = get_plugin_config(Config)

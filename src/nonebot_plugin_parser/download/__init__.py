@@ -26,6 +26,7 @@ class StreamDownloader:
 
     # 类级别的锁字典，用于防止同一个 URL 被并发下载
     _download_locks: ClassVar[dict[str, asyncio.Lock]] = {}
+    _download_lock_refs: ClassVar[dict[str, int]] = {}
 
     def __init__(self):
         self.headers: dict[str, str] = COMMON_HEADER.copy()
@@ -58,8 +59,17 @@ class StreamDownloader:
 
         # 获取或创建该 URL 的锁，防止并发下载同一文件
         lock = self._download_locks.setdefault(url, asyncio.Lock())
-        async with lock:
-            return await self._download_file_internal(url, file_name, ext_headers)
+        self._download_lock_refs[url] = self._download_lock_refs.get(url, 0) + 1
+        try:
+            async with lock:
+                return await self._download_file_internal(url, file_name, ext_headers)
+        finally:
+            ref_count = self._download_lock_refs.get(url, 0) - 1
+            if ref_count <= 0:
+                self._download_lock_refs.pop(url, None)
+                self._download_locks.pop(url, None)
+            else:
+                self._download_lock_refs[url] = ref_count
 
     async def _download_file_internal(
         self,
@@ -188,6 +198,12 @@ class StreamDownloader:
                     if chunk:
                         file.write(chunk)
                         bar.update(len(chunk))
+
+    async def close(self) -> None:
+        self._download_locks.clear()
+        self._download_lock_refs.clear()
+        if not self.client.is_closed:
+            await self.client.aclose()
 
     @staticmethod
     def get_progress_bar(desc: str, total: int | None = None) -> tqdm:

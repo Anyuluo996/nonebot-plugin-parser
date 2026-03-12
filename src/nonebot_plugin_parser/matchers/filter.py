@@ -7,8 +7,8 @@ from nonebot.params import CommandArg
 from nonebot.matcher import Matcher
 from nonebot.adapters import Message
 from nonebot.permission import SUPERUSER
-from nonebot_plugin_alconna.uniseg import UniMsg
 from nonebot_plugin_uninfo import ADMIN, Session, UniSession
+from nonebot_plugin_alconna.uniseg import UniMsg
 
 from ..config import pconfig
 from ..parsers import BaseParser

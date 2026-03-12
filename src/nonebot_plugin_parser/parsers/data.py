@@ -1,8 +1,8 @@
+from typing import Any, TypedDict
 from asyncio import Task
 from pathlib import Path
 from datetime import datetime
 from dataclasses import field, dataclass
-from typing import Any, TypedDict
 
 
 def repr_path_task(path_task: Path | Task[Path]) -> str:

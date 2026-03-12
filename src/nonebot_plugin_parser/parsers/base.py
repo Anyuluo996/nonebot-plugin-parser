@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, ClassVar, cast
 from asyncio import Task
 from pathlib import Path
 from collections.abc import Callable, Coroutine
-from typing_extensions import Unpack
+from typing_extensions import Unpack, final
 
 from .data import Platform, ParseResult, ParseResultKwargs
 from ..config import pconfig as pconfig
@@ -94,6 +94,7 @@ class BaseParser:
         """获取所有已注册的 Parser 类"""
         return cls._registry
 
+    @final
     async def parse(self, keyword: str, searched: Match[str]) -> ParseResult:
         """解析 URL 提取信息
 
@@ -109,6 +110,7 @@ class BaseParser:
         """
         return await self._handlers[keyword](self, searched)
 
+    @final
     async def parse_with_redirect(
         self,
         url: str,

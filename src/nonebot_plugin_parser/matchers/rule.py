@@ -1,8 +1,9 @@
 import re
 from typing import Literal
 
-import msgspec
+from msgspec import Struct, DecodeError
 from nonebot import logger
+from msgspec.json import Decoder
 from nonebot.rule import Rule
 from nonebot.params import Depends
 from nonebot.typing import T_State
@@ -21,29 +22,29 @@ PSR_FORCE_PARSE_KEY: Literal["psr-force-parse"] = "psr-force-parse"
 
 
 # 定义 JSON 卡片的数据结构
-class MetaDetail(msgspec.Struct):
+class MetaDetail(Struct):
     qqdocurl: str | None = None
 
 
-class MetaNews(msgspec.Struct):
+class MetaNews(Struct):
     jumpUrl: str | None = None
 
 
-class MetaMusic(msgspec.Struct):
+class MetaMusic(Struct):
     jumpUrl: str | None = None
 
 
-class Meta(msgspec.Struct):
+class Meta(Struct):
     detail_1: MetaDetail | None = None
     news: MetaNews | None = None
     music: MetaMusic | None = None
 
 
-class RawData(msgspec.Struct):
+class RawData(Struct):
     meta: Meta | None = None
 
 
-raw_decoder = msgspec.json.Decoder(RawData)
+raw_decoder = Decoder(RawData)
 
 
 class SearchResult:
@@ -89,7 +90,7 @@ def _extract_url(hyper: Hyper) -> str | None:
 
     try:
         raw = raw_decoder.decode(raw_str)
-    except msgspec.DecodeError:
+    except DecodeError:
         logger.exception(f"json 卡片解析失败: {raw_str}")
         return None
 

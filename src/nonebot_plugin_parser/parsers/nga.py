@@ -27,7 +27,6 @@ class NGAParser(BaseParser):
             "Upgrade-Insecure-Requests": "1",
         }
         self.headers.update(extra_headers)
-        self.base_img_url = "https://img.nga.178.com/attachments"
 
     @staticmethod
     def nga_url(tid: str | int) -> str:
@@ -36,6 +35,10 @@ class NGAParser(BaseParser):
     @staticmethod
     def build_url_by_tid(tid: str | int) -> str:
         return f"https://nga.178.com/read.php?tid={tid}"
+
+    @staticmethod
+    def build_img_url(path: str) -> str:
+        return "https://img.nga.178.com/attachments" + path
 
     # ("ngabbs.com", r"https?://ngabbs\.com/read\.php\?tid=(?P<tid>\d+)(?:[&#A-Za-z\d=_-]+)?"),
     # ("nga.178.com", r"https?://nga\.178\.com/read\.php\?tid=(?P<tid>\d+)(?:[&#A-Za-z\d=_-]+)?"),
@@ -104,28 +107,33 @@ class NGAParser(BaseParser):
         text, contents = None, []
         content_tag = soup.find(id="postcontent0")
         if content_tag and isinstance(content_tag, Tag):
-            raw_text = content_tag.get_text("\n", strip=True)
-            lines = raw_text.split("\n")
-            temp_text = ""
+            text = content_tag.get_text("\n", strip=True)
+            lines = text.split("\n")
+            text_buffer: list[str] = []
 
             for line in lines:
-                if img_matches := re.findall(r"\[img\](.*?)\[/img\]", line):
-                    before_img = line.split("[img]")[0]
-                    if before_img.strip():
-                        temp_text += before_img + "\n"
-
-                    for img_url in img_matches:
-                        full_url = self.base_img_url + img_url[1:]
-                        clean_desc = self.clean_nga_text(temp_text, max_length=200)
-                        contents.append(self.create_graphics_content(full_url, text=clean_desc))
-                        temp_text = ""
-                elif "[" in line:
-                    if clean_line := re.sub(r"\[[^\]]*?\]", "", line).strip():
-                        temp_text += clean_line + "\n"
+                if "[" in line:
+                    # [img]./mon_202602/10/-lmuf1Q1aw-hzwpZ2dT3cSl4-bs.webp[/img]
+                    if paths := re.findall(r"\[img\]\.(.*?)\[\/img\]", line):
+                        for path in paths:
+                            # 使用本地清洗后的文本作为图片描述
+                            clean_desc = self.clean_nga_text("\n".join(text_buffer), max_length=200)
+                            contents.append(
+                                self.create_graphics_content(
+                                    self.build_img_url(path),
+                                    text=clean_desc,
+                                )
+                            )
+                            text_buffer.clear()
+                    else:
+                        # 去除其他标签, 仅保留文本
+                        if clean_line := re.sub(r"\[[^\]]*?\]", "", line).strip():
+                            text_buffer.append(clean_line)
                 else:
-                    temp_text += line + "\n"
+                    text_buffer.append(line)
 
-            text = self.clean_nga_text(temp_text)
+            # 处理剩余的文本 - 使用本地清洗方法
+            text = self.clean_nga_text("\n".join(text_buffer))
 
         return self.result(
             title=title,

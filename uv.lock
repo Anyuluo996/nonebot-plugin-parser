@@ -54,7 +54,7 @@ wheels = [
 
 [[package]]
 name = "apilmoji"
-version = "0.2.4"
+version = "0.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -62,14 +62,9 @@ dependencies = [
     { name = "httpx" },
     { name = "pillow" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c0/83/708aa87dc4a099a5a248672996c5974932491ba867c2cd0235db0199a89f/apilmoji-0.2.4.tar.gz", hash = "sha256:4bbf767b5f414f5a5fe42f7172c9d210ca393c7730a0816ad0a4b276900381c4", size = 8460, upload-time = "2025-12-20T05:46:27.644Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2a/7f/b6aa1676273195ded802af383d07328d9e751419a33ea59666481ba606dc/apilmoji-0.3.1.tar.gz", hash = "sha256:1490d0076e0b47bfb1b14bef9733a4d23181f54d8ecb212604f5ec0e11127428", size = 8604, upload-time = "2026-02-26T05:15:50.928Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0f/d6/4a2c058e585ef403ba118dc756259cf63dc3b8d660528257a16f182f2b36/apilmoji-0.2.4-py3-none-any.whl", hash = "sha256:ec22f32bae6d0938c40bcac0a48e264be9fff55ed3629666820ed31671f78c4f", size = 9036, upload-time = "2025-12-20T05:46:26.333Z" },
-]
-
-[package.optional-dependencies]
-tqdm = [
-    { name = "tqdm" },
+    { url = "https://files.pythonhosted.org/packages/37/41/48460d135db4be801fbb4840f60f4671b41cc5043f6c1d48a6cbeb91f4b5/apilmoji-0.3.1-py3-none-any.whl", hash = "sha256:305ec445d19b1cd11f21e07cf1d2bd9f3ae5be9fc688a6589f823dd67428da15", size = 9175, upload-time = "2026-02-26T05:15:49.906Z" },
 ]
 
 [[package]]
@@ -113,14 +108,14 @@ wheels = [
 
 [[package]]
 name = "asgiref"
-version = "3.11.0"
+version = "3.11.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "typing-extensions", marker = "python_full_version < '3.11' or (extra == 'group-21-nonebot-plugin-parser-pydantic-v1' and extra == 'group-21-nonebot-plugin-parser-pydantic-v2') or (extra == 'group-21-nonebot-plugin-parser-pydantic-v1' and extra == 'group-21-nonebot-plugin-parser-telegram') or (extra == 'group-21-nonebot-plugin-parser-pydantic-v2' and extra == 'group-21-nonebot-plugin-parser-telegram')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/76/b9/4db2509eabd14b4a8c71d1b24c8d5734c52b8560a7b1e1a8b56c8d25568b/asgiref-3.11.0.tar.gz", hash = "sha256:13acff32519542a1736223fb79a715acdebe24286d98e8b164a73085f40da2c4", size = 37969, upload-time = "2025-11-19T15:32:20.106Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/63/40/f03da1264ae8f7cfdbf9146542e5e7e8100a4c66ab48e791df9a03d3f6c0/asgiref-3.11.1.tar.gz", hash = "sha256:5f184dc43b7e763efe848065441eac62229c9f7b0475f41f80e207a114eda4ce", size = 38550, upload-time = "2026-02-03T13:30:14.33Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/91/be/317c2c55b8bbec407257d45f5c8d1b6867abc76d12043f2d3d58c538a4ea/asgiref-3.11.0-py3-none-any.whl", hash = "sha256:1db9021efadb0d9512ce8ffaf72fcef601c7b73a8807a1bb2ef143dc6b14846d", size = 24096, upload-time = "2025-11-19T15:32:19.004Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/0a/a72d10ed65068e115044937873362e6e32fab1b7dce0046aeb224682c989/asgiref-3.11.1-py3-none-any.whl", hash = "sha256:e8667a091e69529631969fd45dc268fa79b99c92c5fcdda727757e52146ec133", size = 24345, upload-time = "2026-02-03T13:30:13.039Z" },
 ]
 
 [[package]]
@@ -245,6 +240,11 @@ dependencies = [
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/84/85/57c314a6b35336efbbdc13e5fc9ae13f6b60a0647cfa7c1221178ac6d8ae/brotlicffi-1.2.0.0.tar.gz", hash = "sha256:34345d8d1f9d534fcac2249e57a4c3c8801a33c9942ff9f8574f67a175e17adb", size = 476682, upload-time = "2025-11-21T18:17:57.334Z" }
 wheels = [
+    { url = "https://files.pythonhosted.org/packages/7c/87/ba6298c3d7f8d66ce80d7a487f2a487ebae74a79c6049c7c2990178ce529/brotlicffi-1.2.0.0-cp314-cp314t-macosx_11_0_arm64.whl", hash = "sha256:b13fb476a96f02e477a506423cb5e7bc21e0e3ac4c060c20ba31c44056e38c68", size = 433038, upload-time = "2026-03-05T17:57:37.96Z" },
+    { url = "https://files.pythonhosted.org/packages/00/49/16c7a77d1cae0519953ef0389a11a9c2e2e62e87d04f8e7afbae40124255/brotlicffi-1.2.0.0-cp314-cp314t-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:17db36fb581f7b951635cd6849553a95c6f2f53c1a707817d06eae5aeff5f6af", size = 1541124, upload-time = "2026-03-05T17:57:39.488Z" },
+    { url = "https://files.pythonhosted.org/packages/e8/17/fab2c36ea820e2288f8c1bf562de1b6cd9f30e28d66f1ce2929a4baff6de/brotlicffi-1.2.0.0-cp314-cp314t-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:40190192790489a7b054312163d0ce82b07d1b6e706251036898ce1684ef12e9", size = 1541983, upload-time = "2026-03-05T17:57:41.061Z" },
+    { url = "https://files.pythonhosted.org/packages/78/c9/849a669b3b3bb8ac96005cdef04df4db658c33443a7fc704a6d4a2f07a56/brotlicffi-1.2.0.0-cp314-cp314t-win32.whl", hash = "sha256:a8079e8ecc32ecef728036a1d9b7105991ce6a5385cf51ee8c02297c90fb08c2", size = 349046, upload-time = "2026-03-05T17:57:42.76Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/25/09c0fd21cfc451fa38ad538f4d18d8be566746531f7f27143f63f8c45a9f/brotlicffi-1.2.0.0-cp314-cp314t-win_amd64.whl", hash = "sha256:ca90c4266704ca0a94de8f101b4ec029624273380574e4cf19301acfa46c61a0", size = 385653, upload-time = "2026-03-05T17:57:44.224Z" },
     { url = "https://files.pythonhosted.org/packages/e4/df/a72b284d8c7bef0ed5756b41c2eb7d0219a1dd6ac6762f1c7bdbc31ef3af/brotlicffi-1.2.0.0-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:9458d08a7ccde8e3c0afedbf2c70a8263227a68dea5ab13590593f4c0a4fd5f4", size = 432340, upload-time = "2025-11-21T18:17:42.277Z" },
     { url = "https://files.pythonhosted.org/packages/74/2b/cc55a2d1d6fb4f5d458fba44a3d3f91fb4320aa14145799fd3a996af0686/brotlicffi-1.2.0.0-cp38-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:84e3d0020cf1bd8b8131f4a07819edee9f283721566fe044a20ec792ca8fd8b7", size = 1534002, upload-time = "2025-11-21T18:17:43.746Z" },
     { url = "https://files.pythonhosted.org/packages/e4/9c/d51486bf366fc7d6735f0e46b5b96ca58dc005b250263525a1eea3cd5d21/brotlicffi-1.2.0.0-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:33cfb408d0cff64cd50bef268c0fed397c46fbb53944aa37264148614a62e990", size = 1536547, upload-time = "2025-11-21T18:17:45.729Z" },
@@ -1517,11 +1517,11 @@ wheels = [
 
 [[package]]
 name = "nonebot-plugin-parser"
-version = "2.3.9"
+version = "9.9.9.dev0"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
-    { name = "apilmoji", extra = ["tqdm"] },
+    { name = "apilmoji" },
     { name = "beautifulsoup4" },
     { name = "bilibili-api-python" },
     { name = "curl-cffi" },
@@ -1632,8 +1632,8 @@ dev = [
     { name = "nonebot-plugin-htmlkit", specifier = ">=0.1.0rc4" },
     { name = "nonebot-plugin-htmlrender", specifier = ">=0.6.7" },
     { name = "nonebot2", extras = ["fastapi"], specifier = ">=2.4.3,<3.0.0" },
-    { name = "nonebug", git = "https://github.com/nonebot/nonebug" },
-    { name = "poethepoet", specifier = ">=0.40.0" },
+    { name = "nonebug", git = "https://github.com/nonebot/nonebug?rev=master" },
+    { name = "poethepoet", specifier = ">=0.42.1" },
     { name = "pytest-asyncio", specifier = ">=1.3.0,<1.4.0" },
     { name = "pytest-cov", specifier = ">=7.0.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0,<4.0.0" },
@@ -1653,8 +1653,8 @@ pydantic-v1 = [{ name = "pydantic", specifier = "<2.0.0" }]
 pydantic-v2 = [{ name = "pydantic", specifier = ">=2.0.0" }]
 telegram = [{ name = "nonebot-adapter-telegram", specifier = ">=0.1.0b20" }]
 test = [
-    { name = "nonebug", git = "https://github.com/nonebot/nonebug" },
-    { name = "poethepoet", specifier = ">=0.40.0" },
+    { name = "nonebug", git = "https://github.com/nonebot/nonebug?rev=master" },
+    { name = "poethepoet", specifier = ">=0.42.1" },
     { name = "pytest-asyncio", specifier = ">=1.3.0,<1.4.0" },
     { name = "pytest-cov", specifier = ">=7.0.0" },
     { name = "pytest-xdist", specifier = ">=3.8.0,<4.0.0" },
@@ -1716,7 +1716,7 @@ fastapi = [
 [[package]]
 name = "nonebug"
 version = "0.4.3"
-source = { git = "https://github.com/nonebot/nonebug#864b208ae08433f28a01b3010e2da3ee3bfd2b61" }
+source = { git = "https://github.com/nonebot/nonebug?rev=master#53b893b7d412f941c2d0d769cc2e1c5526565296" }
 dependencies = [
     { name = "asgiref" },
     { name = "async-asgi-testclient" },
@@ -1879,16 +1879,16 @@ wheels = [
 
 [[package]]
 name = "poethepoet"
-version = "0.40.0"
+version = "0.42.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pastel" },
     { name = "pyyaml" },
     { name = "tomli", marker = "python_full_version < '3.11' or (extra == 'group-21-nonebot-plugin-parser-pydantic-v1' and extra == 'group-21-nonebot-plugin-parser-pydantic-v2') or (extra == 'group-21-nonebot-plugin-parser-pydantic-v1' and extra == 'group-21-nonebot-plugin-parser-telegram') or (extra == 'group-21-nonebot-plugin-parser-pydantic-v2' and extra == 'group-21-nonebot-plugin-parser-telegram')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/38/9d/054c8435b03324ed9abd5d5ab8c45065b1f42c23952cd23f13a5921d8465/poethepoet-0.40.0.tar.gz", hash = "sha256:91835f00d03d6c4f0e146f80fa510e298ad865e7edd27fe4cb9c94fdc090791b", size = 81114, upload-time = "2026-01-05T19:09:13.116Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/05/9b/e717572686bbf23e17483389c1bf3a381ca2427c84c7e0af0cdc0f23fccc/poethepoet-0.42.1.tar.gz", hash = "sha256:205747e276062c2aaba8afd8a98838f8a3a0237b7ab94715fab8d82718aac14f", size = 93209, upload-time = "2026-02-26T22:57:50.883Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fb/bc/73327d12b176abea7a3c6c7d760e1a953992f7b59d72c0354e39d7a353b5/poethepoet-0.40.0-py3-none-any.whl", hash = "sha256:afd276ae31d5c53573c0c14898118d4848ccee3709b6b0be6a1c6cbe522bbc8a", size = 106672, upload-time = "2026-01-05T19:09:11.536Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/68/75fa0a5ef39718ea6ba7ab6a3d031fa93640e57585580cec85539540bb65/poethepoet-0.42.1-py3-none-any.whl", hash = "sha256:d8d1345a5ca521be9255e7c13bc2c4c8698ed5e5ac5e9e94890d239fcd423d0a", size = 119967, upload-time = "2026-02-26T22:57:49.467Z" },
 ]
 
 [[package]]
@@ -2699,14 +2699,14 @@ wheels = [
 
 [[package]]
 name = "types-yt-dlp"
-version = "2026.2.4.20260206"
+version = "2026.2.21.20260223"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/15/47/04b17c0497e40d173397e5f364cb1f43cd04c36e8b7c93470436df6a54c6/types_yt_dlp-2026.2.4.20260206.tar.gz", hash = "sha256:375b6dd4afb7c0ee559b144dc96ec94fb1bb8456dd86326f55c1891ddc3fbd07", size = 43026, upload-time = "2026-02-06T04:03:42.972Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/84/5e/ff5f40cbbb399eaac57e8db581cce1c6248eabc4d67b28657be9bbeac4ef/types_yt_dlp-2026.2.21.20260223.tar.gz", hash = "sha256:a8299a55d4c778b7c5f95c3190deca07b6f7cf4af91ee73b254fada33013f4c2", size = 43035, upload-time = "2026-02-23T04:11:43.977Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f0/aa/b89206b1db8867daa622c5f261ddb0523e08680c681d85b9ba1171ffee29/types_yt_dlp-2026.2.4.20260206-py3-none-any.whl", hash = "sha256:ba51fd2a2509110db0ae89f914e32d558ec73db403aa0d5f98fd8084a2a1e15a", size = 58148, upload-time = "2026-02-06T04:03:41.973Z" },
+    { url = "https://files.pythonhosted.org/packages/c8/33/44f38b4f108012cdc5bc0a54ffde3d8b186930ebc8affe308e76ed15aeea/types_yt_dlp-2026.2.21.20260223-py3-none-any.whl", hash = "sha256:30d1b98145e9f4445ca6934ddd4babb01db47bd7ad38dc9816bd06d698cf384c", size = 58175, upload-time = "2026-02-23T04:11:42.946Z" },
 ]
 
 [[package]]
@@ -2753,11 +2753,11 @@ wheels = [
 
 [[package]]
 name = "urllib3"
-version = "2.6.2"
+version = "2.6.3"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/1e/24/a2a2ed9addd907787d7aa0355ba36a6cadf1768b934c652ea78acbd59dcd/urllib3-2.6.2.tar.gz", hash = "sha256:016f9c98bb7e98085cb2b4b17b87d2c702975664e4f060c6532e64d1c1a5e797", size = 432930, upload-time = "2025-12-11T15:56:40.252Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c7/24/5f1b3bdffd70275f6661c76461e25f024d5a38a46f04aaca912426a2b1d3/urllib3-2.6.3.tar.gz", hash = "sha256:1b62b6884944a57dbe321509ab94fd4d3b307075e0c2eae991ac71ee15ad38ed", size = 435556, upload-time = "2026-01-07T16:24:43.925Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6d/b9/4095b668ea3678bf6a0af005527f39de12fb026516fb3df17495a733b7f8/urllib3-2.6.2-py3-none-any.whl", hash = "sha256:ec21cddfe7724fc7cb4ba4bea7aa8e2ef36f607a4bab81aa6ce42a13dc3f03dd", size = 131182, upload-time = "2025-12-11T15:56:38.584Z" },
+    { url = "https://files.pythonhosted.org/packages/39/08/aaaad47bc4e9dc8c725e68f9d04865dbcb2052843ff09c97b08904852d84/urllib3-2.6.3-py3-none-any.whl", hash = "sha256:bf272323e553dfb2e87d9bfd225ca7b0f467b919d7bbd355436d3fd37cb0acd4", size = 131584, upload-time = "2026-01-07T16:24:42.685Z" },
 ]
 
 [[package]]
@@ -3137,11 +3137,11 @@ wheels = [
 
 [[package]]
 name = "yt-dlp"
-version = "2026.2.4"
+version = "2026.2.21"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/16/be/8e099f3f34bac6851490525fb1a8b62d525a95fcb5af082e8c52ba884fb5/yt_dlp-2026.2.4.tar.gz", hash = "sha256:24733ef081116f29d8ee6eae7a48127101e6c56eb7aa228dd604a60654760022", size = 3100305, upload-time = "2026-02-04T00:49:27.043Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/58/d9/55ffff25204733e94a507552ad984d5a8a8e4f9d1f0d91763e6b1a41c79b/yt_dlp-2026.2.21.tar.gz", hash = "sha256:4407dfc1a71fec0dee5ef916a8d4b66057812939b509ae45451fa8fb4376b539", size = 3116630, upload-time = "2026-02-21T20:40:53.522Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/96/38/b17cbeaf6712a4c1b97f7f9ec3a55f3a8ddee678cc88742af47dca0315b7/yt_dlp-2026.2.4-py3-none-any.whl", hash = "sha256:d6ea83257e8127a0097b1d37ee36201f99a292067e4616b2e5d51ab153b3dbb9", size = 3299165, upload-time = "2026-02-04T00:49:25.31Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/40/664c99ee36d80d84ce7a96cd98aebcb3d16c19e6c3ad3461d2cf5424040e/yt_dlp-2026.2.21-py3-none-any.whl", hash = "sha256:0d8408f5b6d20487f5caeb946dfd04f9bcd2f1a3a125b744a0a982b590e449f7", size = 3313392, upload-time = "2026-02-21T20:40:51.514Z" },
 ]
 
 [package.optional-dependencies]
@@ -3159,11 +3159,11 @@ default = [
 
 [[package]]
 name = "yt-dlp-ejs"
-version = "0.4.0"
+version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/e9/80/4b6c7f91b373e01cdc18080f41fa399592945abce7db74c2e6d0fb8468db/yt_dlp_ejs-0.4.0.tar.gz", hash = "sha256:3c67e0beb6f9f3603fbcb56f425eabaa37c52243d90d20ccbcce1dd941cfbd07", size = 96768, upload-time = "2026-01-29T16:25:59.964Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6b/0d/b9e4ab1b47cdeba0842df634b74b3c0144307640ad5b632a5e189c4ab7ce/yt_dlp_ejs-0.5.0.tar.gz", hash = "sha256:8dfae59e418232f485253dcf8e197fefa232423c3af7824fe19e4517b173293b", size = 98925, upload-time = "2026-02-21T19:29:16.844Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a4/90/8911146822364666be47f184c4180cec20fcc537a268ef40d1ab077dd25b/yt_dlp_ejs-0.4.0-py3-none-any.whl", hash = "sha256:19278cff397b243074df46342bb7616c404296aeaff01986b62b4e21823b0b9c", size = 53600, upload-time = "2026-01-29T16:25:57.87Z" },
+    { url = "https://files.pythonhosted.org/packages/7e/5b/1283356b70d4893a8a050cee15092e1b08ea15310b94365f88067146721b/yt_dlp_ejs-0.5.0-py3-none-any.whl", hash = "sha256:674fc0efea741d3100cdf3f0f9e123150715ee41edf47ea7a62fbdeda204bdec", size = 54032, upload-time = "2026-02-21T19:29:15.408Z" },
 ]
 
 [[package]]

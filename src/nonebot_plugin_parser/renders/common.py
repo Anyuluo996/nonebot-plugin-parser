@@ -307,7 +307,6 @@ class CommonRenderer(ImageRenderer):
         base_url=pconfig.emoji_cdn,
         style=pconfig.emoji_style,
         cache_dir=pconfig.cache_dir / _EMOJIS,
-        enable_tqdm=True,
     )
     """Emoji Source"""
 

@@ -302,7 +302,7 @@ class BilibiliParser(BaseParser):
         # 处理 page_num 可能不存在的情况
         try:
             page_num = int(searched.group("page_num") or 1)
-        except (AttributeError, ValueError):
+        except (AttributeError, IndexError, ValueError):
             page_num = 1
 
         return await self.parse_video(bvid=bvid, page_num=page_num)
@@ -315,7 +315,7 @@ class BilibiliParser(BaseParser):
         # 处理 page_num 可能不存在的情况
         try:
             page_num = int(searched.group("page_num") or 1)
-        except (AttributeError, ValueError):
+        except (AttributeError, IndexError, ValueError):
             page_num = 1
 
         return await self.parse_video(avid=avid, page_num=page_num)

@@ -18,7 +18,7 @@ def pytest_collection_modifyitems(items: list[pytest.Item]):
 
 
 @pytest.fixture(scope="session", autouse=True)
-async def after_nonebot_init(after_nonebot_init: None):
+async def init_nonebot():
     import nonebot
     from nonebot.adapters.onebot.v11 import Adapter as OnebotV11Adapter
 

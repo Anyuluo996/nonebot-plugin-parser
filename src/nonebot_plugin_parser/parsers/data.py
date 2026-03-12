@@ -78,10 +78,10 @@ class VideoContent(MediaContent):
         return repr + ")"
 
     def has_pending_resources(self) -> bool:
-        return super().has_pending_resources() or is_pending_path_task(self.cover)
+        return MediaContent.has_pending_resources(self) or is_pending_path_task(self.cover)
 
     def has_local_resources(self) -> bool:
-        return super().has_local_resources() and (self.cover is None or path_task_exists(self.cover))
+        return MediaContent.has_local_resources(self) and (self.cover is None or path_task_exists(self.cover))
 
 
 @dataclass(repr=False, slots=True)
@@ -119,14 +119,14 @@ class DynamicContent(MediaContent):
 
     def has_pending_resources(self) -> bool:
         return (
-            super().has_pending_resources()
+            MediaContent.has_pending_resources(self)
             or is_pending_path_task(self.gif_path)
             or is_pending_path_task(self.cover)
         )
 
     def has_local_resources(self) -> bool:
         return (
-            super().has_local_resources()
+            MediaContent.has_local_resources(self)
             and (self.gif_path is None or path_task_exists(self.gif_path))
             and (self.cover is None or path_task_exists(self.cover))
         )

@@ -289,7 +289,10 @@ class BilibiliParser(BaseParser):
     async def _parse_short_link(self, searched: Match[str]):
         """解析短链"""
         url = f"https://{searched.group(0)}"
-        return await self.parse_with_redirect(url)
+        logger.info(f"B站短链解析: {url}")
+        result = await self.parse_with_redirect(url)
+        logger.info(f"短链重定向解析完成: {result.title}")
+        return result
 
     @handle("BV", r"^(?P<bvid>BV[0-9a-zA-Z]{10})(?:\s)?(?P<page_num>\d{1,3})?$")
     @handle("/BV", r"bilibili\.com(?:/video)?/(?P<bvid>BV[0-9a-zA-Z]{10})(?:\?p=(?P<page_num>\d{1,3}))?")

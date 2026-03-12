@@ -117,12 +117,16 @@ class BaseParser:
         headers: dict[str, str] | None = None,
     ) -> ParseResult:
         """先重定向再解析"""
+        from nonebot import logger
+
         redirect_url = await self.get_redirect_url(url, headers=headers or self.headers)
 
         if redirect_url == url:
             raise ParseException(f"无法重定向 URL: {url}")
 
+        logger.info(f"URL 重定向: {url} -> {redirect_url}")
         keyword, searched = self.search_url(redirect_url)
+        logger.info(f"重定向 URL 匹配到: {keyword}")
         return await self.parse(keyword, searched)
 
     @classmethod

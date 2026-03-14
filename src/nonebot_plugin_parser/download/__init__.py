@@ -29,6 +29,10 @@ class StreamDownloader:
         self.cache_dir: Path = pconfig.cache_dir
         self.client: AsyncClient = AsyncClient(timeout=DOWNLOAD_TIMEOUT, verify=False)
 
+    async def close(self):
+        """关闭下载器"""
+        await self.client.aclose()
+
     @contextmanager
     def rich_progress(self, desc: str, total: int | None = None):
         with Progress(

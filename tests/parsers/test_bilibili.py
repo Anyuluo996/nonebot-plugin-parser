@@ -71,12 +71,12 @@ async def test_dynamic():
     async def test_parse_dynamic(dynamic_url: str) -> None:
         _, searched = parser.search_url(dynamic_url)
         # 根据 URL 类型选择解析方法
-        if "/opus/" in dynamic_url:
-            opus_id = int(searched.group("opus_id"))
-            result = await parser.parse_opus(opus_id)
-        else:
+        # /opus/ URL 也使用 dynamic_id 组
+        if searched.group("dynamic_id"):
             dynamic_id = int(searched.group("dynamic_id"))
-            result = await parser.parse_dynamic(dynamic_id)
+            result = await parser.parse_dynamic_or_opus(dynamic_id)
+        else:
+            raise ValueError(f"无法解析 URL: {dynamic_url}")
         assert result.author, "作者为空"
         avatar_path = await result.author.get_avatar_path()
         assert avatar_path, "头像不存在"

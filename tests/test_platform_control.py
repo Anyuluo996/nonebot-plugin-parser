@@ -2,6 +2,8 @@
 测试开启/关闭解析功能
 """
 
+import pytest
+
 
 def get_mock_session():
     """获取 MockSession 类，延迟导入避免 pytest 收集阶段报错"""
@@ -20,6 +22,54 @@ def get_mock_session():
             return type("MockScene", (), {"is_private": self._is_private})()
 
     return MockSession, get_group_key, is_platform_enabled, _DISABLED_PLATFORMS_DICT
+
+
+class MockTextMessage:
+    """模拟纯文本消息"""
+
+    def __init__(self, text: str):
+        self.text = text
+
+    def extract_plain_text(self) -> str:
+        return self.text
+
+
+class MockCommandArg:
+    """模拟命令参数"""
+
+    def __init__(self, text: str):
+        self.text = text
+
+    def extract_plain_text(self) -> str:
+        return self.text
+
+
+class MockMatcher:
+    """模拟 matcher.finish 行为"""
+
+    def __init__(self):
+        self.finished_messages: list[str] = []
+
+    async def finish(self, message: str):
+        from nonebot.exception import FinishedException
+
+        self.finished_messages.append(message)
+        raise FinishedException()
+
+
+def get_platform_control_matchers():
+    """获取平台控制命令 matcher"""
+    from nonebot.matcher import matchers
+
+    result = {}
+    for matcher_group in matchers.values():
+        for matcher in matcher_group:
+            if getattr(matcher, "module_name", None) != "nonebot_plugin_parser.matchers.filter":
+                continue
+            handler_name = matcher.handlers[0].call.__name__
+            if handler_name in {"enable_parser", "disable_parser", "parser_status"}:
+                result[handler_name] = matcher
+    return result
 
 
 class TestPlatformNameMapping:
@@ -124,6 +174,27 @@ class TestPlatformEnabled:
         assert is_platform_enabled(session, "weibo") is False
         assert is_platform_enabled(session, "douyin") is True
 
+    def test_is_enabled_when_some_platforms_still_enabled(self):
+        """测试仅禁用部分平台时自动解析仍可用"""
+        from nonebot_plugin_parser.matchers.filter import is_enabled
+
+        MockSession, get_group_key, _, _DISABLED_PLATFORMS_DICT = get_mock_session()
+        session = MockSession("QQ", "group_123", is_private=False)
+        _DISABLED_PLATFORMS_DICT[get_group_key(session)] = {"bilibili"}
+
+        assert is_enabled(MockTextMessage("https://example.com"), session) is True
+
+    def test_is_enabled_false_when_all_platforms_disabled(self):
+        """测试仅在所有平台都禁用时自动解析才关闭"""
+        from nonebot_plugin_parser.constants import PlatformEnum
+        from nonebot_plugin_parser.matchers.filter import is_enabled
+
+        MockSession, get_group_key, _, _DISABLED_PLATFORMS_DICT = get_mock_session()
+        session = MockSession("QQ", "group_123", is_private=False)
+        _DISABLED_PLATFORMS_DICT[get_group_key(session)] = {platform.value for platform in PlatformEnum}
+
+        assert is_enabled(MockTextMessage("https://example.com"), session) is False
+
     def test_different_groups_independent(self):
         """测试不同群组独立管理"""
         MockSession, _, is_platform_enabled, _DISABLED_PLATFORMS_DICT = get_mock_session()
@@ -204,15 +275,37 @@ class TestPlatformCommandHandler:
         assert standard_name == "bilibili"
         assert check_platform_available(standard_name) is True
 
+        _DISABLED_PLATFORMS_DICT[group_key] = {"bilibili"}
+
         # 模拟命令处理逻辑
         if group_key not in _DISABLED_PLATFORMS_DICT:
             _DISABLED_PLATFORMS_DICT[group_key] = set()
         _DISABLED_PLATFORMS_DICT[group_key].discard(standard_name)
+        if not _DISABLED_PLATFORMS_DICT[group_key]:
+            del _DISABLED_PLATFORMS_DICT[group_key]
 
         # 验证结果
         assert is_platform_enabled(session, "bilibili") is True
-        assert group_key in _DISABLED_PLATFORMS_DICT
-        assert "bilibili" not in _DISABLED_PLATFORMS_DICT[group_key]
+        assert group_key not in _DISABLED_PLATFORMS_DICT
+
+    @pytest.mark.asyncio
+    async def test_enable_parser_handler_removes_empty_group_key(self, monkeypatch):
+        """测试开启最后一个被禁用平台时会清理残留状态"""
+        import nonebot_plugin_parser.matchers.filter as filter_module
+        from nonebot.exception import FinishedException
+
+        MockSession, _, _, _ = get_mock_session()
+        session = MockSession("QQ", "group_test", is_private=False)
+        group_key = filter_module.get_group_key(session)
+        filter_module._DISABLED_PLATFORMS_DICT[group_key] = {"bilibili"}
+        monkeypatch.setattr(filter_module, "save_disabled_platforms", lambda: None)
+
+        matcher = MockMatcher()
+        with pytest.raises(FinishedException):
+            await filter_module.enable_parser(matcher, session, MockCommandArg("bilibili"))
+
+        assert matcher.finished_messages == ["bilibili 解析已开启"]
+        assert group_key not in filter_module._DISABLED_PLATFORMS_DICT
 
     def test_disable_single_platform_logic(self):
         """测试关闭单个平台的逻辑"""
@@ -270,9 +363,12 @@ class TestPlatformCommandHandler:
         if group_key not in _DISABLED_PLATFORMS_DICT:
             _DISABLED_PLATFORMS_DICT[group_key] = set()
         _DISABLED_PLATFORMS_DICT[group_key].discard(standard_name)
+        if not _DISABLED_PLATFORMS_DICT[group_key]:
+            del _DISABLED_PLATFORMS_DICT[group_key]
 
         # 验证
         assert is_platform_enabled(session, "bilibili") is True
+        assert group_key not in _DISABLED_PLATFORMS_DICT
 
     def test_disable_platform_with_chinese_alias(self):
         """测试使用中文别名关闭平台"""
@@ -369,3 +465,20 @@ class TestPlatformCommandHandler:
 
         # 测试不存在的平台
         assert check_platform_available("not_exist") is False
+
+    def test_platform_control_matchers_require_to_me_and_admin_owner_permissions(self):
+        """测试平台控制命令 matcher 的权限和 to_me 规则"""
+        matchers = get_platform_control_matchers()
+
+        assert set(matchers) == {"enable_parser", "disable_parser", "parser_status"}
+
+        for matcher in matchers.values():
+            permission_reprs = {repr(checker) for checker in matcher.permission.checkers}
+            rule_reprs = {repr(checker) for checker in matcher.rule.checkers}
+
+            assert len(matcher.permission.checkers) == 3
+            assert any("Superuser" in checker for checker in permission_reprs)
+
+            assert len(matcher.rule.checkers) == 2
+            assert any("Command" in checker for checker in rule_reprs)
+            assert any("ToMe" in checker for checker in rule_reprs)

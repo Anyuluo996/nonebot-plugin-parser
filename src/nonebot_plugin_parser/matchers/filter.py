@@ -6,7 +6,7 @@ from nonebot.rule import to_me
 from nonebot.params import CommandArg
 from nonebot.matcher import Matcher
 from nonebot.permission import SUPERUSER
-from nonebot_plugin_uninfo import ADMIN, Session, UniSession
+from nonebot_plugin_uninfo import ADMIN, OWNER, Session, UniSession
 from nonebot_plugin_alconna.uniseg import UniMsg
 
 from ..config import pconfig
@@ -14,6 +14,8 @@ from ..parsers import BaseParser
 from ..constants import PlatformEnum
 
 _DISABLED_PLATFORMS_PATH: Path = pconfig.data_dir / "disabled_platforms.json"
+_ALL_PLATFORMS = {platform.value for platform in PlatformEnum}
+PARSER_CONTROL_PERMISSION = SUPERUSER | OWNER() | ADMIN()
 
 
 def load_or_initialize_dict() -> dict[str, set[str]]:
@@ -83,7 +85,8 @@ def is_enabled(message: UniMsg, session: Session = UniSession()) -> bool:
         return True
 
     group_key = get_group_key(session)
-    return group_key not in _DISABLED_PLATFORMS_DICT
+    disabled_platforms = _DISABLED_PLATFORMS_DICT.get(group_key, set())
+    return not _ALL_PLATFORMS.issubset(disabled_platforms)
 
 
 def is_platform_enabled(session: Session, platform_name: str) -> bool:
@@ -163,7 +166,7 @@ def check_platform_available(platform_name: str) -> bool:
     return platform_name in PARSERS
 
 
-@on_command("开启解析", permission=SUPERUSER, block=True).handle()
+@on_command("开启解析", permission=PARSER_CONTROL_PERMISSION, rule=to_me(), block=True).handle()
 async def enable_parser(matcher: Matcher, session: Session = UniSession(), args: CommandArg = CommandArg()):
     """开启解析"""
     try:
@@ -187,6 +190,8 @@ async def enable_parser(matcher: Matcher, session: Session = UniSession(), args:
             if group_key not in _DISABLED_PLATFORMS_DICT:
                 _DISABLED_PLATFORMS_DICT[group_key] = set()
             _DISABLED_PLATFORMS_DICT[group_key].discard(standard_name)
+            if not _DISABLED_PLATFORMS_DICT[group_key]:
+                del _DISABLED_PLATFORMS_DICT[group_key]
             save_disabled_platforms()
             await matcher.finish(f"{platform_name} 解析已开启")
         else:
@@ -203,7 +208,7 @@ async def enable_parser(matcher: Matcher, session: Session = UniSession(), args:
         await matcher.finish(f"发生错误: {e}")
 
 
-@on_command("关闭解析", permission=SUPERUSER, block=True).handle()
+@on_command("关闭解析", permission=PARSER_CONTROL_PERMISSION, rule=to_me(), block=True).handle()
 async def disable_parser(matcher: Matcher, session: Session = UniSession(), args: CommandArg = CommandArg()):
     """关闭解析"""
     try:
@@ -235,8 +240,7 @@ async def disable_parser(matcher: Matcher, session: Session = UniSession(), args
             await matcher.finish(f"{platform_name} 解析已关闭")
         else:
             # 禁用所有平台
-            all_platforms = {p.value for p in PlatformEnum}
-            _DISABLED_PLATFORMS_DICT[group_key] = all_platforms
+            _DISABLED_PLATFORMS_DICT[group_key] = _ALL_PLATFORMS.copy()
             save_disabled_platforms()
             await matcher.finish("解析已关闭")
     except Exception as e:
@@ -247,7 +251,7 @@ async def disable_parser(matcher: Matcher, session: Session = UniSession(), args
         await matcher.finish(f"发生错误: {e}")
 
 
-@on_command("解析状态", permission=SUPERUSER, block=True).handle()
+@on_command("解析状态", permission=PARSER_CONTROL_PERMISSION, rule=to_me(), block=True).handle()
 async def parser_status(matcher: Matcher, session: Session = UniSession()):
     """查询当前解析状态"""
     group_key = get_group_key(session)
@@ -261,8 +265,7 @@ async def parser_status(matcher: Matcher, session: Session = UniSession()):
         await matcher.finish("当前群组解析已全局开启")
 
     # 获取所有可用平台
-    all_platforms = {p.value for p in PlatformEnum}
-    enabled_platforms = all_platforms - disabled_platforms
+    enabled_platforms = _ALL_PLATFORMS - disabled_platforms
 
     if enabled_platforms:
         enabled_list = ", ".join(sorted(enabled_platforms))

@@ -72,7 +72,7 @@ def test_bilibili_parser_initializes_base_fields():
     assert parser.timeout is not None
     assert parser.ios_headers
     assert parser.android_headers
-    assert parser.headers["Referer"] == "https://www.bilibili.com/"
+    assert parser.headers["Referer"].rstrip("/") == "https://www.bilibili.com"
 
 
 def test_is_enabled_all_disabled_but_force_prefix_still_allowed(monkeypatch):

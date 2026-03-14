@@ -18,6 +18,11 @@ def repr_path_task(path_task: Path | Task[Path]) -> str:
         return f"task={path_task.get_name()}, done={path_task.done()}"
 
 
+def is_pending_path_task(path_task: Path | Task[Path] | None) -> bool:
+    """检查是否是待处理的下载任务"""
+    return isinstance(path_task, Task)
+
+
 @dataclass(repr=False, slots=True)
 class MediaContent:
     path_task: Path | Task[Path]
@@ -243,6 +248,36 @@ class ParseResult:
             *self._iterate_download_coros(img_only),
             return_exceptions=suppress_errors,
         )
+
+    def _has_pending_resources(self) -> bool:
+        """检查是否有待下载的资源"""
+        # 检查作者头像
+        if self.author and is_pending_path_task(self.author.avatar):
+            return True
+        # 检查内容
+        for cont in self.contents:
+            if isinstance(cont, MediaContent) and is_pending_path_task(cont.path_task):
+                return True
+            if isinstance(cont, VideoContent) and is_pending_path_task(cont.cover):
+                return True
+        # 检查图文
+        for gra in self.graphics:
+            if isinstance(gra, ImageContent) and is_pending_path_task(gra.path_task):
+                return True
+        # 检查转发
+        if self.repost and self.repost._has_pending_resources():
+            return True
+        return False
+
+    def is_cache_valid(self) -> bool:
+        """检查缓存是否有效"""
+        # 如果有待下载的资源，缓存无效
+        if self._has_pending_resources():
+            return False
+        # 检查渲染图片是否存在
+        if self.render_image is None or not self.render_image.exists():
+            return False
+        return True
 
     @property
     def content_type(self) -> str | None:

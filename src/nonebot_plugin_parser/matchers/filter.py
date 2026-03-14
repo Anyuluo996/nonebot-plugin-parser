@@ -196,6 +196,9 @@ async def enable_parser(matcher: Matcher, session: Session = UniSession(), args:
                 save_disabled_platforms()
             await matcher.finish("解析已开启")
     except Exception as e:
+        from nonebot.exception import FinishedException
+        if isinstance(e, FinishedException):
+            raise  # 重新抛出 FinishedException
         logger.exception(f"[开启解析] 发生异常: {e}")
         await matcher.finish(f"发生错误: {e}")
 
@@ -237,6 +240,9 @@ async def disable_parser(matcher: Matcher, session: Session = UniSession(), args
             save_disabled_platforms()
             await matcher.finish("解析已关闭")
     except Exception as e:
+        from nonebot.exception import FinishedException
+        if isinstance(e, FinishedException):
+            raise  # 重新抛出 FinishedException
         logger.exception(f"[关闭解析] 发生异常: {e}")
         await matcher.finish(f"发生错误: {e}")
 

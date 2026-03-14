@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 from nonebot import logger, on_command
+from nonebot.adapters import Message
 from nonebot.rule import to_me
 from nonebot.params import CommandArg
 from nonebot.matcher import Matcher
@@ -167,7 +168,7 @@ def check_platform_available(platform_name: str) -> bool:
 
 
 @on_command("开启解析", permission=PARSER_CONTROL_PERMISSION, rule=to_me(), block=True).handle()
-async def enable_parser(matcher: Matcher, session: Session = UniSession(), args: CommandArg = CommandArg()):
+async def enable_parser(matcher: Matcher, session: Session = UniSession(), args: Message = CommandArg()):
     """开启解析"""
     try:
         group_key = get_group_key(session)
@@ -209,7 +210,7 @@ async def enable_parser(matcher: Matcher, session: Session = UniSession(), args:
 
 
 @on_command("关闭解析", permission=PARSER_CONTROL_PERMISSION, rule=to_me(), block=True).handle()
-async def disable_parser(matcher: Matcher, session: Session = UniSession(), args: CommandArg = CommandArg()):
+async def disable_parser(matcher: Matcher, session: Session = UniSession(), args: Message = CommandArg()):
     """关闭解析"""
     try:
         logger.warning(f"[关闭解析] 开始处理, session: {session.scope}/{session.scene_path}")

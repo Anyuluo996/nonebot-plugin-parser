@@ -4,6 +4,7 @@ from pathlib import Path
 from nonebot import on_command
 from nonebot.rule import to_me
 from nonebot.matcher import Matcher
+from nonebot.params import CommandArg
 from nonebot.permission import SUPERUSER
 from nonebot_plugin_uninfo import ADMIN, Session, UniSession
 from nonebot_plugin_alconna.uniseg import UniMsg
@@ -145,12 +146,12 @@ def check_platform_available(platform_name: str) -> bool:
 
 
 @on_command("开启解析", rule=to_me(), permission=SUPERUSER | ADMIN(), block=True).handle()
-async def enable_parser(matcher: Matcher, session: Session = UniSession(), platform: str = ""):
+async def enable_parser(matcher: Matcher, session: Session = UniSession(), args: CommandArg = CommandArg()):
     """开启解析"""
     group_key = get_group_key(session)
 
     # 解析平台名称
-    platform_name = platform.strip()
+    platform_name = args.extract_plain_text().strip()
     if platform_name:
         # 尝试转换为标准平台名称
         standard_name = get_platform_display_name(platform_name)
@@ -174,12 +175,12 @@ async def enable_parser(matcher: Matcher, session: Session = UniSession(), platf
 
 
 @on_command("关闭解析", rule=to_me(), permission=SUPERUSER | ADMIN(), block=True).handle()
-async def disable_parser(matcher: Matcher, session: Session = UniSession(), platform: str = ""):
+async def disable_parser(matcher: Matcher, session: Session = UniSession(), args: CommandArg = CommandArg()):
     """关闭解析"""
     group_key = get_group_key(session)
 
     # 解析平台名称
-    platform_name = platform.strip()
+    platform_name = args.extract_plain_text().strip()
     if platform_name:
         # 尝试转换为标准平台名称
         standard_name = get_platform_display_name(platform_name)

@@ -1,11 +1,10 @@
 import json
-import logging
 from pathlib import Path
 
-from nonebot import on_command, logger
+from nonebot import logger, on_command
 from nonebot.rule import to_me
-from nonebot.matcher import Matcher
 from nonebot.params import CommandArg
+from nonebot.matcher import Matcher
 from nonebot.permission import SUPERUSER
 from nonebot_plugin_uninfo import ADMIN, Session, UniSession
 from nonebot_plugin_alconna.uniseg import UniMsg
@@ -176,7 +175,8 @@ async def enable_parser(matcher: Matcher, session: Session = UniSession(), args:
     if platform_name:
         # 尝试转换为标准平台名称
         standard_name = get_platform_display_name(platform_name)
-        logger.info(f"[开启解析] 转换后平台名: {standard_name}, 可用: {check_platform_available(standard_name) if standard_name else 'N/A'}")
+        available = check_platform_available(standard_name) if standard_name else "N/A"
+        logger.info(f"[开启解析] 转换后平台名: {standard_name}, 可用: {available}")
         if standard_name is None:
             await matcher.finish(f"未知的平台: {platform_name}")
         if not check_platform_available(standard_name):
@@ -208,7 +208,8 @@ async def disable_parser(matcher: Matcher, session: Session = UniSession(), args
     if platform_name:
         # 尝试转换为标准平台名称
         standard_name = get_platform_display_name(platform_name)
-        logger.info(f"[关闭解析] 转换后平台名: {standard_name}, 可用: {check_platform_available(standard_name) if standard_name else 'N/A'}")
+        available = check_platform_available(standard_name) if standard_name else "N/A"
+        logger.info(f"[关闭解析] 转换后平台名: {standard_name}, 可用: {available}")
         if standard_name is None:
             await matcher.finish(f"未知的平台: {platform_name}")
         if not check_platform_available(standard_name):

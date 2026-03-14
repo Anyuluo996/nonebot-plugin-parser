@@ -2,12 +2,10 @@
 测试开启/关闭解析功能
 """
 
-import pytest
-
 
 def get_mock_session():
     """获取 MockSession 类，延迟导入避免 pytest 收集阶段报错"""
-    from nonebot_plugin_parser.matchers.filter import get_group_key, is_platform_enabled, _DISABLED_PLATFORMS_DICT
+    from nonebot_plugin_parser.matchers.filter import _DISABLED_PLATFORMS_DICT, get_group_key, is_platform_enabled
 
     class MockSession:
         """模拟 Session 对象"""
@@ -187,11 +185,11 @@ class TestPlatformCommandHandler:
     def test_enable_single_platform_logic(self):
         """测试开启单个平台的逻辑"""
         from nonebot_plugin_parser.matchers.filter import (
+            _DISABLED_PLATFORMS_DICT,
             get_group_key,
             is_platform_enabled,
-            get_platform_display_name,
             check_platform_available,
-            _DISABLED_PLATFORMS_DICT,
+            get_platform_display_name,
         )
 
         MockSession, _, _, _ = get_mock_session()
@@ -219,11 +217,11 @@ class TestPlatformCommandHandler:
     def test_disable_single_platform_logic(self):
         """测试关闭单个平台的逻辑"""
         from nonebot_plugin_parser.matchers.filter import (
+            _DISABLED_PLATFORMS_DICT,
             get_group_key,
             is_platform_enabled,
-            get_platform_display_name,
             check_platform_available,
-            _DISABLED_PLATFORMS_DICT,
+            get_platform_display_name,
         )
 
         MockSession, _, _, _ = get_mock_session()
@@ -249,10 +247,10 @@ class TestPlatformCommandHandler:
     def test_enable_platform_with_chinese_alias(self):
         """测试使用中文别名开启平台"""
         from nonebot_plugin_parser.matchers.filter import (
+            _DISABLED_PLATFORMS_DICT,
             get_group_key,
             is_platform_enabled,
             get_platform_display_name,
-            _DISABLED_PLATFORMS_DICT,
         )
 
         MockSession, _, _, _ = get_mock_session()
@@ -279,10 +277,10 @@ class TestPlatformCommandHandler:
     def test_disable_platform_with_chinese_alias(self):
         """测试使用中文别名关闭平台"""
         from nonebot_plugin_parser.matchers.filter import (
+            _DISABLED_PLATFORMS_DICT,
             get_group_key,
             is_platform_enabled,
             get_platform_display_name,
-            _DISABLED_PLATFORMS_DICT,
         )
 
         MockSession, _, _, _ = get_mock_session()
@@ -306,9 +304,9 @@ class TestPlatformCommandHandler:
     def test_enable_all_platforms_logic(self):
         """测试开启所有平台的逻辑"""
         from nonebot_plugin_parser.matchers.filter import (
+            _DISABLED_PLATFORMS_DICT,
             get_group_key,
             is_platform_enabled,
-            _DISABLED_PLATFORMS_DICT,
         )
 
         MockSession, _, _, _ = get_mock_session()
@@ -332,12 +330,12 @@ class TestPlatformCommandHandler:
 
     def test_disable_all_platforms_logic(self):
         """测试关闭所有平台的逻辑"""
+        from nonebot_plugin_parser.constants import PlatformEnum
         from nonebot_plugin_parser.matchers.filter import (
+            _DISABLED_PLATFORMS_DICT,
             get_group_key,
             is_platform_enabled,
-            _DISABLED_PLATFORMS_DICT,
         )
-        from nonebot_plugin_parser.constants import PlatformEnum
 
         MockSession, _, _, _ = get_mock_session()
         session = MockSession("QQ", "group_test", is_private=False)
@@ -355,7 +353,6 @@ class TestPlatformCommandHandler:
         """测试未知平台返回错误"""
         from nonebot_plugin_parser.matchers.filter import (
             get_platform_display_name,
-            check_platform_available,
         )
 
         # 测试未知平台

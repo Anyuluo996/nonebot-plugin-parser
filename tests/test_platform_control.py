@@ -1,180 +1,171 @@
 """
-测试单独平台控制功能
-
-这个脚本演示了新增的平台控制功能：
-1. 开启/关闭指定平台的解析
-2. 查看当前群组的解析状态
-3. 支持的平台别名
+测试开启/关闭解析功能
 """
 
-from pathlib import Path
-import json
+import pytest
 
 
-# 演示平台名称映射功能
-def demo_platform_name_mapping():
-    """演示平台名称识别（模拟）"""
-    print("=" * 60)
-    print("演示 1: 平台名称识别")
-    print("=" * 60)
+def get_mock_session():
+    """获取 MockSession 类，延迟导入避免 pytest 收集阶段报错"""
+    from nonebot_plugin_parser.matchers.filter import get_group_key, is_platform_enabled, _DISABLED_PLATFORMS_DICT
 
-    test_cases = [
-        ("bilibili", "bilibili"),
-        ("b站", "bilibili"),
-        ("B站", "bilibili"),
-        ("douyin", "douyin"),
-        ("抖音", "douyin"),
-        ("weibo", "weibo"),
-        ("微博", "weibo"),
-        ("twitter", "twitter"),
-        ("推特", "twitter"),
-        ("youtube", "youtube"),
-        ("油管", "youtube"),
-    ]
+    class MockSession:
+        """模拟 Session 对象"""
 
-    for input_name, expected in test_cases:
-        status = "✅"
-        print(f"{status} '{input_name}' -> '{expected}'")
+        def __init__(self, scope: str, scene_path: str, is_private: bool = False):
+            self.scope = scope
+            self.scene_path = scene_path
+            self._is_private = is_private
+
+        @property
+        def scene(self):
+            return type("MockScene", (), {"is_private": self._is_private})()
+
+    return MockSession, get_group_key, is_platform_enabled, _DISABLED_PLATFORMS_DICT
 
 
-# 演示 JSON 数据结构
-def demo_json_structure():
-    """演示 JSON 存储结构"""
-    print("\n" + "=" * 60)
-    print("演示 2: JSON 数据结构")
-    print("=" * 60)
+class TestPlatformNameMapping:
+    """测试平台名称映射"""
 
-    # 新格式
-    new_format = {
-        "test_group_123": ["bilibili", "douyin"],
-        "test_group_456": ["weibo", "twitter"]
-    }
+    def test_get_platform_display_name(self):
+        """测试平台名称转换为标准值"""
+        from nonebot_plugin_parser.matchers.filter import get_platform_display_name
 
-    print("\n新格式 (disabled_platforms.json):")
-    print(json.dumps(new_format, ensure_ascii=False, indent=2))
+        # 测试 value
+        assert get_platform_display_name("bilibili") == "bilibili"
+        assert get_platform_display_name("weibo") == "weibo"
+        assert get_platform_display_name("douyin") == "douyin"
 
-    print("\n说明:")
-    print("  - 群组 test_group_123 禁用了 bilibili 和 douyin")
-    print("  - 群组 test_group_456 禁用了 weibo 和 twitter")
-    print("  - 未列出的平台默认启用")
+        # 测试大小写不敏感
+        assert get_platform_display_name("BILIBILI") == "bilibili"
+        assert get_platform_display_name("Weibo") == "weibo"
 
+        # 测试未知平台
+        assert get_platform_display_name("unknown_platform") is None
 
-# 演示指令用法
-def demo_command_usage():
-    """演示指令用法"""
-    print("\n" + "=" * 60)
-    print("演示 3: 指令使用方法")
-    print("=" * 60)
+    def test_check_platform_available(self):
+        """测试平台是否可用"""
+        from nonebot_plugin_parser.matchers.filter import check_platform_available
 
-    commands = [
-        ("开启解析", "开启所有平台的解析功能"),
-        ("开启解析 bilibili", "开启 B 站的解析功能"),
-        ("开启解析 b站", "同上，支持中文别名"),
-        ("关闭解析", "关闭所有平台的解析功能"),
-        ("关闭解析 douyin", "关闭抖音的解析功能"),
-        ("关闭解析 抖音", "同上，支持中文别名"),
-        ("解析状态", "查看当前群组的解析状态"),
-    ]
+        # 测试已实现的平台
+        assert check_platform_available("bilibili") is True
+        assert check_platform_available("weibo") is True
+        assert check_platform_available("douyin") is True
 
-    for cmd, desc in commands:
-        print(f"  {cmd:30s} # {desc}")
+        # 测试未实现的平台
+        assert check_platform_available("unknown_platform") is False
 
 
-# 演示状态输出
-def demo_status_output():
-    """演示状态输出格式"""
-    print("\n" + "=" * 60)
-    print("演示 4: 状态输出示例")
-    print("=" * 60)
+class TestGroupKey:
+    """测试群组 key 获取"""
 
-    status_output = """当前群组解析状态:
-  ✅ 启用 - AcFun (acfun)
-  ❌ 禁用 - B站 (bilibili)
-  ✅ 启用 - 抖音 (douyin)
-  ✅ 启用 - 快手 (kuaishou)
-  ✅ 启用 - NGA (nga)
-  ✅ 启用 - TikTok (tiktok)
-  ❌ 禁用 - Twitter (twitter)
-  ✅ 启用 - 微博 (weibo)
-  ✅ 启用 - 小红书 (xiaohongshu)
-  ✅ 启用 - YouTube (youtube)
+    def test_get_group_key_private(self):
+        """测试私聊场景的 group key"""
+        MockSession, get_group_key, _, _ = get_mock_session()
+        session = MockSession("QQ", "private", is_private=True)
+        key = get_group_key(session)
+        assert key == "QQ_private"
 
-总计: 9/11 个平台已启用"""
-
-    print(status_output)
+    def test_get_group_key_group(self):
+        """测试群聊场景的 group key"""
+        MockSession, get_group_key, _, _ = get_mock_session()
+        session = MockSession("QQ", "group_123456", is_private=False)
+        key = get_group_key(session)
+        assert key == "QQ_group_123456"
 
 
-# 演示迁移逻辑
-def demo_migration():
-    """演示数据迁移逻辑"""
-    print("\n" + "=" * 60)
-    print("演示 5: 旧版本数据迁移")
-    print("=" * 60)
+class TestPlatformEnabled:
+    """测试平台启用状态"""
 
-    print("\n旧格式 (disabled_groups.json):")
-    old_format = ["test_group_123", "test_group_456"]
-    print(json.dumps(old_format, ensure_ascii=False, indent=2))
+    def setup_method(self):
+        """每个测试前清空数据"""
+        _, _, _, _DISABLED_PLATFORMS_DICT = get_mock_session()
+        _DISABLED_PLATFORMS_DICT.clear()
 
-    print("\n迁移后:")
-    print("  - 将禁用群组标记为禁用所有平台")
-    print("  - 自动迁移，无需手动操作")
-    print("  - 迁移后自动删除旧文件")
+    def teardown_method(self):
+        """每个测试后清理数据"""
+        _, _, _, _DISABLED_PLATFORMS_DICT = get_mock_session()
+        _DISABLED_PLATFORMS_DICT.clear()
 
-    print("\n迁移后格式:")
-    new_format = {
-        "test_group_123": ["acfun", "bilibili", "douyin", "kuaishou", "nga", "tiktok", "twitter", "weibo", "xiaohongshu", "youtube"],
-        "test_group_456": ["acfun", "bilibili", "douyin", "kuaishou", "nga", "tiktok", "twitter", "weibo", "xiaohongshu", "youtube"]
-    }
-    print(json.dumps(new_format, ensure_ascii=False, indent=2))
+    def test_private_session_always_enabled(self):
+        """测试私聊始终启用"""
+        MockSession, _, is_platform_enabled, _ = get_mock_session()
+        session = MockSession("QQ", "private", is_private=True)
 
+        assert is_platform_enabled(session, "bilibili") is True
+        assert is_platform_enabled(session, "weibo") is True
 
-def main():
-    """主函数"""
-    print("\n")
-    print("╔" + "=" * 58 + "╗")
-    print("║" + " " * 15 + "单独平台控制功能演示" + " " * 15 + "║")
-    print("╚" + "=" * 58 + "╝")
+    def test_no_disabled_all_enabled(self):
+        """测试没有禁用时所有平台启用"""
+        MockSession, _, is_platform_enabled, _ = get_mock_session()
+        session = MockSession("QQ", "group_123", is_private=False)
 
-    demo_platform_name_mapping()
-    demo_json_structure()
-    demo_command_usage()
-    demo_status_output()
-    demo_migration()
+        assert is_platform_enabled(session, "bilibili") is True
+        assert is_platform_enabled(session, "weibo") is True
 
-    print("\n" + "=" * 60)
-    print("功能特点")
-    print("=" * 60)
-    print("""
-✅ 支持单独控制每个平台的解析开关
-✅ 支持中英文平台名称别名
-✅ 支持查看当前群组的解析状态
-✅ 自动迁移旧版本数据
-✅ 私聊默认启用所有平台
-✅ 数据持久化存储
-""")
+    def test_disable_single_platform(self):
+        """测试禁用单个平台"""
+        MockSession, _, is_platform_enabled, _DISABLED_PLATFORMS_DICT = get_mock_session()
+        session = MockSession("QQ", "group_123", is_private=False)
 
-    print("=" * 60)
-    print("支持的平台列表")
-    print("=" * 60)
+        # 禁用 bilibili
+        _DISABLED_PLATFORMS_DICT["QQ_group_123"] = {"bilibili"}
 
-    platforms = [
-        ("acfun", "A站"),
-        ("bilibili", "B站"),
-        ("douyin", "抖音"),
-        ("kuaishou", "快手"),
-        ("nga", "NGA"),
-        ("tiktok", "TikTok"),
-        ("twitter", "Twitter"),
-        ("weibo", "微博"),
-        ("xiaohongshu", "小红书"),
-        ("youtube", "YouTube"),
-    ]
+        assert is_platform_enabled(session, "bilibili") is False
+        assert is_platform_enabled(session, "weibo") is True
 
-    for value, display in platforms:
-        print(f"  {value:15s} - {display}")
+    def test_disable_multiple_platforms(self):
+        """测试禁用多个平台"""
+        MockSession, _, is_platform_enabled, _DISABLED_PLATFORMS_DICT = get_mock_session()
+        session = MockSession("QQ", "group_123", is_private=False)
 
-    print("\n")
+        # 禁用多个平台
+        _DISABLED_PLATFORMS_DICT["QQ_group_123"] = {"bilibili", "weibo"}
+
+        assert is_platform_enabled(session, "bilibili") is False
+        assert is_platform_enabled(session, "weibo") is False
+        assert is_platform_enabled(session, "douyin") is True
+
+    def test_different_groups_independent(self):
+        """测试不同群组独立管理"""
+        MockSession, _, is_platform_enabled, _DISABLED_PLATFORMS_DICT = get_mock_session()
+        session1 = MockSession("QQ", "group_111", is_private=False)
+        session2 = MockSession("QQ", "group_222", is_private=False)
+
+        # 禁用 group_111 的 bilibili
+        _DISABLED_PLATFORMS_DICT["QQ_group_111"] = {"bilibili"}
+
+        # group_222 不受影响
+        assert is_platform_enabled(session1, "bilibili") is False
+        assert is_platform_enabled(session2, "bilibili") is True
 
 
-if __name__ == "__main__":
-    main()
+class TestPlatformEnum:
+    """测试平台枚举"""
+
+    def test_all_platforms(self):
+        """测试所有平台枚举值"""
+        from nonebot_plugin_parser.constants import PlatformEnum
+
+        expected = {
+            "acfun",
+            "bilibili",
+            "douyin",
+            "kuaishou",
+            "nga",
+            "tiktok",
+            "twitter",
+            "weibo",
+            "xiaohongshu",
+            "youtube",
+        }
+
+        actual = {p.value for p in PlatformEnum}
+        assert actual == expected
+
+    def test_platform_enum_str(self):
+        """测试平台枚举字符串化"""
+        from nonebot_plugin_parser.constants import PlatformEnum
+
+        assert str(PlatformEnum.BILIBILI) == "bilibili"
+        assert str(PlatformEnum.WEIBO) == "weibo"

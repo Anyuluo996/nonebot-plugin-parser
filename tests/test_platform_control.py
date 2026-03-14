@@ -169,3 +169,206 @@ class TestPlatformEnum:
 
         assert str(PlatformEnum.BILIBILI) == "bilibili"
         assert str(PlatformEnum.WEIBO) == "weibo"
+
+
+class TestPlatformCommandHandler:
+    """测试平台控制命令处理逻辑"""
+
+    def setup_method(self):
+        """每个测试前清空数据"""
+        _, _, _, _DISABLED_PLATFORMS_DICT = get_mock_session()
+        _DISABLED_PLATFORMS_DICT.clear()
+
+    def teardown_method(self):
+        """每个测试后清理数据"""
+        _, _, _, _DISABLED_PLATFORMS_DICT = get_mock_session()
+        _DISABLED_PLATFORMS_DICT.clear()
+
+    def test_enable_single_platform_logic(self):
+        """测试开启单个平台的逻辑"""
+        from nonebot_plugin_parser.matchers.filter import (
+            get_group_key,
+            is_platform_enabled,
+            get_platform_display_name,
+            check_platform_available,
+            _DISABLED_PLATFORMS_DICT,
+        )
+
+        MockSession, _, _, _ = get_mock_session()
+        session = MockSession("QQ", "group_test", is_private=False)
+        group_key = get_group_key(session)
+
+        # 模拟命令参数：开启解析 bilibili
+        platform_name = "bilibili"
+
+        # 验证参数解析
+        standard_name = get_platform_display_name(platform_name)
+        assert standard_name == "bilibili"
+        assert check_platform_available(standard_name) is True
+
+        # 模拟命令处理逻辑
+        if group_key not in _DISABLED_PLATFORMS_DICT:
+            _DISABLED_PLATFORMS_DICT[group_key] = set()
+        _DISABLED_PLATFORMS_DICT[group_key].discard(standard_name)
+
+        # 验证结果
+        assert is_platform_enabled(session, "bilibili") is True
+        assert group_key in _DISABLED_PLATFORMS_DICT
+        assert "bilibili" not in _DISABLED_PLATFORMS_DICT[group_key]
+
+    def test_disable_single_platform_logic(self):
+        """测试关闭单个平台的逻辑"""
+        from nonebot_plugin_parser.matchers.filter import (
+            get_group_key,
+            is_platform_enabled,
+            get_platform_display_name,
+            check_platform_available,
+            _DISABLED_PLATFORMS_DICT,
+        )
+
+        MockSession, _, _, _ = get_mock_session()
+        session = MockSession("QQ", "group_test", is_private=False)
+        group_key = get_group_key(session)
+
+        # 模拟命令参数：关闭解析 bilibili
+        platform_name = "bilibili"
+
+        # 验证参数解析
+        standard_name = get_platform_display_name(platform_name)
+        assert standard_name == "bilibili"
+        assert check_platform_available(standard_name) is True
+
+        # 模拟命令处理逻辑
+        if group_key not in _DISABLED_PLATFORMS_DICT:
+            _DISABLED_PLATFORMS_DICT[group_key] = set()
+        _DISABLED_PLATFORMS_DICT[group_key].add(standard_name)
+
+        # 验证结果
+        assert is_platform_enabled(session, "bilibili") is False
+
+    def test_enable_platform_with_chinese_alias(self):
+        """测试使用中文别名开启平台"""
+        from nonebot_plugin_parser.matchers.filter import (
+            get_group_key,
+            is_platform_enabled,
+            get_platform_display_name,
+            _DISABLED_PLATFORMS_DICT,
+        )
+
+        MockSession, _, _, _ = get_mock_session()
+        session = MockSession("QQ", "group_test", is_private=False)
+        group_key = get_group_key(session)
+
+        # 先禁用
+        _DISABLED_PLATFORMS_DICT[group_key] = {"bilibili"}
+        assert is_platform_enabled(session, "bilibili") is False
+
+        # 使用中文别名开启
+        platform_name = "B站"  # 中文别名
+        standard_name = get_platform_display_name(platform_name)
+        assert standard_name == "bilibili"
+
+        # 模拟开启命令
+        if group_key not in _DISABLED_PLATFORMS_DICT:
+            _DISABLED_PLATFORMS_DICT[group_key] = set()
+        _DISABLED_PLATFORMS_DICT[group_key].discard(standard_name)
+
+        # 验证
+        assert is_platform_enabled(session, "bilibili") is True
+
+    def test_disable_platform_with_chinese_alias(self):
+        """测试使用中文别名关闭平台"""
+        from nonebot_plugin_parser.matchers.filter import (
+            get_group_key,
+            is_platform_enabled,
+            get_platform_display_name,
+            _DISABLED_PLATFORMS_DICT,
+        )
+
+        MockSession, _, _, _ = get_mock_session()
+        session = MockSession("QQ", "group_test", is_private=False)
+        group_key = get_group_key(session)
+
+        # 使用中文别名关闭
+        platform_name = "抖音"  # 中文别名
+        standard_name = get_platform_display_name(platform_name)
+        assert standard_name == "douyin"
+
+        # 模拟关闭命令
+        if group_key not in _DISABLED_PLATFORMS_DICT:
+            _DISABLED_PLATFORMS_DICT[group_key] = set()
+        _DISABLED_PLATFORMS_DICT[group_key].add(standard_name)
+
+        # 验证
+        assert is_platform_enabled(session, "douyin") is False
+        assert is_platform_enabled(session, "bilibili") is True
+
+    def test_enable_all_platforms_logic(self):
+        """测试开启所有平台的逻辑"""
+        from nonebot_plugin_parser.matchers.filter import (
+            get_group_key,
+            is_platform_enabled,
+            _DISABLED_PLATFORMS_DICT,
+        )
+
+        MockSession, _, _, _ = get_mock_session()
+        session = MockSession("QQ", "group_test", is_private=False)
+        group_key = get_group_key(session)
+
+        # 先禁用所有平台
+        _DISABLED_PLATFORMS_DICT[group_key] = {"bilibili", "weibo", "douyin"}
+        assert is_platform_enabled(session, "bilibili") is False
+        assert is_platform_enabled(session, "weibo") is False
+        assert is_platform_enabled(session, "douyin") is False
+
+        # 模拟开启所有平台命令（无参数）
+        if group_key in _DISABLED_PLATFORMS_DICT:
+            del _DISABLED_PLATFORMS_DICT[group_key]
+
+        # 验证
+        assert is_platform_enabled(session, "bilibili") is True
+        assert is_platform_enabled(session, "weibo") is True
+        assert is_platform_enabled(session, "douyin") is True
+
+    def test_disable_all_platforms_logic(self):
+        """测试关闭所有平台的逻辑"""
+        from nonebot_plugin_parser.matchers.filter import (
+            get_group_key,
+            is_platform_enabled,
+            _DISABLED_PLATFORMS_DICT,
+        )
+        from nonebot_plugin_parser.constants import PlatformEnum
+
+        MockSession, _, _, _ = get_mock_session()
+        session = MockSession("QQ", "group_test", is_private=False)
+        group_key = get_group_key(session)
+
+        # 模拟关闭所有平台命令（无参数）
+        all_platforms = {p.value for p in PlatformEnum}
+        _DISABLED_PLATFORMS_DICT[group_key] = all_platforms
+
+        # 验证所有平台都被禁用
+        for platform in PlatformEnum:
+            assert is_platform_enabled(session, platform.value) is False
+
+    def test_unknown_platform_returns_error(self):
+        """测试未知平台返回错误"""
+        from nonebot_plugin_parser.matchers.filter import (
+            get_platform_display_name,
+            check_platform_available,
+        )
+
+        # 测试未知平台
+        platform_name = "unknown_platform"
+        standard_name = get_platform_display_name(platform_name)
+        assert standard_name is None
+
+    def test_platform_not_available_returns_error(self):
+        """测试不可用平台返回错误"""
+        from nonebot_plugin_parser.matchers.filter import check_platform_available
+
+        # 测试存在的平台
+        assert check_platform_available("bilibili") is True
+
+        # 测试不存在的平台
+        assert check_platform_available("not_exist") is False

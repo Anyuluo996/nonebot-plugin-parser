@@ -1,288 +1,43 @@
 import json
 import asyncio
 from re import Match
-from typing import Any, ClassVar
-from pathlib import Path
+from typing import ClassVar
 from collections.abc import AsyncGenerator
 
 from msgspec import convert
 from nonebot import logger
-from bilibili_api import HEADERS, Credential
+from bilibili_api import HEADERS, Credential, select_client, request_settings
 from bilibili_api.opus import Opus
 from bilibili_api.video import Video
 from bilibili_api.login_v2 import QrCodeLogin, QrCodeLoginEvents
 
-# 尝试导入 htmlrender
-try:
-    from nonebot_plugin_htmlrender import get_browser
-
-    HAS_HTMLRENDER = True
-except ImportError:
-    HAS_HTMLRENDER = False
-    logger.warning("未检测到 nonebot_plugin_htmlrender，B站动态将仅使用文本/图片解析模式")
-
 from ..base import (
-    DOWNLOADER,
     BaseParser,
     PlatformEnum,
     ParseException,
+    IgnoreException,
     DownloadException,
-    DurationLimitException,
     handle,
     pconfig,
 )
 from ..data import Platform, ImageContent, MediaContent
 from ..cookie import ck2dict
+from .dynamic import DynamicInfo
 
-# 使用 httpx 客户端（curl_cffi 会被重定向到 t.bilibili.com）
-# select_client("curl_cffi")
-# request_settings.set("impersonate", "chrome131")
-
-# 设置正确的 Referer，避免风控
-HEADERS["Referer"] = "https://www.bilibili.com/"
-HEADERS["Origin"] = "https://www.bilibili.com"
+# 选择客户端
+select_client("curl_cffi")
+# 模拟浏览器，第二参数数值参考 curl_cffi 文档
+# https://curl-cffi.readthedocs.io/en/latest/impersonate.html
+request_settings.set("impersonate", "chrome131")
 
 
 class BilibiliParser(BaseParser):
-    # 平台信息
     platform: ClassVar[Platform] = Platform(name=PlatformEnum.BILIBILI, display_name="哔哩哔哩")
 
     def __init__(self):
-        super().__init__()
         self.headers = HEADERS.copy()
         self._credential: Credential | None = None
         self._cookies_file = pconfig.config_dir / "bilibili_cookies.json"
-
-    async def _get_playwright_cookies(self) -> list[dict[str, Any]]:
-        """将 API 的 Cookie 转换为 Playwright 格式"""
-        cred = await self.credential
-        if not cred:
-            return []
-
-        cookies_dict = cred.get_cookies()
-        pw_cookies = []
-        for k, v in cookies_dict.items():
-            pw_cookies.append({"name": k, "value": v, "domain": ".bilibili.com", "path": "/"})
-        return pw_cookies
-
-    async def _save_screenshot(self, img_bytes: bytes, content_type: str, content_id: int) -> Path:
-        """保存截图到缓存目录并返回路径"""
-        cache_dir = pconfig.cache_dir
-        cache_dir.mkdir(parents=True, exist_ok=True)
-
-        filename = f"bili_{content_type}_{content_id}.jpg"
-        output_path = cache_dir / filename
-
-        # 写入文件
-        output_path.write_bytes(img_bytes)
-        return output_path
-
-    async def _capture_opus_screenshot(self, opus_id: int) -> bytes:
-        """使用 htmlrender 截取图文动态页面 (优化版: 元素级截图，去除留白)"""
-        if not HAS_HTMLRENDER:
-            raise ImportError("htmlrender not installed")
-
-        url = f"https://m.bilibili.com/opus/{opus_id}"
-
-        # 获取浏览器实例
-        browser = await get_browser()
-
-        # 优化视口：宽度 414 (iPhone Max) 能容纳更多内容，同时保持移动端布局
-        # device_scale_factor=3 提升文字清晰度
-        context = await browser.new_context(
-            viewport={"width": 414, "height": 800},
-            device_scale_factor=3,
-            is_mobile=True,
-            has_touch=True,
-            user_agent=(
-                "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
-                "AppleWebKit/605.1.15 (KHTML, like Gecko) "
-                "Version/16.6 Mobile/15E148 Safari/604.1"
-            ),
-        )
-
-        try:
-            # 注入 Cookie (避免弹窗)
-            cookies = await self._get_playwright_cookies()
-            if cookies:
-                await context.add_cookies(cookies)
-
-            page = await context.new_page()
-
-            # 访问页面
-            await page.goto(url, wait_until="networkidle", timeout=20000)
-
-            # 等待核心内容加载
-            try:
-                await page.wait_for_selector(".opus-modules, .opus-detail", timeout=6000)
-            except Exception:
-                pass
-
-            # === 核心优化：注入 CSS 清理页面 ===
-            await page.evaluate("""() => {
-                const style = document.createElement('style');
-                style.innerHTML = `
-                    /* 隐藏顶部导航 */
-                    .m-navbar { display: none !important; }
-
-                    /* 隐藏底部 APP 按钮、悬浮窗 */
-                    .launch-app-btn, .open-app-float, .m-float-openapp, .to-app-btn { display: none !important; }
-
-                    /* 隐藏评论区、标签栏、推荐列表 */
-                    .comment-app, .v-switcher, .opus-read-more { display: none !important; }
-
-                    /* 隐藏新版底部的"UP主投稿视频" */
-                    .opus-footer { display: none !important; }
-
-                    /* 强制背景白底 */
-                    body, html { background-color: #ffffff !important; }
-
-                    /* 调整容器边距，让内容贴边 */
-                    .opus-detail, .opus-modules {
-                        margin: 0 !important;
-                        padding-top: 10px !important;
-                        padding-bottom: 20px !important;
-                        box-shadow: none !important;
-                        min-height: auto !important;
-                    }
-                `;
-                document.head.appendChild(style);
-            }""")
-
-            # 滚动一下确保图片懒加载触发
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await asyncio.sleep(0.5)
-            await page.evaluate("window.scrollTo(0, 0)")
-            await asyncio.sleep(0.5)
-
-            # === 核心优化：智能截图 ===
-            # 1. 尝试 opus-modules 结构 (Opus 页面的主要容器)
-            target = page.locator(".opus-modules")
-            if await target.count() > 0 and await target.is_visible():
-                return await target.screenshot(type="jpeg", quality=85)
-
-            # 2. 尝试 opus-detail (某些 Opus 变体可能使用)
-            target = page.locator(".opus-detail")
-            if await target.count() > 0 and await target.is_visible():
-                return await target.screenshot(type="jpeg", quality=85)
-
-            # 3. 兜底：全页截图
-            return await page.screenshot(full_page=True, type="jpeg", quality=85)
-
-        finally:
-            await context.close()
-
-    async def _capture_dynamic_screenshot(self, dynamic_id: int) -> bytes:
-        """使用 htmlrender 截取动态页面 (优化版: 元素级截图，去除留白)"""
-        if not HAS_HTMLRENDER:
-            raise ImportError("htmlrender not installed")
-
-        url = f"https://m.bilibili.com/dynamic/{dynamic_id}"
-
-        # 获取浏览器实例
-        browser = await get_browser()
-
-        # 优化视口：宽度 414 (iPhone Max) 能容纳更多内容，同时保持移动端布局
-        # device_scale_factor=3 提升文字清晰度
-        context = await browser.new_context(
-            viewport={"width": 414, "height": 800},
-            device_scale_factor=3,
-            is_mobile=True,
-            has_touch=True,
-            user_agent=(
-                "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) "
-                "AppleWebKit/605.1.15 (KHTML, like Gecko) "
-                "Version/16.6 Mobile/15E148 Safari/604.1"
-            ),
-        )
-
-        try:
-            # 注入 Cookie (避免弹窗)
-            cookies = await self._get_playwright_cookies()
-            if cookies:
-                await context.add_cookies(cookies)
-
-            page = await context.new_page()
-
-            # 访问页面
-            await page.goto(url, wait_until="networkidle", timeout=20000)
-
-            # 等待核心内容加载 (支持新版 Opus 和旧版 Dynamic)
-            try:
-                await page.wait_for_selector(".opus-modules, .dyn-card, .opus-detail", timeout=6000)
-            except Exception:
-                pass
-
-            # === 核心优化：注入 CSS 清理页面 ===
-            # 隐藏顶部、底部、评论区、推荐列表、APP引流按钮
-            await page.evaluate("""() => {
-                const style = document.createElement('style');
-                style.innerHTML = `
-                    /* 隐藏顶部导航 */
-                    .m-navbar, .dyn-header { display: none !important; }
-
-                    /* 隐藏底部 APP 按钮、悬浮窗 */
-                    .launch-app-btn, .open-app-float, .m-float-openapp, .to-app-btn { display: none !important; }
-
-                    /* 隐藏评论区、标签栏、推荐列表 (这是底部留白的主要原因) */
-                    .comment-app, .v-switcher, .dyn-card-recommend, .opus-read-more { display: none !important; }
-
-                    /* 隐藏新版底部的"UP主投稿视频" */
-                    .opus-footer { display: none !important; }
-
-                    /* 强制背景白底 */
-                    body, html { background-color: #ffffff !important; }
-
-                    /* 调整容器边距，让内容贴边，利用率更高 */
-                    .opus-modules, .opus-detail, .dyn-card {
-                        margin: 0 !important;
-                        padding-top: 10px !important;
-                        padding-bottom: 20px !important;
-                        box-shadow: none !important;
-                        min-height: auto !important;
-                    }
-                `;
-                document.head.appendChild(style);
-            }""")
-
-            # 展开可能存在的折叠文本 (针对旧版动态)
-            try:
-                expand_btn = page.locator(".dyn-content__expand")
-                if await expand_btn.count() > 0 and await expand_btn.is_visible():
-                    await expand_btn.click()
-            except Exception:
-                pass
-
-            # 滚动一下确保图片懒加载触发
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            await asyncio.sleep(0.5)
-            await page.evaluate("window.scrollTo(0, 0)")
-            await asyncio.sleep(0.5)
-
-            # === 核心优化：智能截图 ===
-            # 优先尝试截取具体的"动态卡片"元素，而不是全屏
-            # 这样可以自动适应高度，并且裁剪掉左右多余的 <body> 边距
-
-            # 1. 尝试 opus-modules (Opus 内容的主要容器)
-            target = page.locator(".opus-modules")
-            if await target.count() > 0 and await target.is_visible():
-                return await target.screenshot(type="jpeg", quality=85)
-
-            # 2. 尝试 opus-detail (某些 Opus 变体)
-            target = page.locator(".opus-detail")
-            if await target.count() > 0 and await target.is_visible():
-                return await target.screenshot(type="jpeg", quality=85)
-
-            # 3. 尝试 dyn-card (通用动态容器)
-            target = page.locator(".dyn-card")
-            if await target.count() > 0 and await target.is_visible():
-                return await target.screenshot(type="jpeg", quality=85)
-
-            # 4. 兜底：如果找不到特定容器，截取 body 但裁剪掉视口外的留白
-            return await page.screenshot(full_page=True, type="jpeg", quality=85)
-
-        finally:
-            await context.close()
 
     @handle("b23.tv", r"b23\.tv/[A-Za-z\d\._?%&+\-=/#]+")
     @handle("bili2233", r"bili2233\.cn/[A-Za-z\d\._?%&+\-=/#]+")
@@ -320,12 +75,13 @@ class BilibiliParser(BaseParser):
 
         return await self.parse_video(avid=avid, page_num=page_num)
 
-    @handle("/dynamic/", r"(?:m\.)?bilibili\.com/dynamic/(?P<dynamic_id>\d+)")
+    @handle("/dynamic/", r"bilibili\.com/dynamic/(?P<dynamic_id>\d+)")
     @handle("t.bili", r"t\.bilibili\.com/(?P<dynamic_id>\d+)")
+    @handle("/opus/", r"bilibili\.com/opus/(?P<dynamic_id>\d+)")
     async def _parse_dynamic(self, searched: Match[str]):
         """解析动态信息"""
         dynamic_id = int(searched.group("dynamic_id"))
-        return await self.parse_dynamic(dynamic_id)
+        return await self.parse_dynamic_or_opus(dynamic_id)
 
     @handle("live.bili", r"live\.bilibili\.com/(?P<room_id>\d+)")
     async def _parse_live(self, searched: Match[str]):
@@ -339,26 +95,15 @@ class BilibiliParser(BaseParser):
         fav_id = int(searched.group("fav_id"))
         return await self.parse_favlist(fav_id)
 
-    @handle("/read/", r"(?:m\.)?bilibili\.com/read/cv(?P<read_id>\d+)")
+    @handle("/read/", r"bilibili\.com/read/cv(?P<read_id>\d+)")
     async def _parse_read(self, searched: Match[str]):
         """解析专栏信息"""
+        from bilibili_api.article import Article
+
         read_id = int(searched.group("read_id"))
-        return await self.parse_read_with_opus(read_id)
-
-    @handle("/opus/", r"(?:m\.)?bilibili\.com/opus/(?P<opus_id>\d+)")
-    async def _parse_opus(self, searched: Match[str]):
-        """解析图文动态信息"""
-        opus_id = int(searched.group("opus_id"))
-        try:
-            return await self.parse_opus(opus_id)
-        except Exception as e:
-            from bilibili_api.exceptions import ArgsException
-
-            if isinstance(e, ArgsException):
-                # Opus 接口解析失败，降级使用 Dynamic 接口
-                logger.info(f"Opus 接口解析失败 {opus_id}，尝试使用 Dynamic 接口")
-                return await self.parse_dynamic(opus_id)
-            raise
+        article = Article(read_id)
+        opus = await article.turn_to_opus()
+        return await self._parse_bilibli_api_opus(opus)
 
     async def parse_video(
         self,
@@ -367,22 +112,13 @@ class BilibiliParser(BaseParser):
         avid: int | None = None,
         page_num: int = 1,
     ):
-        """解析视频信息
-
-        Args:
-            bvid (str | None): bvid
-            avid (int | None): avid
-            page_num (int): 页码
-        """
+        """解析视频信息"""
 
         from .video import VideoInfo, AIConclusion
 
         video = await self._get_video(bvid=bvid, avid=avid)
-        # 转换为 msgspec struct
         video_info = convert(await video.get_info(), VideoInfo)
-        # 获取简介
-        text = f"简介: {video_info.desc}" if video_info.desc else None
-        # up
+        # UP
         author = self.create_author(video_info.owner.name, video_info.owner.face)
         # 处理分 p
         page_info = video_info.extract_info_with_page(page_num)
@@ -406,13 +142,14 @@ class BilibiliParser(BaseParser):
                 return output_path
             v_url, a_url = await self.extract_download_urls(video=video, page_index=page_info.index)
             if page_info.duration > pconfig.duration_maximum:
-                raise DurationLimitException
+                logger.warning(f"视频时长 {page_info.duration} 秒, 超过 {pconfig.duration_maximum} 秒, 取消下载")
+                raise IgnoreException
             if a_url is not None:
-                return await DOWNLOADER.download_av_and_merge(
+                return await self.downloader.download_av_and_merge(
                     v_url, a_url, output_path=output_path, ext_headers=self.headers
                 )
             else:
-                return await DOWNLOADER.streamd(v_url, file_name=output_path.name, ext_headers=self.headers)
+                return await self.downloader.download_file(v_url, file_name=output_path.name, ext_headers=self.headers)
 
         video_task = asyncio.create_task(download_video())
         video_content = self.create_video_content(
@@ -425,198 +162,61 @@ class BilibiliParser(BaseParser):
             url=url,
             title=page_info.title,
             timestamp=page_info.timestamp,
-            text=text,
+            text=video_info.desc,
             author=author,
             contents=[video_content],
             extra={"info": ai_summary},
         )
 
-    async def parse_dynamic(self, dynamic_id: int):
-        """解析动态信息
-
-        策略: 优先使用浏览器截图 -> 失败则回退到原解析逻辑
-
-        Args:
-            dynamic_id (int): 动态 ID
-        """
+    async def parse_dynamic_or_opus(self, dynamic_id: int):
+        """解析动态或图文"""
         from bilibili_api.dynamic import Dynamic
 
-        from .dynamic import DynamicData, DynamicInfo
+        from .dynamic import DynamicWrapper
 
         dynamic = Dynamic(dynamic_id, await self.credential)
-
-        # 原项目新增：is_article() 检测
         if await dynamic.is_article():
-            return await self._parse_bilibili_api_opus(dynamic.turn_to_opus())
+            return await self._parse_bilibli_api_opus(dynamic.turn_to_opus())
 
-        raw_data = await dynamic.get_info()
+        dynamic_info = convert(await dynamic.get_info(), DynamicWrapper).item
+        return await self._parse_dynamic_info(dynamic_info)
 
-        # msgspec 转换主数据
-        dynamic_data = convert(raw_data, DynamicData)
+    async def _parse_dynamic_info(self, dynamic_info: DynamicInfo):
+        if dynamic_info.is_video():
+            if (major := dynamic_info.modules.major) and (archive := major.archive):
+                result = await self.parse_video(bvid=archive.bvid)
+                result.text = dynamic_info.text
+                result.extra["content_type"] = "动态"
+                return result
 
-        # 当前动态信息 (用于标题、作者等基础信息)
-        current_info = dynamic_data.item
+        # 下载图片
+        author = self.create_author(dynamic_info.name, dynamic_info.avatar)
+        contents: list[MediaContent] = []
+        contents.extend(self.create_image_contents(dynamic_info.image_urls))
 
-        # 作者信息始终显示当前动态的作者
-        author = self.create_author(current_info.name, current_info.avatar)
-
-        # 尝试构建标题
-        title = current_info.title
-        if not title:
-            # 尝试从描述中截取标题
-            desc = current_info.desc_text or current_info.text or ""
-            title = desc[:30].replace("\n", " ") + "..." if desc else f"{author.name} 的动态"
-
-        # 尝试截图渲染路径
-        screenshot_success = False
-        contents = []
-        text = None
-
-        if HAS_HTMLRENDER:
-            try:
-                logger.debug(f"尝试使用浏览器截图渲染动态: {dynamic_id}")
-                img_bytes = await self._capture_dynamic_screenshot(dynamic_id)
-                img_path = await self._save_screenshot(img_bytes, "dynamic", dynamic_id)
-                contents.append(ImageContent(img_path))
-                screenshot_success = True
-                # 截图模式下，文本置空，因为内容都在图里了
-                text = None
-            except Exception as e:
-                logger.error(f"动态截图失败，将回退到普通解析模式: {e}")
-                screenshot_success = False
-        else:
-            logger.debug("未启用 htmlrender，使用普通解析模式")
-
-        # 回退路径 (Original Logic)
-        if not screenshot_success:
-            # --- 以下是原本的解析逻辑 ---
-
-            # 手动处理 orig 字段（msgspec 可能无法正确转换嵌套的 orig）
-            orig_info: DynamicInfo | None = dynamic_data.orig
-            if raw_data.get("item", {}).get("orig") and not orig_info:
-                try:
-                    orig_info = convert(raw_data["item"]["orig"], DynamicInfo)
-                except Exception as e:
-                    logger.warning(f"手动转换 orig 数据失败: {e}")
-
-            # 默认内容来源是当前动态
-            content_source = current_info
-
-            # 文本处理
-            text = current_info.text  # 如果是转发，这里通常是转发评论；如果是原创，这里是正文
-
-            is_forward = orig_info is not None
-            if is_forward:
-                # 如果是转发，图片/媒体内容来源于原动态
-                content_source = orig_info
-
-                # 构建文本：转发评论 + 分割线 + 原动态作者/内容
-                forward_comment = current_info.desc_text or "转发动态"
-
-                # 获取原动态内容 (优先取 text，没有则取 desc_text)
-                orig_text = orig_info.text or orig_info.desc_text or "[原动态内容为空或无法解析]"
-
-                text = f"{forward_comment}\n\n---\n\n@{orig_info.name}：\n{orig_text}"
-
-            # 如果之前没有提取到标题，这里再尝试一次基于文本的标题提取
-            if not title or title == f"{author.name} 的动态":
-                preview_text = text.replace("\n", " ") if text else ""
-                title = preview_text[:30] + "..." if len(preview_text) > 30 else preview_text
-
-            # 下载图片 (从 content_source 获取，这样转发动态就能下载原动态的图)
-            for image_url in content_source.image_urls:
-                img_task = DOWNLOADER.download_img(image_url, ext_headers=self.headers)
-                contents.append(ImageContent(img_task))
-
-            # 如果是转发且原动态被删或者是空内容
-            if not contents and is_forward and not orig_info.text:
-                text += "\n[原动态可能已被删除或暂不支持解析]"
+        repost = None
+        if dynamic_info.type == "DYNAMIC_TYPE_FORWARD" and dynamic_info.orig is not None:
+            repost = await self._parse_dynamic_info(dynamic_info.orig)
 
         return self.result(
-            title=title or "Bilibili 动态",
-            text=text,
-            timestamp=current_info.timestamp,
+            title=dynamic_info.title,
+            text=dynamic_info.text,
+            timestamp=dynamic_info.timestamp,
             author=author,
             contents=contents,
-            url=f"https://t.bilibili.com/{dynamic_id}",
+            repost=repost,
+            extra={"content_type": "动态"},
         )
 
-    async def parse_opus(self, opus_id: int):
-        """解析图文动态信息
-
-        策略: 优先使用浏览器截图 -> 失败则回退到原解析逻辑
-
-        Args:
-            opus_id (int): 图文动态 id
-        """
+    async def parse_opus_by_id(self, opus_id: int):
+        """解析图文动态(opus id)"""
         opus = Opus(opus_id, await self.credential)
+        return await self._parse_bilibli_api_opus(opus)
 
-        # 尝试截图渲染路径
-        screenshot_success = False
-        title = None
-        author = None
-        timestamp = None
-        contents = []
-        text = None
+    async def _parse_bilibli_api_opus(self, bili_opus: Opus):
+        """解析图文动态(Opus)"""
 
-        if HAS_HTMLRENDER:
-            try:
-                logger.debug(f"尝试使用浏览器截图渲染图文动态: {opus_id}")
-                img_bytes = await self._capture_opus_screenshot(opus_id)
-                img_path = await self._save_screenshot(img_bytes, "opus", opus_id)
-                contents.append(ImageContent(img_path))
-                screenshot_success = True
-
-                # 从 API 获取基础元数据（标题、作者等）
-                from .opus import OpusItem
-
-                opus_info = await opus.get_info()
-                if isinstance(opus_info, dict):
-                    opus_data = convert(opus_info, OpusItem)
-                    title = opus_data.title
-                    author = self.create_author(*opus_data.name_avatar)
-                    timestamp = opus_data.timestamp
-            except Exception as e:
-                logger.error(f"图文动态截图失败，将回退到普通解析模式: {e}")
-                screenshot_success = False
-        else:
-            logger.debug("未启用 htmlrender，使用普通解析模式")
-
-        # 回退路径 (Original Logic)
-        if not screenshot_success:
-            return await self._parse_opus_obj(opus)
-
-        return self.result(
-            title=title,
-            author=author,
-            timestamp=timestamp,
-            contents=contents,
-            text=text,
-            url=f"https://m.bilibili.com/opus/{opus_id}",
-        )
-
-    async def parse_read_with_opus(self, read_id: int):
-        """解析专栏信息, 使用 Opus 接口
-
-        Args:
-            read_id (int): 专栏 id
-        """
-        from bilibili_api.article import Article
-
-        article = Article(read_id)
-        return await self._parse_opus_obj(await article.turn_to_opus())
-
-    async def _parse_opus_obj(self, bili_opus: Opus):
-        """解析图文动态信息
-
-        Args:
-            opus_id (int): 图文动态 id
-
-        Returns:
-            ParseResult: 解析结果
-        """
-
-        from .opus import OpusItem, TextNode, ImageNode
+        from .opus import OpusItem
 
         opus_info = await bili_opus.get_info()
         if not isinstance(opus_info, dict):
@@ -626,34 +226,23 @@ class BilibiliParser(BaseParser):
         logger.debug(f"opus_data: {opus_data}")
         author = self.create_author(*opus_data.name_avatar)
 
-        # 按顺序处理图文内容（参考 parse_read 的逻辑）
-        contents: list[MediaContent] = []
-        current_text = ""
-
-        for node in opus_data.gen_text_img():
-            if isinstance(node, ImageNode):
-                contents.append(self.create_graphics_content(node.url, current_text.strip(), node.alt))
-                current_text = ""
-            elif isinstance(node, TextNode):
-                current_text += node.text
+        # 按顺序处理图文内容
+        graphics = self.create_empty_graphics()
+        for node in opus_data.extract_nodes():
+            if isinstance(node, str):
+                graphics.append(node)
+            else:
+                graphics.append(self.create_image_content(node.url, alt=node.alt))
 
         return self.result(
             title=opus_data.title,
             author=author,
             timestamp=opus_data.timestamp,
-            contents=contents,
-            text=current_text.strip(),
+            graphics=graphics,
         )
 
     async def parse_live(self, room_id: int):
-        """解析直播信息
-
-        Args:
-            room_id (int): 直播 id
-
-        Returns:
-            ParseResult: 解析结果
-        """
+        """解析直播"""
         from bilibili_api.live import LiveRoom
 
         from .live import RoomData
@@ -665,12 +254,12 @@ class BilibiliParser(BaseParser):
         contents: list[MediaContent] = []
         # 下载封面
         if cover := room_data.cover:
-            cover_task = DOWNLOADER.download_img(cover, ext_headers=self.headers)
+            cover_task = self.downloader.download_img(cover, ext_headers=self.headers)
             contents.append(ImageContent(cover_task))
 
         # 下载关键帧
         if keyframe := room_data.keyframe:
-            keyframe_task = DOWNLOADER.download_img(keyframe, ext_headers=self.headers)
+            keyframe_task = self.downloader.download_img(keyframe, ext_headers=self.headers)
             contents.append(ImageContent(keyframe_task))
 
         author = self.create_author(room_data.name, room_data.avatar)
@@ -685,14 +274,7 @@ class BilibiliParser(BaseParser):
         )
 
     async def parse_favlist(self, fav_id: int):
-        """解析收藏夹信息
-
-        Args:
-            fav_id (int): 收藏夹 id
-
-        Returns:
-            list[GraphicsContent]: 图文内容列表
-        """
+        """解析收藏夹"""
         from bilibili_api.favorite_list import get_video_favorite_list_content
 
         from .favlist import FavData
@@ -705,20 +287,22 @@ class BilibiliParser(BaseParser):
 
         favdata = convert(fav_dict, FavData)
 
+        author = self.create_author(favdata.info.upper.name, favdata.info.upper.face)
+
+        graphics: list[str | ImageContent] = []
+        for fav in favdata.medias:
+            graphics.append(self.create_image_content(fav.cover, alt=fav.desc))
+            graphics.append(fav.desc)
+
         return self.result(
             title=favdata.title,
             timestamp=favdata.timestamp,
-            author=self.create_author(favdata.info.upper.name, favdata.info.upper.face),
-            contents=[self.create_graphics_content(fav.cover, fav.desc) for fav in favdata.medias],
+            author=author,
+            graphics=graphics,
         )
 
     async def _get_video(self, *, bvid: str | None = None, avid: int | None = None) -> Video:
-        """解析视频信息
-
-        Args:
-            bvid (str | None): bvid
-            avid (int | None): avid
-        """
+        """解析视频"""
         if avid:
             return Video(aid=avid, credential=await self.credential)
         elif bvid:
@@ -734,13 +318,7 @@ class BilibiliParser(BaseParser):
         avid: int | None = None,
         page_index: int = 0,
     ) -> tuple[str, str | None]:
-        """解析视频下载链接
-
-        Args:
-            bvid (str | None): bvid
-            avid (int | None): avid
-            page_index (int): 页索引 = 页码 - 1
-        """
+        """解析视频下载链接"""
 
         from bilibili_api.video import (
             AudioStreamDownloadURL,

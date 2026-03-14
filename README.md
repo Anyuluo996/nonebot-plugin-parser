@@ -145,7 +145,7 @@
 
     uv add "nonebot-plugin-parser[htmlkit]"
 
-`htmlrender`, 使用 `playwright` 渲染 `html`, 插件现有模版有点问题，并且极其丑陋，不建议使用
+`htmlrender`, 使用 `playwright` 渲染 `html`, 插件自 `v2.5.0` 起已正式支持
 
     uv add "nonebot-plugin-parser[htmlrender]"
 
@@ -251,8 +251,8 @@ parser_append_url=False
 parser_force_prefix=""
 
 # [可选] 自定义渲染字体
-# 配置字体文件名，并将字体文件放置于 localstore 生成的插件 data 目录下
-# 例如: ./data/nonebot_plugin_parser/
+# 配置字体文件名，并将字体文件放置于 localstore 生成的插件 config 目录下
+# 例如: ./config/nonebot_plugin_parser/
 parser_custom_font="LXGWZhenKaiGB-Regular.ttf"
 
 # [可选] 是否需要转发媒体内容(超过 4 项时始终使用合并转发)
@@ -401,16 +401,6 @@ images = self.create_image_contents([
     "https://example.com/img1.jpg",
     "https://example.com/img2.jpg",
 ])
-```
-
-> 构建图文内容(适用于类似 Bilibili 动态图文混排)
-
-```python
-graphics = self.create_graphics_content(
-    image_url="https://example.com/image.jpg",
-    text="图片前的文字说明",  # 可选
-    alt="图片描述"            # 可选，居中显示
-)
 ```
 
 > 创建动图内容（GIF)，平台一般只提供视频（后续插件会做自动转为 gif 的处理)

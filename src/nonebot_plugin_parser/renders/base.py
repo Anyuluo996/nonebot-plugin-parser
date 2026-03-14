@@ -8,15 +8,8 @@ from typing_extensions import override
 
 from ..config import pconfig
 from ..helper import UniHelper, UniMessage, ForwardNodeInner
-from ..parsers import (
-    ParseResult,
-    AudioContent,
-    ImageContent,
-    VideoContent,
-    DynamicContent,
-    GraphicsContent,
-)
-from ..exception import DownloadException, ZeroSizeException, DownloadLimitException
+from ..parsers import ParseResult, AudioContent, ImageContent, VideoContent, DynamicContent
+from ..exception import IgnoreException, DownloadException
 
 
 class BaseRenderer(ABC):
@@ -27,27 +20,13 @@ class BaseRenderer(ABC):
 
     @abstractmethod
     async def render_messages(self, result: ParseResult) -> AsyncGenerator[UniMessage[Any], None]:
-        """消息生成器
-
-        Args:
-            result (ParseResult): 解析结果
-
-        Returns:
-            AsyncGenerator[UniMessage[Any], None]: 消息生成器
-        """
+        """渲染解析结果"""
         if False:
             yield
         raise NotImplementedError
 
     async def render_contents(self, result: ParseResult) -> AsyncGenerator[UniMessage[Any], None]:
-        """渲染媒体内容消息
-
-        Args:
-            result (ParseResult): 解析结果
-
-        Returns:
-            AsyncGenerator[UniMessage[Any], None]: 消息生成器
-        """
+        """渲染媒体内容"""
         failed_count = 0
         forwardable_segs: list[ForwardNodeInner] = []
         dynamic_segs: list[ForwardNodeInner] = []
@@ -55,10 +34,7 @@ class BaseRenderer(ABC):
         for cont in chain(result.contents, result.repost.contents if result.repost else ()):
             try:
                 path = await cont.get_path()
-            # 继续渲染其他内容, 类似之前 gather (return_exceptions=True) 的处理
-            except (DownloadLimitException, ZeroSizeException):
-                # 预期异常，不抛出
-                # yield UniMessage(e.message)
+            except IgnoreException:
                 continue
             except DownloadException:
                 failed_count += 1
@@ -71,26 +47,28 @@ class BaseRenderer(ABC):
                     yield UniMessage(UniHelper.record_seg(path))
                 case ImageContent():
                     forwardable_segs.append(UniHelper.img_seg(path))
-                case DynamicContent() as dynamic:
-                    # 优先使用 gif_path（如果存在）
-                    gif_path = await dynamic.get_gif_path()
-                    if gif_path is not None:
-                        # GIF 应该作为图片发送，并与缩略图一起合并发送
-                        forwardable_segs.append(UniHelper.img_seg(gif_path))
-                    else:
-                        dynamic_segs.append(UniHelper.video_seg(path))
-                case GraphicsContent() as graphics:
-                    graphics_msg = UniHelper.img_seg(path)
-                    if graphics.text is not None:
-                        graphics_msg = graphics.text + graphics_msg
-                    if graphics.alt is not None:
-                        graphics_msg = graphics_msg + graphics.alt
-                    forwardable_segs.append(graphics_msg)
+                case DynamicContent():
+                    dynamic_segs.append(UniHelper.video_seg(path))
+
+        for cont in chain(result.graphics, result.repost.graphics if result.repost else ()):
+            if isinstance(cont, str):
+                forwardable_segs.append(cont)
+                continue
+
+            try:
+                path = await cont.get_path()
+            except IgnoreException:
+                continue
+            except DownloadException:
+                failed_count += 1
+                continue
+
+            img_seg = UniHelper.img_seg(path)
+            if cont.alt:
+                img_seg += cont.alt
+            forwardable_segs.append(img_seg)
 
         if forwardable_segs:
-            if result.text:
-                forwardable_segs.append(result.text)
-
             if pconfig.need_forward_contents or len(forwardable_segs) > 4:
                 forward_msg = UniHelper.construct_forward_message(forwardable_segs + dynamic_segs)
                 yield UniMessage(forward_msg)
@@ -115,23 +93,11 @@ class ImageRenderer(BaseRenderer):
 
     @abstractmethod
     async def render_image(self, result: ParseResult) -> bytes:
-        """渲染图片
-
-        Args:
-            result (ParseResult): 解析结果
-
-        Returns:
-            bytes: 图片字节 png 格式
-        """
+        """渲染图片"""
         raise NotImplementedError
 
     @override
     async def render_messages(self, result: ParseResult):
-        """渲染消息
-
-        Args:
-            result (ParseResult): 解析结果
-        """
         image_seg = await self.cache_or_render_image(result)
 
         msg = UniMessage(image_seg)
@@ -145,15 +111,8 @@ class ImageRenderer(BaseRenderer):
             yield message
 
     async def cache_or_render_image(self, result: ParseResult):
-        """获取缓存图片
-
-        Args:
-            result (ParseResult): 解析结果
-
-        Returns:
-            Image: 图片 Segment
-        """
-        if result.render_image is None or not result.render_image.exists():
+        """获取缓存图片"""
+        if result.render_image is None:
             image_raw = await self.render_image(result)
             image_path = await self.save_img(image_raw)
             result.render_image = image_path
@@ -164,14 +123,7 @@ class ImageRenderer(BaseRenderer):
 
     @classmethod
     async def save_img(cls, raw: bytes) -> Path:
-        """保存图片
-
-        Args:
-            raw (bytes): 图片字节
-
-        Returns:
-            Path: 图片路径
-        """
+        """保存图片"""
         import aiofiles
 
         file_name = f"{uuid.uuid4().hex}.png"

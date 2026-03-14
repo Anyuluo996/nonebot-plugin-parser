@@ -29,10 +29,6 @@ class NGAParser(BaseParser):
         self.headers.update(extra_headers)
 
     @staticmethod
-    def nga_url(tid: str | int) -> str:
-        return f"https://nga.178.com/read.php?tid={tid}"
-
-    @staticmethod
     def build_url_by_tid(tid: str | int) -> str:
         return f"https://nga.178.com/read.php?tid={tid}"
 
@@ -45,21 +41,29 @@ class NGAParser(BaseParser):
     # ("bbs.nga.cn", r"https?://bbs\.nga\.cn/read\.php\?tid=(?P<tid>\d+)(?:[&#A-Za-z\d=_-]+)?"),
     @handle("nga", r"tid=(?P<tid>\d+)")
     async def _parse(self, searched: re.Match[str]):
-        tid = searched.group("tid")
-        url = self.nga_url(tid)
+        # 从匹配对象中获取原始URL
+        tid = int(searched.group("tid"))
+        url = self.build_url_by_tid(tid)
 
         async with AsyncClient(headers=self.headers, timeout=self.timeout, follow_redirects=True) as client:
             try:
+                # 第一次请求可能返回 403，但包含设置 cookie 的 JavaScript
                 resp = await client.get(url)
+                # 如果返回 403 且包含 guestJs cookie设置，提取cookie并重试
                 if resp.status_code == 403 and "guestJs" in resp.text:
                     logger.debug("第一次请求 403 错误, 包含 guestJs cookie, 重试请求")
+                    # 从JavaScript中提取 guestJs cookie 值
                     if matched := re.search(r"document\.cookie\s*=\s*['\"]guestJs=([^;'\"]+)", resp.text):
                         guest_js = matched.group(1)
                         client.cookies.set("guestJs", guest_js, domain=".178.com")
+                        # 等待一小段时间（模拟 JavaScript 的 setTimeout）
                         await asyncio.sleep(0.3)
+                        # 添加随机参数避免缓存（模拟 JavaScript 的行为）
                         rand_param = random.randint(0, 999)
                         separator = "&" if "?" in url else "?"
                         retry_url = f"{url}{separator}rand={rand_param}"
+
+                        # 重试请求
                         resp = await client.get(retry_url)
 
             except HTTPError as e:
@@ -70,22 +74,27 @@ class NGAParser(BaseParser):
 
         html = resp.text
 
+        # 简单识别是否需要登录或被拦截
         if "需要" in html and ("登录" in html or "请登录" in html):
             raise ParseException("页面可能需要登录后访问")
 
         soup = BeautifulSoup(html, "html.parser")
 
+        # 提取 title - 从 postsubject0 标签提取
         title = None
         title_tag = soup.find(id="postsubject0")
         if title_tag and isinstance(title_tag, Tag):
             title = title_tag.get_text(strip=True)
 
+        # 提取作者信息 - 先从 postauthor0 标签提取 uid，再从 JavaScript 中查找用户名
         author = None
         author_tag = soup.find(id="postauthor0")
         if author_tag and isinstance(author_tag, Tag):
+            # 从 href 属性中提取 uid: href="nuke.php?func=ucp&uid=24278093"
             href = author_tag.get("href", "")
             if matched := re.search(r"[?&]uid=(\d+)", str(href)):
                 uid = str(matched.group(1))
+                # 从 JavaScript 的 commonui.userInfo.setAll() 中查找对应用户名
                 script_pattern = r"commonui\.userInfo\.setAll\s*\(\s*(\{.*?\})\s*\)"
                 if matched := re.search(script_pattern, html, re.DOTALL):
                     user_info = matched.group(1)
@@ -98,75 +107,38 @@ class NGAParser(BaseParser):
 
         author = self.create_author(author) if author else None
 
+        # 提取时间 - 从第一个帖子的 postdate0
         timestamp = None
         time_tag = soup.find(id="postdate0")
         if time_tag and isinstance(time_tag, Tag):
             timestr = time_tag.get_text(strip=True)
             timestamp = int(time.mktime(time.strptime(timestr, "%Y-%m-%d %H:%M")))
 
-        text, contents = None, []
+        # 提取文本 - postcontent0
+        graphics = self.create_empty_graphics()
         content_tag = soup.find(id="postcontent0")
         if content_tag and isinstance(content_tag, Tag):
             text = content_tag.get_text("\n", strip=True)
             lines = text.split("\n")
-            text_buffer: list[str] = []
 
             for line in lines:
                 if "[" in line:
                     # [img]./mon_202602/10/-lmuf1Q1aw-hzwpZ2dT3cSl4-bs.webp[/img]
                     if paths := re.findall(r"\[img\]\.(.*?)\[\/img\]", line):
                         for path in paths:
-                            # 使用本地清洗后的文本作为图片描述
-                            clean_desc = self.clean_nga_text("\n".join(text_buffer), max_length=200)
-                            contents.append(
-                                self.create_graphics_content(
-                                    self.build_img_url(path),
-                                    text=clean_desc,
-                                )
-                            )
-                            text_buffer.clear()
+                            img_url = self.build_img_url(path)
+                            graphics.append(self.create_image_content(img_url))
                     else:
                         # 去除其他标签, 仅保留文本
                         if clean_line := re.sub(r"\[[^\]]*?\]", "", line).strip():
-                            text_buffer.append(clean_line)
+                            graphics.append(clean_line)
                 else:
-                    text_buffer.append(line)
-
-            # 处理剩余的文本 - 使用本地清洗方法
-            text = self.clean_nga_text("\n".join(text_buffer))
+                    graphics.append(line)
 
         return self.result(
             title=title,
             url=url,
             author=author,
-            text=text,
-            contents=contents,
+            graphics=graphics,
             timestamp=timestamp,
         )
-
-    @staticmethod
-    def clean_nga_text(text: str, max_length: int = 500) -> str:
-        rules: list[tuple[str, str, int]] = [
-            (r"\[img\][^\[\]]*\[/img\]", "", 0),
-            (r"\[img\][^\[\]]*", "", 0),
-            (r"\[url=[^\]]*\]([^\[]*?)\[/url\]", r"\1", 0),
-            (r"\[url\]([^\[]*?)\[/url\]", r"\1", 0),
-            (r"\[quote\].*?\[/quote\]", "", re.DOTALL),
-            (r"\[(b|i|u)\](.*?)\[/\1\]", r"\2", re.DOTALL),
-            (r"\[(color|size)=[^\]]*\](.*?)\[/\1\]", r"\2", re.DOTALL),
-            (r"\[[^]]+\]", "", 0),
-            (r"\n{3,}", "\n\n", 0),
-            (r"[ \t]+", " ", 0),
-            (r"\n\s+\n", "\n\n", 0),
-        ]
-
-        for rule in rules:
-            pattern, replacement, flags = rule[0], rule[1], rule[2]
-            text = re.sub(pattern, replacement, text, flags=flags)
-
-        text = text.strip()
-
-        if len(text) > max_length:
-            text = text[:max_length] + "..."
-
-        return text

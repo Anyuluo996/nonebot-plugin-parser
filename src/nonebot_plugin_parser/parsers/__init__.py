@@ -40,6 +40,7 @@ from .data import (
 )
 
 __all__ = [
+    "PARSERS",
     "AudioContent",
     "Author",
     "BaseParser",
@@ -49,5 +50,4 @@ __all__ = [
     "Platform",
     "VideoContent",
     "handle",
-    "PARSERS",
 ]

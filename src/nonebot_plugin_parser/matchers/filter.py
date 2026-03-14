@@ -122,6 +122,24 @@ def get_platform_display_name(platform_input: str) -> str | None:
     for platform in PlatformEnum:
         if platform.name.lower() == platform_input.lower():
             return platform.value
+
+    # 中文别名映射
+    chinese_aliases = {
+        "b站": "bilibili",
+        "B站": "bilibili",
+        "抖音": "douyin",
+        "微博": "weibo",
+        "推特": "twitter",
+        "油管": "youtube",
+        "快手": "kuaishou",
+        "小红书": "xiaohongshu",
+        "xhs": "xiaohongshu",
+        "A站": "acfun",
+        "a站": "acfun",
+    }
+    if platform_input in chinese_aliases:
+        return chinese_aliases[platform_input]
+
     return None
 
 

@@ -8,11 +8,10 @@ from httpx import Cookies, AsyncClient
 
 from . import common, article
 from ..base import Platform, BaseParser, PlatformEnum, ParseException, handle
-from ..data import MediaContent
+from ..data import ImageContent
 
 
 class WeiBoParser(BaseParser):
-    # 平台信息
     platform: ClassVar[Platform] = Platform(name=PlatformEnum.WEIBO, display_name="微博")
 
     def __init__(self):
@@ -88,40 +87,33 @@ class WeiBoParser(BaseParser):
         data = detail.data
 
         soup = BeautifulSoup(data.content, "html.parser")
-        contents: list[MediaContent] = []
-        text_buffer: list[str] = []
+        graphics: list[str | ImageContent] = []
 
         for element in soup.find_all(["p", "img"]):
             if not isinstance(element, Tag):
                 continue
-
             if element.name == "p":
                 text = element.get_text(strip=True)
                 # 去除零宽空格
                 text = text.replace("\u200b", "")
                 if text:
-                    text_buffer.append(text)
+                    graphics.append(text)
             elif element.name == "img":
                 src = element.get("src")
                 if isinstance(src, str):
-                    text = "\n\n".join(text_buffer)
-                    contents.append(self.create_graphics_content(src, text=text))
-                    text_buffer.clear()
+                    graphics.append(self.create_image_content(src))
 
         author = self.create_author(
             data.userinfo.screen_name,
             data.userinfo.profile_image_url,
         )
 
-        end_text = "\n\n".join(text_buffer) if text_buffer else None
-
         return self.result(
             url=data.url,
             title=data.title,
             author=author,
             timestamp=data.create_at_unix,
-            text=end_text,
-            contents=contents,
+            graphics=graphics,
         )
 
     async def parse_fid(self, fid: str):

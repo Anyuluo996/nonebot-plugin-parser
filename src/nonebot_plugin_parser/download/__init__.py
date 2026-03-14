@@ -1,126 +1,63 @@
 import asyncio
-from typing import ClassVar
 from pathlib import Path
+from functools import partial
+from contextlib import contextmanager
+from urllib.parse import urljoin
 
 import aiofiles
 from httpx import HTTPError, AsyncClient
 from nonebot import logger
-from tqdm.asyncio import tqdm
+from rich.progress import (
+    Progress,
+    BarColumn,
+    TextColumn,
+    DownloadColumn,
+)
 
 from .task import auto_task
 from ..utils import merge_av, safe_unlink, generate_file_name
 from ..config import pconfig
 from ..constants import COMMON_HEADER, DOWNLOAD_TIMEOUT
-from ..exception import DownloadException, SizeLimitException
-
-try:
-    from curl_cffi import requests as curl_requests
-
-    CURL_CFFI_AVAILABLE = True
-except ImportError:
-    CURL_CFFI_AVAILABLE = False
+from ..exception import IgnoreException, DownloadException
 
 
 class StreamDownloader:
     """Downloader class for downloading files with stream"""
 
-    # 类级别的锁字典，用于防止同一个 URL 被并发下载
-    _download_locks: ClassVar[dict[str, asyncio.Lock]] = {}
-    _download_lock_refs: ClassVar[dict[str, int]] = {}
-
     def __init__(self):
         self.headers: dict[str, str] = COMMON_HEADER.copy()
         self.cache_dir: Path = pconfig.cache_dir
-        # 确保缓存目录存在
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.client: AsyncClient = AsyncClient(timeout=DOWNLOAD_TIMEOUT, verify=False)
 
+    @contextmanager
+    def rich_progress(self, desc: str, total: int | None = None):
+        with Progress(
+            TextColumn("[bold blue]{task.description}", justify="right"),
+            BarColumn(bar_width=None),
+            "[progress.percentage]{task.percentage:>3.1f}%",
+            "•",
+            DownloadColumn(),
+        ) as progress:
+            task_id = progress.add_task(description=desc, total=total)
+            yield partial(progress.update, task_id)
+
     @auto_task
-    async def streamd(
+    async def download_file(
         self,
         url: str,
         *,
         file_name: str | None = None,
         ext_headers: dict[str, str] | None = None,
+        chunk_size: int = 64 * 1024,
     ) -> Path:
-        """download file by url with stream
-
-        Args:
-            url (str): url address
-            file_name (str | None): file name. Defaults to generate_file_name.
-            ext_headers (dict[str, str] | None): ext headers. Defaults to None.
-
-        Returns:
-            Path: file path
-
-        Raises:
-            httpx.HTTPError: When download fails
-        """
-
-        # 获取或创建该 URL 的锁，防止并发下载同一文件
-        lock = self._download_locks.setdefault(url, asyncio.Lock())
-        self._download_lock_refs[url] = self._download_lock_refs.get(url, 0) + 1
-        try:
-            async with lock:
-                return await self._download_file_internal(url, file_name, ext_headers)
-        finally:
-            ref_count = self._download_lock_refs.get(url, 0) - 1
-            if ref_count <= 0:
-                self._download_lock_refs.pop(url, None)
-                self._download_locks.pop(url, None)
-            else:
-                self._download_lock_refs[url] = ref_count
-
-    async def _download_file_internal(
-        self,
-        url: str,
-        file_name: str | None = None,
-        ext_headers: dict[str, str] | None = None,
-    ) -> Path:
-        """内部下载实现（已在锁保护下）"""
-
+        """download file by url with stream"""
         if not file_name:
             file_name = generate_file_name(url)
         file_path = self.cache_dir / file_name
-
-        # 检查文件是否已存在
+        # 如果文件存在，则直接返回
         if file_path.exists():
-            # 简单校验一下大小，防止之前留下了0字节空文件
-            if file_path.stat().st_size > 0:
-                return file_path
-            else:
-                await safe_unlink(file_path)
+            return file_path
 
-        # ================== 针对 NGA 使用 curl_cffi 下载 ==================
-        if "nga.178.com" in url and CURL_CFFI_AVAILABLE:
-            logger.info(f"检测到 NGA 图片，使用 curl_cffi 下载: {url}")
-
-            try:
-                # 在线程池中执行同步的 curl_cffi 请求
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(
-                    None,
-                    self._download_with_curl_cffi,
-                    url,
-                    file_path,
-                    file_name,
-                )
-
-                if file_path.exists() and file_path.stat().st_size > 0:
-                    logger.success(f"curl_cffi 下载成功: {file_path}")
-                    return file_path
-                else:
-                    await safe_unlink(file_path)
-                    raise DownloadException("NGA 图片下载失败 (curl_cffi)")
-
-            except Exception as e:
-                logger.exception(f"curl_cffi 下载异常: {e}")
-                await safe_unlink(file_path)
-                # 回退到普通 httpx 下载
-                logger.info("回退到 httpx 下载")
-        # ====================================================================
-
-        # === 以下是原有的 httpx 下载逻辑 ===
         headers = {**self.headers, **(ext_headers or {})}
 
         try:
@@ -130,101 +67,25 @@ class StreamDownloader:
                 content_length = int(content_length) if content_length else 0
 
                 if content_length == 0:
-                    # 有些服务器不返回 Content-Length，尝试读取流
-                    pass
+                    logger.warning(f"媒体 url: {url}, 大小为 0, 取消下载")
+                    raise IgnoreException
 
-                if content_length > 0 and (file_size := content_length / 1024 / 1024) > pconfig.max_size:
-                    logger.warning(f"媒体 url: {url} 大小 {file_size:.2f} MB 超过 {pconfig.max_size} MB, 取消下载")
-                    raise SizeLimitException
+                if (file_size := content_length / 1024 / 1024) > pconfig.max_size:
+                    logger.warning(f"媒体 url: {url} 大小 {file_size:.2f} MB, 超过 {pconfig.max_size} MB, 取消下载")
+                    raise IgnoreException
 
-                with self.get_progress_bar(file_name, content_length) as bar:
+                with self.rich_progress(file_name, content_length) as update_progress:
                     async with aiofiles.open(file_path, "wb") as file:
-                        async for chunk in response.aiter_bytes(1024 * 1024):
+                        async for chunk in response.aiter_bytes(chunk_size):
                             await file.write(chunk)
-                            bar.update(len(chunk))
+                            update_progress(advance=len(chunk))
 
         except HTTPError:
             await safe_unlink(file_path)
             logger.exception(f"下载失败 | url: {url}, file_path: {file_path}")
             raise DownloadException("媒体下载失败")
+
         return file_path
-
-    def _download_with_curl_cffi(self, url: str, file_path: Path, file_name: str) -> None:
-        """使用 curl_cffi 下载文件（同步方法）
-
-        Args:
-            url: 下载地址
-            file_path: 保存路径
-            file_name: 文件名（用于进度条）
-        """
-        # 使用 Chrome 的 TLS 指纹来绕过检测
-        headers = {
-            "Referer": "https://bbs.nga.cn/",
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-        }
-
-        response = curl_requests.get(
-            url,
-            headers=headers,
-            impersonate="chrome110",  # 模拟 Chrome 110 浏览器
-            timeout=30,
-            stream=True,
-        )
-
-        response.raise_for_status()
-        content_length = response.headers.get("Content-Length")
-        content_length = int(content_length) if content_length else 0
-
-        if content_length > 0 and (file_size := content_length / 1024 / 1024) > pconfig.max_size:
-            logger.warning(f"媒体 url: {url} 大小 {file_size:.2f} MB 超过 {pconfig.max_size} MB, 取消下载")
-            raise SizeLimitException
-
-        # 使用 tqdm 显示进度条（同步版本）
-        with tqdm(
-            total=content_length,
-            unit="B",
-            unit_scale=True,
-            unit_divisor=1024,
-            dynamic_ncols=True,
-            colour="green",
-            desc=file_name,
-        ) as bar:
-            with open(file_path, "wb") as file:
-                for chunk in response.iter_content(1024 * 1024):
-                    if chunk:
-                        file.write(chunk)
-                        bar.update(len(chunk))
-
-    async def close(self) -> None:
-        self._download_locks.clear()
-        self._download_lock_refs.clear()
-        if not self.client.is_closed:
-            await self.client.aclose()
-
-    @staticmethod
-    def get_progress_bar(desc: str, total: int | None = None) -> tqdm:
-        """获取进度条 bar
-
-        Args:
-            desc (str): 描述
-            total (int | None): 总大小. Defaults to None.
-
-        Returns:
-            tqdm: 进度条
-        """
-        return tqdm(
-            total=total,
-            unit="B",
-            unit_scale=True,
-            unit_divisor=1024,
-            dynamic_ncols=True,
-            colour="green",
-            desc=desc,
-        )
 
     @auto_task
     async def download_video(
@@ -234,22 +95,10 @@ class StreamDownloader:
         video_name: str | None = None,
         ext_headers: dict[str, str] | None = None,
     ) -> Path:
-        """download video file by url with stream
-
-        Args:
-            url (str): url address
-            video_name (str | None): video name. Defaults to get name by parse url.
-            ext_headers (dict[str, str] | None): ext headers. Defaults to None.
-
-        Returns:
-            Path: video file path
-
-        Raises:
-            httpx.HTTPError: When download fails
-        """
+        """download video file by url with stream"""
         if video_name is None:
             video_name = generate_file_name(url, ".mp4")
-        return await self.streamd(url, file_name=video_name, ext_headers=ext_headers)
+        return await self.download_file(url, file_name=video_name, ext_headers=ext_headers, chunk_size=1024 * 1024)
 
     @auto_task
     async def download_audio(
@@ -259,22 +108,10 @@ class StreamDownloader:
         audio_name: str | None = None,
         ext_headers: dict[str, str] | None = None,
     ) -> Path:
-        """download audio file by url with stream
-
-        Args:
-            url (str): url address
-            audio_name (str | None ): audio name. Defaults to generate from url.
-            ext_headers (dict[str, str] | None): ext headers. Defaults to None.
-
-        Returns:
-            Path: audio file path
-
-        Raises:
-            httpx.HTTPError: When download fails
-        """
+        """download audio file by url with stream"""
         if audio_name is None:
             audio_name = generate_file_name(url, ".mp3")
-        return await self.streamd(url, file_name=audio_name, ext_headers=ext_headers)
+        return await self.download_file(url, file_name=audio_name, ext_headers=ext_headers)
 
     @auto_task
     async def download_img(
@@ -284,43 +121,10 @@ class StreamDownloader:
         img_name: str | None = None,
         ext_headers: dict[str, str] | None = None,
     ) -> Path:
-        """download image file by url with stream
-
-        Args:
-            url (str): url
-            img_name (str | None): image name. Defaults to generate from url.
-            ext_headers (dict[str, str] | None): ext headers. Defaults to None.
-
-        Returns:
-            Path: image file path
-
-        Raises:
-            httpx.HTTPError: When download fails
-        """
+        """download image file by url with stream"""
         if img_name is None:
             img_name = generate_file_name(url, ".jpg")
-        return await self.streamd(url, file_name=img_name, ext_headers=ext_headers)
-
-    async def download_imgs_without_raise(
-        self,
-        urls: list[str],
-        *,
-        ext_headers: dict[str, str] | None = None,
-    ) -> list[Path]:
-        """download images without raise
-
-        Args:
-            urls (list[str]): urls
-            ext_headers (dict[str, str] | None): ext headers. Defaults to None.
-
-        Returns:
-            list[Path]: image file paths
-        """
-        paths_or_errs = await asyncio.gather(
-            *[self.download_img(url, ext_headers=ext_headers) for url in urls],
-            return_exceptions=True,
-        )
-        return [p for p in paths_or_errs if isinstance(p, Path)]
+        return await self.download_file(url, file_name=img_name, ext_headers=ext_headers)
 
     @auto_task
     async def download_av_and_merge(
@@ -338,6 +142,67 @@ class StreamDownloader:
         )
         await merge_av(v_path=v_path, a_path=a_path, output_path=output_path)
         return output_path
+
+    async def download_imgs_without_raise(
+        self,
+        urls: list[str],
+        *,
+        ext_headers: dict[str, str] | None = None,
+    ) -> list[Path]:
+        """download image files by urls with stream, ignore errors"""
+        paths_or_errs = await asyncio.gather(
+            *[self.download_img(url, ext_headers=ext_headers) for url in urls],
+            return_exceptions=True,
+        )
+        return [p for p in paths_or_errs if isinstance(p, Path)]
+
+    @auto_task
+    async def download_m3u8(
+        self,
+        m3u8_url: str,
+        *,
+        video_name: str | None = None,
+        ext_headers: dict[str, str] | None = None,
+    ) -> Path:
+        """download m3u8 file by url with stream"""
+        if video_name is None:
+            video_name = generate_file_name(m3u8_url, ".mp4")
+
+        video_path = pconfig.cache_dir / video_name
+
+        try:
+            async with aiofiles.open(video_path, "wb") as f:
+                total_size = 0
+                with self.rich_progress(desc=video_name) as update_progress:
+                    for url in await self._get_m3u8_slices(m3u8_url):
+                        async with self.client.stream("GET", url, headers=ext_headers) as response:
+                            async for chunk in response.aiter_bytes(chunk_size=1024 * 1024):
+                                await f.write(chunk)
+                                total_size += len(chunk)
+                                update_progress(advance=len(chunk), total=total_size)
+        except HTTPError:
+            await safe_unlink(video_path)
+            logger.exception("m3u8 视频下载失败")
+            raise DownloadException("m3u8 视频下载失败")
+
+        return video_path
+
+    async def _get_m3u8_slices(self, m3u8_url: str):
+        """获取 m3u8 分片"""
+
+        response = await self.client.get(m3u8_url)
+        response.raise_for_status()
+
+        slices_text = response.text
+        slices: list[str] = []
+
+        for line in slices_text.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            slices.append(urljoin(m3u8_url, line))
+
+        return slices
 
 
 DOWNLOADER: StreamDownloader = StreamDownloader()

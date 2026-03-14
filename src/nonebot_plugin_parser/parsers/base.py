@@ -1,5 +1,3 @@
-"""Parser 基类定义"""
-
 from re import Match, Pattern, compile
 from abc import ABC
 from typing import TYPE_CHECKING, Any, TypeVar, ClassVar, cast
@@ -8,18 +6,15 @@ from pathlib import Path
 from collections.abc import Callable, Coroutine
 from typing_extensions import Unpack, final
 
-from .data import Platform, ParseResult, ParseResultKwargs
+from .data import Platform, ParseResult, ImageContent, ParseResultKwargs
 from ..config import pconfig as pconfig
-from ..download import DOWNLOADER as DOWNLOADER
+from ..download import DOWNLOADER
 from ..constants import IOS_HEADER, COMMON_HEADER, ANDROID_HEADER, COMMON_TIMEOUT
 from ..constants import DOWNLOAD_TIMEOUT as DOWNLOAD_TIMEOUT
 from ..constants import PlatformEnum as PlatformEnum
-from ..exception import TipException as TipException
-from ..exception import ParseException as ParseException
+from ..exception import ParseException
+from ..exception import IgnoreException as IgnoreException
 from ..exception import DownloadException as DownloadException
-from ..exception import ZeroSizeException as ZeroSizeException
-from ..exception import SizeLimitException as SizeLimitException
-from ..exception import DurationLimitException as DurationLimitException
 
 T = TypeVar("T", bound="BaseParser")
 HandlerFunc = Callable[[T, Match[str]], Coroutine[Any, Any, ParseResult]]
@@ -45,17 +40,11 @@ def handle(keyword: str, pattern: str):
 
 
 class BaseParser:
-    """所有平台 Parser 的抽象基类
-
-    子类必须实现：
-    - platform: 平台信息（包含名称和显示名称)
-    """
+    platform: ClassVar[Platform]
+    """ 平台信息（包含名称和显示名称） """
 
     _registry: ClassVar[list[type["BaseParser"]]] = []
     """ 存储所有已注册的 Parser 类 """
-
-    platform: ClassVar[Platform]
-    """ 平台信息（包含名称和显示名称） """
 
     if TYPE_CHECKING:
         _key_patterns: ClassVar[KeyPatterns]
@@ -96,18 +85,6 @@ class BaseParser:
 
     @final
     async def parse(self, keyword: str, searched: Match[str]) -> ParseResult:
-        """解析 URL 提取信息
-
-        Args:
-            keyword: 关键词
-            searched: 正则表达式匹配对象，由平台对应的模式匹配得到
-
-        Returns:
-            ParseResult: 解析结果
-
-        Raises:
-            ParseException: 解析失败时抛出
-        """
         return await self._handlers[keyword](self, searched)
 
     @final
@@ -220,13 +197,22 @@ class BaseParser:
         image_urls: list[str],
     ):
         """创建图片内容列表"""
-        from .data import ImageContent
-
         contents: list[ImageContent] = []
         for url in image_urls:
             task = DOWNLOADER.download_img(url, ext_headers=self.headers)
             contents.append(ImageContent(task))
         return contents
+
+    def create_image_content(
+        self,
+        url_or_task: str | Task[Path],
+        alt: str | None = None,
+    ):
+        """创建图片内容"""
+        if isinstance(url_or_task, str):
+            url_or_task = DOWNLOADER.download_img(url_or_task, ext_headers=self.headers)
+
+        return ImageContent(url_or_task, alt=alt)
 
     def create_dynamic_contents(
         self,
@@ -305,14 +291,10 @@ class BaseParser:
 
         return AudioContent(url_or_task, duration)
 
-    def create_graphics_content(
-        self,
-        image_url: str,
-        text: str | None = None,
-        alt: str | None = None,
-    ):
-        """创建图文内容 图片不能为空 文字可空 渲染时文字在前 图片在后"""
-        from .data import GraphicsContent
+    def create_empty_graphics(self) -> list[str | ImageContent]:
+        """创建空的图片内容列表"""
+        return []
 
-        image_task = DOWNLOADER.download_img(image_url, ext_headers=self.headers)
-        return GraphicsContent(image_task, text, alt)
+    @property
+    def downloader(self):
+        return DOWNLOADER

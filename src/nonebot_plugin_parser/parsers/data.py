@@ -1,8 +1,14 @@
+from __future__ import annotations
+
+import asyncio
 from typing import Any, TypedDict
 from asyncio import Task
 from pathlib import Path
 from datetime import datetime
 from dataclasses import field, dataclass
+from collections.abc import Iterator, Awaitable
+
+from ..utils import fmt_duration
 
 
 def repr_path_task(path_task: Path | Task[Path]) -> str:
@@ -10,14 +16,6 @@ def repr_path_task(path_task: Path | Task[Path]) -> str:
         return f"path={path_task.name}"
     else:
         return f"task={path_task.get_name()}, done={path_task.done()}"
-
-
-def is_pending_path_task(path_task: Path | Task[Path] | None) -> bool:
-    return isinstance(path_task, Task)
-
-
-def path_task_exists(path_task: Path | Task[Path] | None) -> bool:
-    return isinstance(path_task, Path) and path_task.exists()
 
 
 @dataclass(repr=False, slots=True)
@@ -30,15 +28,14 @@ class MediaContent:
         self.path_task = await self.path_task
         return self.path_task
 
+    @property
+    def path_uri(self):
+        if isinstance(self.path_task, Path):
+            return self.path_task.as_uri()
+
     def __repr__(self) -> str:
         prefix = self.__class__.__name__
         return f"{prefix}({repr_path_task(self.path_task)})"
-
-    def has_pending_resources(self) -> bool:
-        return is_pending_path_task(self.path_task)
-
-    def has_local_resources(self) -> bool:
-        return path_task_exists(self.path_task)
 
 
 @dataclass(repr=False, slots=True)
@@ -66,10 +63,13 @@ class VideoContent(MediaContent):
         return self.cover
 
     @property
+    def cover_path_uri(self):
+        if isinstance(self.cover, Path):
+            return self.cover.as_uri()
+
+    @property
     def display_duration(self) -> str:
-        minutes = int(self.duration) // 60
-        seconds = int(self.duration) % 60
-        return f"时长: {minutes}:{seconds:02d}"
+        return f"时长: {fmt_duration(self.duration)}"
 
     def __repr__(self) -> str:
         repr = f"VideoContent({repr_path_task(self.path_task)}"
@@ -77,77 +77,20 @@ class VideoContent(MediaContent):
             repr += f", cover={repr_path_task(self.cover)}"
         return repr + ")"
 
-    def has_pending_resources(self) -> bool:
-        return MediaContent.has_pending_resources(self) or is_pending_path_task(self.cover)
-
-    def has_local_resources(self) -> bool:
-        return MediaContent.has_local_resources(self) and (self.cover is None or path_task_exists(self.cover))
-
 
 @dataclass(repr=False, slots=True)
 class ImageContent(MediaContent):
     """图片内容"""
 
-    pass
+    alt: str | None = None
+    """图片描述 用于图文"""
 
 
 @dataclass(repr=False, slots=True)
 class DynamicContent(MediaContent):
     """动态内容 视频格式 后续转 gif"""
 
-    gif_path: Path | Task[Path] | None = None
-    cover: Path | Task[Path] | None = None
-    """视频封面（缩略图）"""
-
-    async def get_cover_path(self) -> Path | None:
-        """获取封面路径"""
-        if self.cover is None:
-            return None
-        if isinstance(self.cover, Path):
-            return self.cover
-        self.cover = await self.cover
-        return self.cover
-
-    async def get_gif_path(self) -> Path | None:
-        """获取 GIF 路径"""
-        if self.gif_path is None:
-            return None
-        if isinstance(self.gif_path, Path):
-            return self.gif_path
-        self.gif_path = await self.gif_path
-        return self.gif_path
-
-    def has_pending_resources(self) -> bool:
-        return (
-            MediaContent.has_pending_resources(self)
-            or is_pending_path_task(self.gif_path)
-            or is_pending_path_task(self.cover)
-        )
-
-    def has_local_resources(self) -> bool:
-        return (
-            MediaContent.has_local_resources(self)
-            and (self.gif_path is None or path_task_exists(self.gif_path))
-            and (self.cover is None or path_task_exists(self.cover))
-        )
-
-
-@dataclass(repr=False, slots=True)
-class GraphicsContent(MediaContent):
-    """图文内容 渲染时文字在前 图片在后"""
-
-    text: str | None = None
-    """图片前的文本内容"""
-    alt: str | None = None
-    """图片描述 渲染时居中显示"""
-
-    def __repr__(self) -> str:
-        repr = f"GraphicsContent({repr_path_task(self.path_task)}"
-        if self.text:
-            repr += f", text={self.text}"
-        if self.alt:
-            repr += f", alt={self.alt}"
-        return repr + ")"
+    gif_path: Path | None = None
 
 
 @dataclass(slots=True)
@@ -179,6 +122,11 @@ class Author:
         self.avatar = await self.avatar
         return self.avatar
 
+    @property
+    def avatar_path_uri(self):
+        if isinstance(self.avatar, Path):
+            return self.avatar.as_uri()
+
     def __repr__(self) -> str:
         repr = f"Author(name={self.name}"
         if self.avatar:
@@ -186,12 +134,6 @@ class Author:
         if self.description:
             repr += f", description={self.description}"
         return repr + ")"
-
-    def has_pending_resources(self) -> bool:
-        return is_pending_path_task(self.avatar)
-
-    def has_local_resources(self) -> bool:
-        return self.avatar is None or path_task_exists(self.avatar)
 
 
 @dataclass(repr=False, slots=True)
@@ -212,9 +154,11 @@ class ParseResult:
     """来源链接"""
     contents: list[MediaContent] = field(default_factory=list)
     """媒体内容"""
+    graphics: list[str | ImageContent] = field(default_factory=list)
+    """图文内容"""
     extra: dict[str, Any] = field(default_factory=dict)
     """额外信息"""
-    repost: "ParseResult | None" = None
+    repost: ParseResult | None = None
     """转发的内容"""
     render_image: Path | None = None
     """渲染图片"""
@@ -258,27 +202,64 @@ class ParseResult:
         return [cont for cont in self.contents if isinstance(cont, DynamicContent)]
 
     @property
-    def graphics_contents(self) -> list[GraphicsContent]:
-        return [cont for cont in self.contents if isinstance(cont, GraphicsContent)]
-
-    @property
-    async def cover_path(self) -> Path | None:
-        """获取封面路径"""
-        for cont in self.contents:
-            # 优先使用 VideoContent 的封面
-            if isinstance(cont, VideoContent):
-                return await cont.get_cover_path()
-            # 其次使用 DynamicContent 的封面（GIF等）
-            elif isinstance(cont, DynamicContent):
-                cover = await cont.get_cover_path()
-                if cover:
-                    return cover
-        return None
-
-    @property
     def formartted_datetime(self, fmt: str = "%Y-%m-%d %H:%M:%S") -> str | None:
         """格式化时间戳"""
         return datetime.fromtimestamp(self.timestamp).strftime(fmt) if self.timestamp is not None else None
+
+    async def cover_path(self) -> Path | None:
+        """获取封面路径"""
+        for cont in self.contents:
+            if isinstance(cont, VideoContent):
+                return await cont.get_cover_path()
+        return None
+
+    def _iterate_download_coros(self, img_only: bool = False) -> Iterator[Awaitable[Path | None]]:
+        if author := self.author:
+            if author.avatar:
+                yield author.get_avatar_path()
+
+        for cont in self.contents:
+            if not img_only:
+                yield cont.get_path()
+            elif isinstance(cont, VideoContent):
+                yield cont.get_cover_path()
+            elif isinstance(cont, ImageContent):
+                yield cont.get_path()
+
+        for gra in self.graphics:
+            if isinstance(gra, ImageContent):
+                yield gra.get_path()
+
+        if self.repost is not None:
+            yield from self.repost._iterate_download_coros(img_only)
+
+    async def ensure_downloads_complete(
+        self,
+        *,
+        img_only: bool = False,
+        suppress_errors: bool = True,
+    ) -> None:
+        await asyncio.gather(
+            *self._iterate_download_coros(img_only),
+            return_exceptions=suppress_errors,
+        )
+
+    @property
+    def content_type(self) -> str | None:
+        """获取内容类型 (允许解析器通过 extra 显式指定)"""
+        content_type = self.extra.get("content_type")
+
+        if content_type is None:
+            if self.video_contents:
+                return "视频"
+            elif self.graphics:
+                return "图文"
+            elif self.img_contents:
+                return "动态"
+            elif self.repost:
+                return "动态"
+
+        return content_type
 
     def __repr__(self) -> str:
         return (
@@ -289,34 +270,18 @@ class ParseResult:
             f"url: {self.url}, "
             f"author: {self.author}, "
             f"contents: {self.contents}, "
+            f"graphics: {self.graphics}, "
             f"extra: {self.extra}, "
             f"repost: <<<<<<<{self.repost}>>>>>>, "
             f"render_image: {self.render_image.name if self.render_image else 'None'}"
         )
-
-    def has_pending_resources(self) -> bool:
-        return (
-            (self.author.has_pending_resources() if self.author else False)
-            or any(content.has_pending_resources() for content in self.contents)
-            or (self.repost.has_pending_resources() if self.repost else False)
-        )
-
-    def has_local_resources(self) -> bool:
-        return (
-            (self.author.has_local_resources() if self.author else True)
-            and all(content.has_local_resources() for content in self.contents)
-            and (self.repost.has_local_resources() if self.repost else True)
-            and (self.render_image is None or self.render_image.exists())
-        )
-
-    def is_cache_valid(self) -> bool:
-        return not self.has_pending_resources() and self.has_local_resources()
 
 
 class ParseResultKwargs(TypedDict, total=False):
     title: str | None
     text: str | None
     contents: list[MediaContent]
+    graphics: list[str | ImageContent]
     timestamp: int | None
     url: str | None
     author: Author | None

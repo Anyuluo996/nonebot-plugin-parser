@@ -163,7 +163,7 @@ def check_platform_available(platform_name: str) -> bool:
     return platform_name in PARSERS
 
 
-@on_command("开启解析", permission=SUPERUSER | ADMIN(), block=True).handle()
+@on_command("开启解析", permission=SUPERUSER, block=True).handle()
 async def enable_parser(matcher: Matcher, session: Session = UniSession(), args: CommandArg = CommandArg()):
     """开启解析"""
     try:
@@ -200,7 +200,7 @@ async def enable_parser(matcher: Matcher, session: Session = UniSession(), args:
         await matcher.finish(f"发生错误: {e}")
 
 
-@on_command("关闭解析", permission=SUPERUSER | ADMIN(), block=True).handle()
+@on_command("关闭解析", permission=SUPERUSER, block=True).handle()
 async def disable_parser(matcher: Matcher, session: Session = UniSession(), args: CommandArg = CommandArg()):
     """关闭解析"""
     try:
@@ -241,7 +241,7 @@ async def disable_parser(matcher: Matcher, session: Session = UniSession(), args
         await matcher.finish(f"发生错误: {e}")
 
 
-@on_command("解析状态", permission=SUPERUSER | ADMIN(), block=True).handle()
+@on_command("解析状态", permission=SUPERUSER, block=True).handle()
 async def parser_status(matcher: Matcher, session: Session = UniSession()):
     """查询当前解析状态"""
     group_key = get_group_key(session)

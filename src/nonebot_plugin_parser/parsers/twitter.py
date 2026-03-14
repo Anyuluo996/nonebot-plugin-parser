@@ -71,8 +71,16 @@ class TwitterParser(BaseParser):
 
         contents: list[MediaContent] = []
         for media in data.media_extended:
-            if media.type in ("video", "gif"):
+            if media.type == "video":
                 contents.append(self.create_video_content(media.url, media.thumbnail_url))
+            elif media.type == "gif":
+                contents.extend(
+                    self.create_dynamic_contents(
+                        [media.url],
+                        convert_to_gif=True,
+                        cover_url=media.thumbnail_url,
+                    )
+                )
             elif media.type == "image":
                 contents.append(self.create_image_content(media.url))
 

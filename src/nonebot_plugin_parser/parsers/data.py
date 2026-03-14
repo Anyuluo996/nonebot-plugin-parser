@@ -95,7 +95,42 @@ class ImageContent(MediaContent):
 class DynamicContent(MediaContent):
     """动态内容 视频格式 后续转 gif"""
 
-    gif_path: Path | None = None
+    gif_path: Path | Task[Path] | None = None
+    cover: Path | Task[Path] | None = None
+
+    async def get_gif_path(self) -> Path | None:
+        if self.gif_path is None:
+            return None
+        if isinstance(self.gif_path, Path):
+            return self.gif_path
+        self.gif_path = await self.gif_path
+        return self.gif_path
+
+    async def get_cover_path(self) -> Path | None:
+        if self.cover is None:
+            return None
+        if isinstance(self.cover, Path):
+            return self.cover
+        self.cover = await self.cover
+        return self.cover
+
+    @property
+    def gif_path_uri(self):
+        if isinstance(self.gif_path, Path):
+            return self.gif_path.as_uri()
+
+    @property
+    def cover_path_uri(self):
+        if isinstance(self.cover, Path):
+            return self.cover.as_uri()
+
+    def __repr__(self) -> str:
+        repr = f"DynamicContent({repr_path_task(self.path_task)}"
+        if self.gif_path is not None:
+            repr += f", gif={repr_path_task(self.gif_path)}"
+        if self.cover is not None:
+            repr += f", cover={repr_path_task(self.cover)}"
+        return repr + ")"
 
 
 @dataclass(slots=True)
@@ -214,7 +249,7 @@ class ParseResult:
     async def cover_path(self) -> Path | None:
         """获取封面路径"""
         for cont in self.contents:
-            if isinstance(cont, VideoContent):
+            if isinstance(cont, (VideoContent, DynamicContent)):
                 return await cont.get_cover_path()
         return None
 
@@ -224,8 +259,21 @@ class ParseResult:
                 yield author.get_avatar_path()
 
         for cont in self.contents:
+            if isinstance(cont, DynamicContent):
+                if not img_only:
+                    yield cont.get_path()
+                    if cont.gif_path is not None:
+                        yield cont.get_gif_path()
+                    if cont.cover is not None:
+                        yield cont.get_cover_path()
+                elif cont.cover is not None:
+                    yield cont.get_cover_path()
+                continue
+
             if not img_only:
                 yield cont.get_path()
+                if isinstance(cont, VideoContent) and cont.cover is not None:
+                    yield cont.get_cover_path()
             elif isinstance(cont, VideoContent):
                 yield cont.get_cover_path()
             elif isinstance(cont, ImageContent):
@@ -260,6 +308,11 @@ class ParseResult:
                 return True
             if isinstance(cont, VideoContent) and is_pending_path_task(cont.cover):
                 return True
+            if isinstance(cont, DynamicContent):
+                if is_pending_path_task(cont.gif_path):
+                    return True
+                if is_pending_path_task(cont.cover):
+                    return True
         # 检查图文
         for gra in self.graphics:
             if isinstance(gra, ImageContent) and is_pending_path_task(gra.path_task):
@@ -287,6 +340,8 @@ class ParseResult:
         if content_type is None:
             if self.video_contents:
                 return "视频"
+            elif self.dynamic_contents:
+                return "动态"
             elif self.graphics:
                 return "图文"
             elif self.img_contents:

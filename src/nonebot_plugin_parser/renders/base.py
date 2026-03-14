@@ -33,22 +33,27 @@ class BaseRenderer(ABC):
 
         for cont in chain(result.contents, result.repost.contents if result.repost else ()):
             try:
-                path = await cont.get_path()
+                match cont:
+                    case VideoContent():
+                        path = await cont.get_path()
+                        yield UniMessage(UniHelper.video_seg(path))
+                    case AudioContent():
+                        path = await cont.get_path()
+                        yield UniMessage(UniHelper.record_seg(path))
+                    case ImageContent():
+                        path = await cont.get_path()
+                        forwardable_segs.append(UniHelper.img_seg(path))
+                    case DynamicContent():
+                        dynamic_path = await cont.get_gif_path() or await cont.get_path()
+                        if dynamic_path.suffix.lower() == ".gif":
+                            dynamic_segs.append(UniHelper.img_seg(dynamic_path))
+                        else:
+                            dynamic_segs.append(UniHelper.video_seg(dynamic_path))
             except IgnoreException:
                 continue
             except DownloadException:
                 failed_count += 1
                 continue
-
-            match cont:
-                case VideoContent():
-                    yield UniMessage(UniHelper.video_seg(path))
-                case AudioContent():
-                    yield UniMessage(UniHelper.record_seg(path))
-                case ImageContent():
-                    forwardable_segs.append(UniHelper.img_seg(path))
-                case DynamicContent():
-                    dynamic_segs.append(UniHelper.video_seg(path))
 
         for cont in chain(result.graphics, result.repost.graphics if result.repost else ()):
             if isinstance(cont, str):
@@ -77,6 +82,11 @@ class BaseRenderer(ABC):
 
                 if dynamic_segs:
                     yield UniMessage(UniHelper.construct_forward_message(dynamic_segs))
+        elif dynamic_segs:
+            if pconfig.need_forward_contents or len(dynamic_segs) > 1:
+                yield UniMessage(UniHelper.construct_forward_message(dynamic_segs))
+            else:
+                yield UniMessage(dynamic_segs)
 
         if failed_count > 0:
             message = f"{failed_count} 项媒体下载失败"

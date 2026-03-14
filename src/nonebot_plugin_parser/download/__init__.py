@@ -67,22 +67,48 @@ class StreamDownloader:
         try:
             async with self.client.stream("GET", url, headers=headers, follow_redirects=True) as response:
                 response.raise_for_status()
-                content_length = response.headers.get("Content-Length")
-                content_length = int(content_length) if content_length else 0
+                content_length_header = response.headers.get("Content-Length")
+                try:
+                    content_length = int(content_length_header) if content_length_header else None
+                except ValueError:
+                    content_length = None
+
+                max_size_bytes = pconfig.max_size * 1024 * 1024
 
                 if content_length == 0:
                     logger.warning(f"媒体 url: {url}, 大小为 0, 取消下载")
                     raise IgnoreException
 
-                if (file_size := content_length / 1024 / 1024) > pconfig.max_size:
+                if content_length is not None and (file_size := content_length / 1024 / 1024) > pconfig.max_size:
                     logger.warning(f"媒体 url: {url} 大小 {file_size:.2f} MB, 超过 {pconfig.max_size} MB, 取消下载")
                     raise IgnoreException
 
+                downloaded_size = 0
+                exceed_size_limit = False
                 with self.rich_progress(file_name, content_length) as update_progress:
                     async with aiofiles.open(file_path, "wb") as file:
                         async for chunk in response.aiter_bytes(chunk_size):
+                            if not chunk:
+                                continue
+
+                            downloaded_size += len(chunk)
+                            if content_length is None and downloaded_size > max_size_bytes:
+                                exceed_size_limit = True
+                                break
+
                             await file.write(chunk)
                             update_progress(advance=len(chunk))
+
+                if exceed_size_limit:
+                    await safe_unlink(file_path)
+                    file_size = downloaded_size / 1024 / 1024
+                    logger.warning(f"媒体 url: {url} 大小 {file_size:.2f} MB, 超过 {pconfig.max_size} MB, 取消下载")
+                    raise IgnoreException
+
+                if downloaded_size == 0:
+                    await safe_unlink(file_path)
+                    logger.warning(f"媒体 url: {url}, 大小为 0, 取消下载")
+                    raise IgnoreException
 
         except HTTPError:
             await safe_unlink(file_path)

@@ -6,27 +6,54 @@ from nonebot.rule import to_me
 from nonebot.matcher import Matcher
 from nonebot.permission import SUPERUSER
 from nonebot_plugin_uninfo import ADMIN, Session, UniSession
+from nonebot_plugin_alconna.uniseg import UniMsg
 
 from ..config import pconfig
+from ..parsers import BaseParser
+from ..constants import PlatformEnum
 
-_DISABLED_GROUPS_PATH: Path = pconfig.data_dir / "disabled_groups.json"
-
-
-def load_or_initialize_set() -> set[str]:
-    """加载或初始化关闭解析的名单"""
-    # 判断是否存在
-    if not _DISABLED_GROUPS_PATH.exists():
-        _DISABLED_GROUPS_PATH.write_text(json.dumps([]))
-    return set(json.loads(_DISABLED_GROUPS_PATH.read_text()))
+_DISABLED_PLATFORMS_PATH: Path = pconfig.data_dir / "disabled_platforms.json"
 
 
-def save_disabled_groups():
-    """保存关闭解析的名单"""
-    _DISABLED_GROUPS_PATH.write_text(json.dumps(list(_DISABLED_GROUPS_SET)))
+def load_or_initialize_dict() -> dict[str, set[str]]:
+    """加载或初始化关闭解析的配置
+
+    Returns:
+        dict[str, set[str]]: 群组标识 -> 禁用的平台名称集合
+    """
+    if not _DISABLED_PLATFORMS_PATH.exists():
+        _DISABLED_PLATFORMS_PATH.write_text(json.dumps({}))
+    data = json.loads(_DISABLED_PLATFORMS_PATH.read_text())
+    return {k: set(v) for k, v in data.items()}
 
 
-# 内存中关闭解析的名单，第一次先进行初始化
-_DISABLED_GROUPS_SET: set[str] = load_or_initialize_set()
+def save_disabled_platforms():
+    """保存关闭解析的配置"""
+    data = {k: list(v) for k, v in _DISABLED_PLATFORMS_DICT.items()}
+    _DISABLED_PLATFORMS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+
+
+# 内存中关闭解析的配置，格式: {group_key: set(platform_names)}
+_DISABLED_PLATFORMS_DICT: dict[str, set[str]] = load_or_initialize_dict()
+
+
+def migrate_old_data():
+    """迁移旧版本的禁用群组数据"""
+    old_path = pconfig.data_dir / "disabled_groups.json"
+    if old_path.exists():
+        old_data = set(json.loads(old_path.read_text()))
+        if old_data:
+            # 将旧数据迁移到新格式，标记为禁用所有平台
+            all_platforms = {p.value for p in PlatformEnum}
+            for group_key in old_data:
+                _DISABLED_PLATFORMS_DICT[group_key] = all_platforms
+            save_disabled_platforms()
+            # 删除旧文件
+            old_path.unlink()
+
+
+# 在模块加载时执行迁移
+migrate_old_data()
 
 
 def get_group_key(session: Session) -> str:
@@ -37,36 +64,163 @@ def get_group_key(session: Session) -> str:
     return f"{session.scope}_{session.scene_path}"
 
 
-def is_enabled(session: Session = UniSession()) -> bool:
-    """判断当前会话是否在关闭解析的名单中"""
+def _starts_with_force_prefix(message: UniMsg | None) -> bool:
+    parse_prefix = pconfig.parse_prefix
+    if not parse_prefix or message is None:
+        return False
+
+    text = message.extract_plain_text().strip()
+    return text.startswith(f"{parse_prefix}+") or text.startswith(f"{parse_prefix} ")
+
+
+def is_enabled(message: UniMsg, session: Session = UniSession()) -> bool:
+    """判断当前会话是否启用了任意解析功能"""
+    if _starts_with_force_prefix(message):
+        return True
+
     if session.scene.is_private:
         return True
 
     group_key = get_group_key(session)
-    if group_key in _DISABLED_GROUPS_SET:
-        return False
-    return True
+    return group_key not in _DISABLED_PLATFORMS_DICT
+
+
+def is_platform_enabled(session: Session, platform_name: str) -> bool:
+    """判断指定平台在当前会话中是否启用
+
+    Args:
+        session: 会话信息
+        platform_name: 平台名称
+
+    Returns:
+        bool: 平台是否启用
+    """
+    if session.scene.is_private:
+        return True
+
+    group_key = get_group_key(session)
+    disabled_platforms = _DISABLED_PLATFORMS_DICT.get(group_key, set())
+    return platform_name not in disabled_platforms
+
+
+def get_platform_display_name(platform_input: str) -> str | None:
+    """获取平台的显示名称
+
+    Args:
+        platform_input: 用户输入的平台名称（可以是 value 或 display_name）
+
+    Returns:
+        匹配的平台 value，如果不匹配则返回 None
+    """
+    # 尝试匹配枚举值
+    for platform in PlatformEnum:
+        if platform.value == platform_input.lower():
+            return platform.value
+    # 尝试匹配显示名称
+    for platform in PlatformEnum:
+        if platform.name.lower() == platform_input.lower():
+            return platform.value
+    return None
+
+
+async def get_parser_class(platform_name: str) -> type[BaseParser] | None:
+    """根据平台名称获取对应的 Parser 类"""
+    from ..parsers import PARSERS
+
+    return PARSERS.get(platform_name)
+
+
+def check_platform_available(platform_name: str) -> bool:
+    """检查指定平台是否可用（已实现 Parser）
+
+    Args:
+        platform_name: 平台名称
+
+    Returns:
+        bool: 平台是否可用
+    """
+    from ..parsers import PARSERS
+
+    return platform_name in PARSERS
 
 
 @on_command("开启解析", rule=to_me(), permission=SUPERUSER | ADMIN(), block=True).handle()
-async def _(matcher: Matcher, session: Session = UniSession()):
+async def enable_parser(matcher: Matcher, session: Session = UniSession(), platform: str = ""):
     """开启解析"""
     group_key = get_group_key(session)
-    if group_key in _DISABLED_GROUPS_SET:
-        _DISABLED_GROUPS_SET.remove(group_key)
-        save_disabled_groups()
-        await matcher.finish("解析已开启")
+
+    # 解析平台名称
+    platform_name = platform.strip()
+    if platform_name:
+        # 尝试转换为标准平台名称
+        standard_name = get_platform_display_name(platform_name)
+        if standard_name is None:
+            await matcher.finish(f"未知的平台: {platform_name}")
+        if not check_platform_available(standard_name):
+            await matcher.finish(f"平台 {platform_name} 暂不支持")
+
+        # 启用指定平台
+        if group_key not in _DISABLED_PLATFORMS_DICT:
+            _DISABLED_PLATFORMS_DICT[group_key] = set()
+        _DISABLED_PLATFORMS_DICT[group_key].discard(standard_name)
+        save_disabled_platforms()
+        await matcher.finish(f"{platform_name} 解析已开启")
     else:
-        await matcher.finish("解析已开启，无需重复开启")
+        # 启用所有平台
+        if group_key in _DISABLED_PLATFORMS_DICT:
+            del _DISABLED_PLATFORMS_DICT[group_key]
+            save_disabled_platforms()
+        await matcher.finish("解析已开启")
 
 
 @on_command("关闭解析", rule=to_me(), permission=SUPERUSER | ADMIN(), block=True).handle()
-async def _(matcher: Matcher, session: Session = UniSession()):
+async def disable_parser(matcher: Matcher, session: Session = UniSession(), platform: str = ""):
     """关闭解析"""
     group_key = get_group_key(session)
-    if group_key not in _DISABLED_GROUPS_SET:
-        _DISABLED_GROUPS_SET.add(group_key)
-        save_disabled_groups()
-        await matcher.finish("解析已关闭")
+
+    # 解析平台名称
+    platform_name = platform.strip()
+    if platform_name:
+        # 尝试转换为标准平台名称
+        standard_name = get_platform_display_name(platform_name)
+        if standard_name is None:
+            await matcher.finish(f"未知的平台: {platform_name}")
+        if not check_platform_available(standard_name):
+            await matcher.finish(f"平台 {platform_name} 暂不支持")
+
+        # 禁用指定平台
+        if group_key not in _DISABLED_PLATFORMS_DICT:
+            _DISABLED_PLATFORMS_DICT[group_key] = set()
+        _DISABLED_PLATFORMS_DICT[group_key].add(standard_name)
+        save_disabled_platforms()
+        await matcher.finish(f"{platform_name} 解析已关闭")
     else:
-        await matcher.finish("解析已关闭，无需重复关闭")
+        # 禁用所有平台
+        all_platforms = {p.value for p in PlatformEnum}
+        _DISABLED_PLATFORMS_DICT[group_key] = all_platforms
+        save_disabled_platforms()
+        await matcher.finish("解析已关闭")
+
+
+@on_command("解析状态", rule=to_me(), permission=SUPERUSER | ADMIN(), block=True).handle()
+async def parser_status(matcher: Matcher, session: Session = UniSession()):
+    """查询当前解析状态"""
+    group_key = get_group_key(session)
+
+    if session.scene.is_private:
+        await matcher.finish("私聊模式下解析已全局开启")
+
+    disabled_platforms = _DISABLED_PLATFORMS_DICT.get(group_key, set())
+
+    if not disabled_platforms:
+        await matcher.finish("当前群组解析已全局开启")
+
+    # 获取所有可用平台
+    all_platforms = {p.value for p in PlatformEnum}
+    enabled_platforms = all_platforms - disabled_platforms
+
+    if enabled_platforms:
+        enabled_list = ", ".join(sorted(enabled_platforms))
+        await matcher.finish(f"当前已开启的平台: {enabled_list}")
+    else:
+        await matcher.finish("当前群组解析已关闭")

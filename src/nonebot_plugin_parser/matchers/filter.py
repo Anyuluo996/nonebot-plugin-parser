@@ -166,67 +166,75 @@ def check_platform_available(platform_name: str) -> bool:
 @on_command("开启解析", rule=to_me(), permission=SUPERUSER | ADMIN(), block=True).handle()
 async def enable_parser(matcher: Matcher, session: Session = UniSession(), args: CommandArg = CommandArg()):
     """开启解析"""
-    group_key = get_group_key(session)
+    try:
+        group_key = get_group_key(session)
 
-    # 解析平台名称
-    platform_name = args.extract_plain_text().strip()
-    logger.warning(f"[开启解析] 原始参数: '{platform_name}', group_key: {group_key}")
+        # 解析平台名称
+        platform_name = args.extract_plain_text().strip()
+        logger.warning(f"[开启解析] 原始参数: '{platform_name}', group_key: {group_key}")
 
-    if platform_name:
-        # 尝试转换为标准平台名称
-        standard_name = get_platform_display_name(platform_name)
-        available = check_platform_available(standard_name) if standard_name else "N/A"
-        logger.warning(f"[开启解析] 转换后平台名: {standard_name}, 可用: {available}")
-        if standard_name is None:
-            await matcher.finish(f"未知的平台: {platform_name}")
-        if not check_platform_available(standard_name):
-            await matcher.finish(f"平台 {platform_name} 暂不支持")
+        if platform_name:
+            # 尝试转换为标准平台名称
+            standard_name = get_platform_display_name(platform_name)
+            available = check_platform_available(standard_name) if standard_name else "N/A"
+            logger.warning(f"[开启解析] 转换后平台名: {standard_name}, 可用: {available}")
+            if standard_name is None:
+                await matcher.finish(f"未知的平台: {platform_name}")
+            if not check_platform_available(standard_name):
+                await matcher.finish(f"平台 {platform_name} 暂不支持")
 
-        # 启用指定平台
-        if group_key not in _DISABLED_PLATFORMS_DICT:
-            _DISABLED_PLATFORMS_DICT[group_key] = set()
-        _DISABLED_PLATFORMS_DICT[group_key].discard(standard_name)
-        save_disabled_platforms()
-        await matcher.finish(f"{platform_name} 解析已开启")
-    else:
-        # 启用所有平台
-        if group_key in _DISABLED_PLATFORMS_DICT:
-            del _DISABLED_PLATFORMS_DICT[group_key]
+            # 启用指定平台
+            if group_key not in _DISABLED_PLATFORMS_DICT:
+                _DISABLED_PLATFORMS_DICT[group_key] = set()
+            _DISABLED_PLATFORMS_DICT[group_key].discard(standard_name)
             save_disabled_platforms()
-        await matcher.finish("解析已开启")
+            await matcher.finish(f"{platform_name} 解析已开启")
+        else:
+            # 启用所有平台
+            if group_key in _DISABLED_PLATFORMS_DICT:
+                del _DISABLED_PLATFORMS_DICT[group_key]
+                save_disabled_platforms()
+            await matcher.finish("解析已开启")
+    except Exception as e:
+        logger.exception(f"[开启解析] 发生异常: {e}")
+        await matcher.finish(f"发生错误: {e}")
 
 
 @on_command("关闭解析", rule=to_me(), permission=SUPERUSER | ADMIN(), block=True).handle()
 async def disable_parser(matcher: Matcher, session: Session = UniSession(), args: CommandArg = CommandArg()):
     """关闭解析"""
-    group_key = get_group_key(session)
+    try:
+        group_key = get_group_key(session)
 
-    # 解析平台名称
-    platform_name = args.extract_plain_text().strip()
-    logger.warning(f"[关闭解析] 原始参数: '{platform_name}', group_key: {group_key}")
+        # 解析平台名称
+        platform_name = args.extract_plain_text().strip()
+        logger.warning(f"[关闭解析] 原始参数: '{platform_name}', group_key: {group_key}")
 
-    if platform_name:
-        # 尝试转换为标准平台名称
-        standard_name = get_platform_display_name(platform_name)
-        available = check_platform_available(standard_name) if standard_name else "N/A"
-        logger.warning(f"[关闭解析] 转换后平台名: {standard_name}, 可用: {available}")
-        if standard_name is None:
-            await matcher.finish(f"未知的平台: {platform_name}")
-        if not check_platform_available(standard_name):
-            await matcher.finish(f"平台 {platform_name} 暂不支持")
+        if platform_name:
+            # 尝试转换为标准平台名称
+            standard_name = get_platform_display_name(platform_name)
+            available = check_platform_available(standard_name) if standard_name else "N/A"
+            logger.warning(f"[关闭解析] 转换后平台名: {standard_name}, 可用: {available}")
+            if standard_name is None:
+                await matcher.finish(f"未知的平台: {platform_name}")
+            if not check_platform_available(standard_name):
+                await matcher.finish(f"平台 {platform_name} 暂不支持")
 
-        # 禁用指定平台
-        if group_key not in _DISABLED_PLATFORMS_DICT:
-            _DISABLED_PLATFORMS_DICT[group_key] = set()
-        _DISABLED_PLATFORMS_DICT[group_key].add(standard_name)
-        save_disabled_platforms()
-        await matcher.finish(f"{platform_name} 解析已关闭")
-    else:
-        # 禁用所有平台
-        all_platforms = {p.value for p in PlatformEnum}
-        _DISABLED_PLATFORMS_DICT[group_key] = all_platforms
-        save_disabled_platforms()
-        await matcher.finish("解析已关闭")
+            # 禁用指定平台
+            if group_key not in _DISABLED_PLATFORMS_DICT:
+                _DISABLED_PLATFORMS_DICT[group_key] = set()
+            _DISABLED_PLATFORMS_DICT[group_key].add(standard_name)
+            save_disabled_platforms()
+            await matcher.finish(f"{platform_name} 解析已关闭")
+        else:
+            # 禁用所有平台
+            all_platforms = {p.value for p in PlatformEnum}
+            _DISABLED_PLATFORMS_DICT[group_key] = all_platforms
+            save_disabled_platforms()
+            await matcher.finish("解析已关闭")
+    except Exception as e:
+        logger.exception(f"[关闭解析] 发生异常: {e}")
+        await matcher.finish(f"发生错误: {e}")
 
 
 @on_command("解析状态", rule=to_me(), permission=SUPERUSER | ADMIN(), block=True).handle()

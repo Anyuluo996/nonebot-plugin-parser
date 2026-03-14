@@ -2,6 +2,8 @@
 测试开启/关闭解析功能
 """
 
+import inspect
+
 import pytest
 
 
@@ -55,6 +57,33 @@ class MockMatcher:
 
         self.finished_messages.append(message)
         raise FinishedException()
+
+
+def build_group_message_event(raw_message: str, *, self_id: int = 1660188286, user_id: int = 1247572395, group_id: int = 881042075):
+    """构造用于 matcher 测试的 OneBot 群消息事件"""
+    from nonebot.adapters.onebot.v11 import GroupMessageEvent, Message, MessageSegment
+    from nonebot.adapters.onebot.v11.event import Sender
+
+    message = Message([
+        MessageSegment.at(self_id),
+        MessageSegment.text(f" {raw_message}"),
+    ])
+    return GroupMessageEvent(
+        time=0,
+        self_id=self_id,
+        post_type="message",
+        sub_type="normal",
+        user_id=user_id,
+        message_type="group",
+        message_id=1,
+        message=message,
+        original_message=message,
+        raw_message=f"[CQ:at,qq={self_id}] {raw_message}",
+        font=0,
+        sender=Sender(user_id=user_id, role="admin"),
+        to_me=True,
+        group_id=group_id,
+    )
 
 
 def get_platform_control_matchers():
@@ -288,6 +317,21 @@ class TestPlatformCommandHandler:
         assert is_platform_enabled(session, "bilibili") is True
         assert group_key not in _DISABLED_PLATFORMS_DICT
 
+    def test_platform_control_handlers_use_message_command_arg_signature(self):
+        """测试平台控制 handler 使用可注入的 Message 参数声明"""
+        from nonebot.adapters import Message
+        from nonebot.params import CommandArg
+        import nonebot_plugin_parser.matchers.filter as filter_module
+
+        enable_args = inspect.signature(filter_module.enable_parser).parameters["args"]
+        disable_args = inspect.signature(filter_module.disable_parser).parameters["args"]
+        expected_default_type = type(CommandArg())
+
+        assert enable_args.annotation is Message
+        assert disable_args.annotation is Message
+        assert type(enable_args.default) is expected_default_type
+        assert type(disable_args.default) is expected_default_type
+
     @pytest.mark.asyncio
     async def test_enable_parser_handler_removes_empty_group_key(self, monkeypatch):
         """测试开启最后一个被禁用平台时会清理残留状态"""
@@ -306,6 +350,26 @@ class TestPlatformCommandHandler:
 
         assert matcher.finished_messages == ["bilibili 解析已开启"]
         assert group_key not in filter_module._DISABLED_PLATFORMS_DICT
+
+    @pytest.mark.asyncio
+    async def test_disable_parser_handler_accepts_real_message_command_arg(self, monkeypatch):
+        """测试 disable_parser 可直接处理真实 OneBot Message 参数"""
+        from nonebot.adapters.onebot.v11 import Message
+        from nonebot.exception import FinishedException
+        import nonebot_plugin_parser.matchers.filter as filter_module
+
+        MockSession, _, _, _ = get_mock_session()
+        session = MockSession("QQ", "group_test", is_private=False)
+        group_key = filter_module.get_group_key(session)
+        filter_module._DISABLED_PLATFORMS_DICT.clear()
+        monkeypatch.setattr(filter_module, "save_disabled_platforms", lambda: None)
+
+        matcher = MockMatcher()
+        with pytest.raises(FinishedException):
+            await filter_module.disable_parser(matcher, session, Message("b站"))
+
+        assert matcher.finished_messages == ["b站 解析已关闭"]
+        assert filter_module._DISABLED_PLATFORMS_DICT[group_key] == {"bilibili"}
 
     def test_disable_single_platform_logic(self):
         """测试关闭单个平台的逻辑"""

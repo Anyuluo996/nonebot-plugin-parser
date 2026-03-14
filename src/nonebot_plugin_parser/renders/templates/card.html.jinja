@@ -507,7 +507,7 @@
         <div class="text">{{ result.text }}</div>
         {% endif %}
 
-        {# ── 视频封面 ── #}
+        {# ── 视频封面 / GIF 缩略图 ── #}
         {% if result.video_contents %}
         {% set vc = result.video_contents[0] %}
         {% if vc.cover_path_uri %}
@@ -525,6 +525,18 @@
           {% endif %}
         </div>
         {% endif %}
+        {% elif result.dynamic_contents %}
+        {% set dc = result.dynamic_contents[0] %}
+        {% if dc.cover_path_uri %}
+        <div class="cover-wrapper">
+          <img src="{{ dc.cover_path_uri | safe }}" class="cover-img" alt="cover" />
+          {% if play_button %}
+          <div class="play-button">
+            <img src="{{ play_button | safe }}" alt="play" />
+          </div>
+          {% endif %}
+        </div>
+        {% endif %}
         {% endif %}
 
         {# ── Title（有视频：标题属于视频，放在封面下方） ── #}
@@ -538,7 +550,7 @@
         {% endif %}
 
         {# ── 非视频媒体 ── #}
-        {% if not result.video_contents %}
+        {% if not result.video_contents and not result.dynamic_contents %}
 
         {# ── Image Grid ── #}
         {% if result.img_contents %}

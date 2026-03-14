@@ -170,13 +170,13 @@ async def enable_parser(matcher: Matcher, session: Session = UniSession(), args:
 
     # 解析平台名称
     platform_name = args.extract_plain_text().strip()
-    logger.info(f"[开启解析] 原始参数: '{platform_name}', group_key: {group_key}")
+    logger.warning(f"[开启解析] 原始参数: '{platform_name}', group_key: {group_key}")
 
     if platform_name:
         # 尝试转换为标准平台名称
         standard_name = get_platform_display_name(platform_name)
         available = check_platform_available(standard_name) if standard_name else "N/A"
-        logger.info(f"[开启解析] 转换后平台名: {standard_name}, 可用: {available}")
+        logger.warning(f"[开启解析] 转换后平台名: {standard_name}, 可用: {available}")
         if standard_name is None:
             await matcher.finish(f"未知的平台: {platform_name}")
         if not check_platform_available(standard_name):
@@ -203,13 +203,13 @@ async def disable_parser(matcher: Matcher, session: Session = UniSession(), args
 
     # 解析平台名称
     platform_name = args.extract_plain_text().strip()
-    logger.info(f"[关闭解析] 原始参数: '{platform_name}', group_key: {group_key}")
+    logger.warning(f"[关闭解析] 原始参数: '{platform_name}', group_key: {group_key}")
 
     if platform_name:
         # 尝试转换为标准平台名称
         standard_name = get_platform_display_name(platform_name)
         available = check_platform_available(standard_name) if standard_name else "N/A"
-        logger.info(f"[关闭解析] 转换后平台名: {standard_name}, 可用: {available}")
+        logger.warning(f"[关闭解析] 转换后平台名: {standard_name}, 可用: {available}")
         if standard_name is None:
             await matcher.finish(f"未知的平台: {platform_name}")
         if not check_platform_available(standard_name):

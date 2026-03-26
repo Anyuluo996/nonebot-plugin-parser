@@ -28,12 +28,61 @@ _REFERRER_MAP: dict[str, str] = {
 }
 
 
+# curl 专用域名（httpx 会被检测拦截）
+_CURL_ONLY_DOMAINS: frozenset[str] = frozenset({
+    "img.nga.178.com",
+})
+
+
 def _auto_referer(url: str) -> str | None:
     """根据 URL 域名返回应使用的 Referer，不在白名单中返回 None"""
     try:
         return _REFERRER_MAP.get(urlparse(url).netloc)
     except Exception:
         return None
+
+
+def _use_curl(url: str) -> bool:
+    """判断该 URL 是否走 curl 下载"""
+    try:
+        return urlparse(url).netloc in _CURL_ONLY_DOMAINS
+    except Exception:
+        return False
+
+
+async def _download_by_curl(
+    url: str,
+    file_path: Path,
+    headers: dict[str, str],
+    max_retries: int = 3,
+) -> Path:
+    """使用 curl 下载文件，支持重试和 Referer"""
+    for attempt in range(max_retries + 1):
+        cmd = ["curl", "-fsSL", "-o", str(file_path)]
+        for k, v in headers.items():
+            cmd += ["-H", f"{k}: {v}"]
+        if attempt > 0:
+            wait = 2 ** (attempt - 1)
+            logger.warning(f"curl 下载失败, {wait}s 后重试 ({attempt}/{max_retries}) | url: {url}")
+            time.sleep(wait)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr_bytes = await proc.communicate()
+        if proc.returncode == 0:
+            if file_path.exists() and file_path.stat().st_size > 0:
+                return file_path
+            await safe_unlink(file_path)
+            if attempt < max_retries:
+                continue
+            raise DownloadException("curl 下载文件为空")
+        await safe_unlink(file_path)
+        if attempt == max_retries:
+            logger.exception(f"curl 下载失败 | url: {url}")
+            raise DownloadException("媒体下载失败")
+    return file_path
 
 
 class StreamDownloader:
@@ -82,6 +131,10 @@ class StreamDownloader:
         if "Referer" not in headers:
             if auto_ref := _auto_referer(url):
                 headers["Referer"] = auto_ref
+
+        # NGA 图片走 curl，绕过 httpx 特征检测
+        if _use_curl(url):
+            return await _download_by_curl(url, file_path, headers, max_retries)
 
         max_size_bytes = pconfig.max_size * 1024 * 1024
 

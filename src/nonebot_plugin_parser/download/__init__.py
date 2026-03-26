@@ -2,7 +2,7 @@ import asyncio
 from pathlib import Path
 from functools import partial
 from contextlib import contextmanager
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import aiofiles
 from httpx import HTTPError, AsyncClient
@@ -19,6 +19,20 @@ from ..utils import merge_av, safe_unlink, generate_file_name
 from ..config import pconfig
 from ..constants import COMMON_HEADER, DOWNLOAD_TIMEOUT
 from ..exception import IgnoreException, DownloadException
+
+
+# Referer 白名单：域名 → Referer 值
+_REFERRER_MAP: dict[str, str] = {
+    "img.nga.178.com": "https://nga.178.com/",
+}
+
+
+def _auto_referer(url: str) -> str | None:
+    """根据 URL 域名返回应使用的 Referer，不在白名单中返回 None"""
+    try:
+        return _REFERRER_MAP.get(urlparse(url).netloc)
+    except Exception:
+        return None
 
 
 class StreamDownloader:
@@ -63,6 +77,9 @@ class StreamDownloader:
             return file_path
 
         headers = {**self.headers, **(ext_headers or {})}
+        if "Referer" not in headers:
+            if auto_ref := _auto_referer(url):
+                headers["Referer"] = auto_ref
 
         try:
             async with self.client.stream("GET", url, headers=headers, follow_redirects=True) as response:

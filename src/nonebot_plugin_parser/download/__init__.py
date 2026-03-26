@@ -1,13 +1,10 @@
 import asyncio
-import time
 from pathlib import Path
 from functools import partial
 from contextlib import contextmanager
 from urllib.parse import urljoin, urlparse
 
 import aiofiles
-import aiofiles.os
-import curl_cffi
 from httpx import HTTPError, AsyncClient
 from nonebot import logger
 from rich.progress import (
@@ -22,7 +19,6 @@ from ..utils import merge_av, safe_unlink, generate_file_name
 from ..config import pconfig
 from ..constants import COMMON_HEADER, DOWNLOAD_TIMEOUT
 from ..exception import IgnoreException, DownloadException
-
 
 # Referer 白名单：域名 → Referer 值
 _REFERRER_MAP: dict[str, str] = {
@@ -39,7 +35,8 @@ _CURL_ONLY_DOMAINS: frozenset[str] = frozenset({
 def _auto_referer(url: str) -> str | None:
     """根据 URL 域名返回应使用的 Referer，不在白名单中返回 None"""
     try:
-        return _REFERRER_MAP.get(urlparse(url).netloc)
+        netloc = urlparse(url).netloc.rsplit(":", 1)[0]
+        return _REFERRER_MAP.get(netloc)
     except Exception:
         return None
 
@@ -47,7 +44,8 @@ def _auto_referer(url: str) -> str | None:
 def _use_curl(url: str) -> bool:
     """判断该 URL 是否走 curl 下载"""
     try:
-        return urlparse(url).netloc in _CURL_ONLY_DOMAINS
+        netloc = urlparse(url).netloc.rsplit(":", 1)[0]
+        return netloc in _CURL_ONLY_DOMAINS
     except Exception:
         return False
 
@@ -73,8 +71,12 @@ async def _download_by_curl(
             if status == 567:
                 if attempt < max_retries:
                     wait = 2 ** attempt
-                    logger.warning("媒体服务器返回 567 (疑似频率限制), %ds 后重试 (%d/%d) | url: %s", wait, attempt + 1, max_retries, url)
-                    time.sleep(wait)
+                    logger.warning(
+                        "媒体服务器返回 567 (疑似频率限制), "
+                        "%ds 后重试 (%d/%d) | url: %s",
+                        wait, attempt + 1, max_retries, url,
+                    )
+                    await asyncio.sleep(wait)
                     continue
                 await safe_unlink(file_path)
                 logger.error("567 重试耗尽 | url: %s", url)
@@ -93,7 +95,10 @@ async def _download_by_curl(
 
             if content_len > max_size_bytes:
                 await safe_unlink(file_path)
-                logger.warning("媒体 url: %s 大小 %.2f MB, 超过 %d MB, 取消下载", url, content_len / 1024 / 1024, pconfig.max_size)
+                logger.warning(
+                "媒体 url: %s 大小 %.2f MB, 超过 %d MB, 取消下载",
+                url, content_len / 1024 / 1024, pconfig.max_size,
+            )
                 raise IgnoreException
 
             async with aiofiles.open(file_path, "wb") as f:
@@ -107,8 +112,11 @@ async def _download_by_curl(
                 logger.exception("curl_cffi 下载异常 | url: %s", url)
                 raise DownloadException("媒体下载失败")
             wait = 2 ** attempt
-            logger.warning("curl_cffi 下载异常: %s, %ds 后重试 (%d/%d) | url: %s", e, wait, attempt + 1, max_retries, url)
-            time.sleep(wait)
+            logger.warning(
+                "curl_cffi 下载异常: %s, %ds 后重试 (%d/%d) | url: %s",
+                e, wait, attempt + 1, max_retries, url,
+            )
+            await asyncio.sleep(wait)
             continue
 
     return file_path
@@ -174,8 +182,12 @@ class StreamDownloader:
 
                     if status == 567 and attempt < max_retries:
                         wait = 2 ** attempt
-                        logger.warning(f"媒体服务器返回 567 (疑似频率限制), {wait}s 后重试 ({attempt + 1}/{max_retries}) | url: {url}")
-                        time.sleep(wait)
+                        logger.warning(
+                            "媒体服务器返回 567 (疑似频率限制), "
+                            "%ds 后重试 (%d/%d) | url: %s",
+                            wait, attempt + 1, max_retries, url,
+                        )
+                        await asyncio.sleep(wait)
                         continue
 
                     if status != 200:
@@ -231,8 +243,11 @@ class StreamDownloader:
                     logger.exception(f"下载失败 | url: {url}, file_path: {file_path}")
                     raise DownloadException("媒体下载失败")
                 wait = 2 ** attempt
-                logger.warning(f"下载异常, {wait}s 后重试 ({attempt + 1}/{max_retries}) | url: {url}")
-                time.sleep(wait)
+                logger.warning(
+                    "下载异常, %ds 后重试 (%d/%d) | url: %s",
+                    wait, attempt + 1, max_retries, url,
+                )
+                await asyncio.sleep(wait)
                 continue
 
         return file_path

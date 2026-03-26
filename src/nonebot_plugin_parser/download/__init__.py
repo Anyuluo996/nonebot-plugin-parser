@@ -6,6 +6,8 @@ from contextlib import contextmanager
 from urllib.parse import urljoin, urlparse
 
 import aiofiles
+import aiofiles.os
+import curl_cffi
 from httpx import HTTPError, AsyncClient
 from nonebot import logger
 from rich.progress import (
@@ -56,32 +58,55 @@ async def _download_by_curl(
     headers: dict[str, str],
     max_retries: int = 3,
 ) -> Path:
-    """使用 curl 下载文件，支持重试和 Referer"""
+    """使用 curl_cffi 下载文件（模拟浏览器绕过检测），支持重试"""
+    from curl_cffi.requests import AsyncSession
+
+    impersonate = "chrome110"
     for attempt in range(max_retries + 1):
-        cmd = ["curl", "-fsSL", "-o", str(file_path)]
-        for k, v in headers.items():
-            cmd += ["-H", f"{k}: {v}"]
-        if attempt > 0:
-            wait = 2 ** (attempt - 1)
-            logger.warning(f"curl 下载失败, {wait}s 后重试 ({attempt}/{max_retries}) | url: {url}")
+        try:
+            async with AsyncSession(impersonate=impersonate) as session:
+                max_size_bytes = pconfig.max_size * 1024 * 1024
+                async with session.get(url, headers=headers, follow_redirects=True, max_response_length=max_size_bytes) as resp:
+                    status = resp.status_code
+
+                    if status == 567 and attempt < max_retries:
+                        wait = 2 ** attempt
+                        logger.warning(f"媒体服务器返回 567 (疑似频率限制), {wait}s 后重试 ({attempt + 1}/{max_retries}) | url: {url}")
+                        time.sleep(wait)
+                        continue
+
+                    if status == 567:
+                        await safe_unlink(file_path)
+                        logger.error(f"567 重试耗尽 | url: {url}")
+                        raise DownloadException("媒体下载失败")
+
+                    if resp.content is None or len(resp.content) == 0:
+                        await safe_unlink(file_path)
+                        logger.warning(f"媒体 url: {url}, 大小为 0, 取消下载")
+                        raise IgnoreException
+
+                    content_len = len(resp.content)
+                    if content_len > max_size_bytes:
+                        await safe_unlink(file_path)
+                        size_mb = content_len / 1024 / 1024
+                        logger.warning(f"媒体 url: {url} 大小 {size_mb:.2f} MB, 超过 {pconfig.max_size} MB, 取消下载")
+                        raise IgnoreException
+
+                    async with aiofiles.open(file_path, "wb") as f:
+                        await f.write(resp.content)
+
+                    return file_path
+
+        except (curl_cffi.requests.RequestsError, OSError) as e:
+            if attempt == max_retries:
+                await safe_unlink(file_path)
+                logger.exception(f"curl_cffi 下载失败 | url: {url}")
+                raise DownloadException("媒体下载失败")
+            wait = 2 ** attempt
+            logger.warning(f"curl_cffi 下载异常: {e}, {wait}s 后重试 ({attempt + 1}/{max_retries}) | url: {url}")
             time.sleep(wait)
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        _, stderr_bytes = await proc.communicate()
-        if proc.returncode == 0:
-            if file_path.exists() and file_path.stat().st_size > 0:
-                return file_path
-            await safe_unlink(file_path)
-            if attempt < max_retries:
-                continue
-            raise DownloadException("curl 下载文件为空")
-        await safe_unlink(file_path)
-        if attempt == max_retries:
-            logger.exception(f"curl 下载失败 | url: {url}")
-            raise DownloadException("媒体下载失败")
+            continue
+
     return file_path
 
 

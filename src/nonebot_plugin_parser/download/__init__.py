@@ -1,4 +1,5 @@
 import asyncio
+import time
 from pathlib import Path
 from functools import partial
 from contextlib import contextmanager
@@ -67,6 +68,7 @@ class StreamDownloader:
         file_name: str | None = None,
         ext_headers: dict[str, str] | None = None,
         chunk_size: int = 64 * 1024,
+        max_retries: int = 3,
     ) -> Path:
         """download file by url with stream"""
         if not file_name:
@@ -81,56 +83,75 @@ class StreamDownloader:
             if auto_ref := _auto_referer(url):
                 headers["Referer"] = auto_ref
 
-        try:
-            async with self.client.stream("GET", url, headers=headers, follow_redirects=True) as response:
-                response.raise_for_status()
-                content_length_header = response.headers.get("Content-Length")
-                try:
-                    content_length = int(content_length_header) if content_length_header else None
-                except ValueError:
-                    content_length = None
+        max_size_bytes = pconfig.max_size * 1024 * 1024
 
-                max_size_bytes = pconfig.max_size * 1024 * 1024
+        for attempt in range(max_retries + 1):
+            try:
+                async with self.client.stream("GET", url, headers=headers, follow_redirects=True) as response:
+                    status = response.status_code
 
-                if content_length == 0:
-                    logger.warning(f"媒体 url: {url}, 大小为 0, 取消下载")
-                    raise IgnoreException
+                    if status == 567 and attempt < max_retries:
+                        wait = 2 ** attempt
+                        logger.warning(f"媒体服务器返回 567 (疑似频率限制), {wait}s 后重试 ({attempt + 1}/{max_retries}) | url: {url}")
+                        time.sleep(wait)
+                        continue
 
-                if content_length is not None and (file_size := content_length / 1024 / 1024) > pconfig.max_size:
-                    logger.warning(f"媒体 url: {url} 大小 {file_size:.2f} MB, 超过 {pconfig.max_size} MB, 取消下载")
-                    raise IgnoreException
+                    if status != 200:
+                        response.raise_for_status()
 
-                downloaded_size = 0
-                exceed_size_limit = False
-                with self.rich_progress(file_name, content_length) as update_progress:
-                    async with aiofiles.open(file_path, "wb") as file:
-                        async for chunk in response.aiter_bytes(chunk_size):
-                            if not chunk:
-                                continue
+                    content_length_header = response.headers.get("Content-Length")
+                    try:
+                        content_length = int(content_length_header) if content_length_header else None
+                    except ValueError:
+                        content_length = None
 
-                            downloaded_size += len(chunk)
-                            if content_length is None and downloaded_size > max_size_bytes:
-                                exceed_size_limit = True
-                                break
+                    if content_length == 0:
+                        logger.warning(f"媒体 url: {url}, 大小为 0, 取消下载")
+                        raise IgnoreException
 
-                            await file.write(chunk)
-                            update_progress(advance=len(chunk))
+                    if content_length is not None and (file_size := content_length / 1024 / 1024) > pconfig.max_size:
+                        logger.warning(f"媒体 url: {url} 大小 {file_size:.2f} MB, 超过 {pconfig.max_size} MB, 取消下载")
+                        raise IgnoreException
 
-                if exceed_size_limit:
+                    downloaded_size = 0
+                    exceed_size_limit = False
+                    with self.rich_progress(file_name, content_length) as update_progress:
+                        async with aiofiles.open(file_path, "wb") as file:
+                            async for chunk in response.aiter_bytes(chunk_size):
+                                if not chunk:
+                                    continue
+
+                                downloaded_size += len(chunk)
+                                if content_length is None and downloaded_size > max_size_bytes:
+                                    exceed_size_limit = True
+                                    break
+
+                                await file.write(chunk)
+                                update_progress(advance=len(chunk))
+
+                    if exceed_size_limit:
+                        await safe_unlink(file_path)
+                        file_size = downloaded_size / 1024 / 1024
+                        logger.warning(f"媒体 url: {url} 大小 {file_size:.2f} MB, 超过 {pconfig.max_size} MB, 取消下载")
+                        raise IgnoreException
+
+                    if downloaded_size == 0:
+                        await safe_unlink(file_path)
+                        logger.warning(f"媒体 url: {url}, 大小为 0, 取消下载")
+                        raise IgnoreException
+
+                    # 下载成功，跳出重试循环
+                    break
+
+            except HTTPError:
+                if attempt == max_retries:
                     await safe_unlink(file_path)
-                    file_size = downloaded_size / 1024 / 1024
-                    logger.warning(f"媒体 url: {url} 大小 {file_size:.2f} MB, 超过 {pconfig.max_size} MB, 取消下载")
-                    raise IgnoreException
-
-                if downloaded_size == 0:
-                    await safe_unlink(file_path)
-                    logger.warning(f"媒体 url: {url}, 大小为 0, 取消下载")
-                    raise IgnoreException
-
-        except HTTPError:
-            await safe_unlink(file_path)
-            logger.exception(f"下载失败 | url: {url}, file_path: {file_path}")
-            raise DownloadException("媒体下载失败")
+                    logger.exception(f"下载失败 | url: {url}, file_path: {file_path}")
+                    raise DownloadException("媒体下载失败")
+                wait = 2 ** attempt
+                logger.warning(f"下载异常, {wait}s 后重试 ({attempt + 1}/{max_retries}) | url: {url}")
+                time.sleep(wait)
+                continue
 
         return file_path
 

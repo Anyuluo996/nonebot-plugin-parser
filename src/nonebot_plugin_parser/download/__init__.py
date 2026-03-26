@@ -66,7 +66,7 @@ async def _download_by_curl(
         try:
             async with AsyncSession(impersonate=impersonate) as session:
                 max_size_bytes = pconfig.max_size * 1024 * 1024
-                async with session.get(url, headers=headers, follow_redirects=True, max_response_length=max_size_bytes) as resp:
+                async with session.get(url, headers=headers, allow_redirects=True) as resp:
                     status = resp.status_code
 
                     if status == 567 and attempt < max_retries:

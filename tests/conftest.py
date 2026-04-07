@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
 from pytest_asyncio import is_async_test
 
 if Path(".env.test").exists():
@@ -17,10 +18,13 @@ def pytest_collection_modifyitems(items: list[pytest.Item]):
         async_test.add_marker(session_scope_marker, append=False)
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest_asyncio.fixture(scope="session", autouse=True)
 async def init_nonebot():
     import nonebot
     from nonebot.adapters.onebot.v11 import Adapter as OnebotV11Adapter
+
+    # 初始化 NoneBot
+    nonebot.init()
 
     # 加载适配器
     driver = nonebot.get_driver()

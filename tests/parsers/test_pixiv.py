@@ -72,3 +72,45 @@ async def test_pixiv_parse():
     # 验证文本内容（简介）
     assert result.text, "简介文本为空"
     logger.info(f"简介: {result.text[:100]}...")
+
+
+@pytest.mark.asyncio
+async def test_pixiv_ugoira_parse():
+    """测试 Pixiv 动图 (Ugoira) 解析"""
+    from nonebot_plugin_parser.parsers import PixivParser
+
+    parser = PixivParser()
+
+    url = "https://www.pixiv.net/artworks/143137108"
+    keyword, searched = parser.search_url(url)
+    assert searched, "无法匹配 URL"
+
+    logger.info(f"{url} | 开始解析 Pixiv 动图")
+    result = await parser.parse(keyword, searched)
+    logger.debug(f"{url} | 解析结果: \n{result}")
+
+    # 验证基本信息
+    assert result.title, "标题为空"
+    logger.info(f"标题: {result.title}")
+
+    # 验证作者
+    assert result.author, "作者信息为空"
+    logger.info(f"作者: {result.author.name}")
+
+    # 验证图片内容（动图下载第一帧静态图）
+    img_contents = result.img_contents
+    assert img_contents, "图片内容为空"
+    logger.info(f"图片数量: {len(img_contents)}")
+
+    # 下载图片并验证
+    for img_content in img_contents:
+        path = await img_content.get_path()
+        assert path.exists(), f"图片不存在: {path}"
+        file_size = path.stat().st_size
+        assert file_size > 0, f"图片文件为空: {path}"
+        logger.info(f"动图帧下载成功: {path.name} ({file_size / 1024:.1f} KB)")
+
+    # 验证 URL
+    assert result.url, "来源链接为空"
+    assert "143137108" in result.url, f"来源链接不正确: {result.url}"
+    logger.info(f"来源链接: {result.url}")

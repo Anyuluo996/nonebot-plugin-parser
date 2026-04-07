@@ -2,6 +2,7 @@
 from .nga import NGAParser as NGAParser
 from .base import BaseParser as BaseParser
 from .acfun import AcfunParser as AcfunParser
+from .pixiv import PixivParser as PixivParser
 from .weibo import WeiBoParser as WeiBoParser
 from .douyin import DouyinParser as DouyinParser
 from .twitter import TwitterParser as TwitterParser
@@ -20,6 +21,7 @@ PARSERS: dict[str, type[BaseParser]] = {
     "bilibili": BilibiliParser,
     "kuaishou": KuaiShouParser,
     "xiaohongshu": XiaoHongShuParser,
+    "pixiv": PixivParser,
 }
 
 if YTDLP_DOWNLOADER is not None:

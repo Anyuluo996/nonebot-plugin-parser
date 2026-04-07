@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from urllib.parse import urljoin, urlparse
 
 import aiofiles
-from httpx import HTTPError, AsyncClient
+from httpx import Proxy, HTTPError, AsyncClient
 from nonebot import logger
 from rich.progress import (
     Progress,
@@ -61,11 +61,14 @@ async def _download_by_curl(
 
     max_size_bytes = pconfig.max_size * 1024 * 1024
     impersonate = "chrome110"
+    proxies = {"https": pconfig.proxy, "http": pconfig.proxy} if pconfig.proxy else None
 
     for attempt in range(max_retries + 1):
         try:
             async with AsyncSession(impersonate=impersonate) as session:
-                resp = await session.get(url, headers=headers, allow_redirects=True)
+                resp = await session.get(
+                    url, headers=headers, allow_redirects=True, proxies=proxies
+                )
             status = resp.status_code
 
             if status == 567:
@@ -128,7 +131,11 @@ class StreamDownloader:
     def __init__(self):
         self.headers: dict[str, str] = COMMON_HEADER.copy()
         self.cache_dir: Path = pconfig.cache_dir
-        self.client: AsyncClient = AsyncClient(timeout=DOWNLOAD_TIMEOUT, verify=False)
+        proxy_url = pconfig.proxy
+        proxy = Proxy(url=proxy_url) if proxy_url else None
+        self.client: AsyncClient = AsyncClient(
+            timeout=DOWNLOAD_TIMEOUT, verify=False, proxy=proxy
+        )
 
     async def close(self):
         """关闭下载器"""

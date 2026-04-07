@@ -29,8 +29,13 @@ class Config(BaseModel):
     """youtube cookies"""
     parser_xhs_ck: str | None = None
     """小红书 cookies"""
+    parser_pixiv: str = "https://pixivnow-lyart.vercel.app"
+    """PixivNow API 地址"""
+    parser_pixivR18: bool = False
+    """是否解析 R18 内容"""
     parser_proxy: str | None = None
     """代理"""
+    parser_need_upload: bool = False
     parser_need_upload: bool = False
     """是否需要上传音频文件"""
     parser_use_base64: bool = False
@@ -130,6 +135,16 @@ class Config(BaseModel):
     def xhs_ck(self) -> str | None:
         """小红书 cookies"""
         return self.parser_xhs_ck
+
+    @property
+    def pixiv(self) -> str:
+        """PixivNow API 地址"""
+        return self.parser_pixiv.rstrip("/")
+
+    @property
+    def pixivR18(self) -> bool:
+        """是否解析 R18 内容"""
+        return self.parser_pixivR18
 
     @property
     def proxy(self) -> str | None:

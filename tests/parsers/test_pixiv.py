@@ -125,7 +125,7 @@ async def test_pixiv_ugoira_parse():
 
 
 @pytest.mark.asyncio
-async def test_pixiv_render():
+async def test_pixiv_render(tmp_path):
     """测试 Pixiv 图片渲染"""
     from pathlib import Path
 
@@ -145,22 +145,27 @@ async def test_pixiv_render():
     renderer = get_renderer(result.platform.name)
     png_bytes = await renderer.render_image(result)
 
-    out_path = Path("D:/app/nonebot-plugin-parser/test_render_pixiv.png")
+    out_path = tmp_path / "test_render_pixiv.png"
     out_path.write_bytes(png_bytes)
     logger.info(f"渲染图片已保存: {out_path} ({len(png_bytes) / 1024:.1f} KB)")
 
 
 @pytest.mark.asyncio
-async def test_pixiv_html_render():
+async def test_pixiv_html_render(tmp_path):
     """测试 Pixiv HTML 渲染（需安装 nonebot-plugin-htmlrender）"""
     from pathlib import Path
 
     from nonebot_plugin_parser.parsers import PixivParser
 
     try:
+        from playwright.async_api import async_playwright
+    except Exception:
+        pytest.skip("playwright not available")
+
+    try:
         from nonebot_plugin_htmlrender import template_to_pic
     except Exception:
-        pytest.skip("nonebot-plugin-htmlrender not available")
+        pytest.skip("nonebot_plugin_htmlrender not available")
 
     from nonebot_plugin_parser.renders import resources
     from nonebot_plugin_parser.renders.base import pconfig
@@ -194,6 +199,6 @@ async def test_pixiv_html_render():
         pages={"viewport": {"width": 800, "height": 100}},
     )
 
-    out_path = Path("D:/app/nonebot-plugin-parser/test_render_pixiv_html.png")
+    out_path = tmp_path / "test_render_pixiv_html.png"
     out_path.write_bytes(png_bytes)
     logger.info(f"HTML 渲染图片已保存: {out_path} ({len(png_bytes) / 1024:.1f} KB)")

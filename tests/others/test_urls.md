@@ -95,3 +95,9 @@ nga:
 - https://nga.178.com/read.php?tid=45263995
 - https://ngabbs.com/read.php\?tid=45263995
 - https://bbs.nga.cn/read.php\?tid=45263995
+
+pixiv:
+静态插画：
+- https://www.pixiv.net/artworks/143155116
+动图（Ugoira）：
+- https://www.pixiv.net/artworks/143137108

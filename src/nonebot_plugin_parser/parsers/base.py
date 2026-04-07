@@ -166,13 +166,15 @@ class BaseParser:
         name: str,
         avatar_url: str | None = None,
         description: str | None = None,
+        avatar_headers: dict[str, str] | None = None,
     ):
         """创建作者对象"""
         from .data import Author
 
         avatar_task = None
         if avatar_url:
-            avatar_task = DOWNLOADER.download_img(avatar_url, ext_headers=self.headers)
+            ext_headers = avatar_headers or self.headers
+            avatar_task = DOWNLOADER.download_img(avatar_url, ext_headers=ext_headers)
         return Author(name=name, avatar=avatar_task, description=description)
 
     def create_video_content(

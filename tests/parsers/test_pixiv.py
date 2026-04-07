@@ -122,3 +122,78 @@ async def test_pixiv_ugoira_parse():
     assert result.url, "来源链接为空"
     assert "143137108" in result.url, f"来源链接不正确: {result.url}"
     logger.info(f"来源链接: {result.url}")
+
+
+@pytest.mark.asyncio
+async def test_pixiv_render():
+    """测试 Pixiv 图片渲染"""
+    from pathlib import Path
+
+    from nonebot_plugin_parser.parsers import PixivParser
+    from nonebot_plugin_parser.renders import get_renderer
+
+    parser = PixivParser()
+
+    url = "https://www.pixiv.net/artworks/143155116"
+    keyword, searched = parser.search_url(url)
+    result = await parser.parse(keyword, searched)
+
+    # 等待下载完成
+    await result.ensure_downloads_complete()
+
+    # 渲染图片（使用已初始化的 renderer singleton）
+    renderer = get_renderer(result.platform.name)
+    png_bytes = await renderer.render_image(result)
+
+    out_path = Path("D:/app/nonebot-plugin-parser/test_render_pixiv.png")
+    out_path.write_bytes(png_bytes)
+    logger.info(f"渲染图片已保存: {out_path} ({len(png_bytes) / 1024:.1f} KB)")
+
+
+@pytest.mark.asyncio
+async def test_pixiv_html_render():
+    """测试 Pixiv HTML 渲染（需安装 nonebot-plugin-htmlrender）"""
+    from pathlib import Path
+
+    from nonebot_plugin_parser.parsers import PixivParser
+
+    try:
+        from nonebot_plugin_htmlrender import template_to_pic
+    except Exception:
+        pytest.skip("nonebot-plugin-htmlrender not available")
+
+    from nonebot_plugin_parser.renders import resources
+    from nonebot_plugin_parser.renders.base import pconfig
+
+    parser = PixivParser()
+
+    url = "https://www.pixiv.net/artworks/143155116"
+    keyword, searched = parser.search_url(url)
+    result = await parser.parse(keyword, searched)
+
+    # 等待所有下载完成（包括头像）
+    await result.ensure_downloads_complete()
+
+    logo = resources.RESOURCES_DIR / f"{result.platform.name}.png"
+    logo_path = logo.as_uri() if logo.exists() else None
+    font = pconfig.custom_font or resources.DEFAULT_FONT_PATH
+    font_path = font.as_uri() if font.exists() else None
+    play_button = resources.DEFAULT_VIDEO_BUTTON_PATH.as_uri()
+
+    templates_dir = Path(__file__).parent.parent.parent / "src" / "nonebot_plugin_parser" / "renders" / "templates"
+
+    png_bytes = await template_to_pic(
+        template_path=str(templates_dir),
+        template_name="card.html.jinja",
+        templates={
+            "result": result,
+            "logo": logo_path,
+            "font": font_path,
+            "play_button": play_button,
+        },
+        pages={"viewport": {"width": 800, "height": 100}},
+    )
+
+    out_path = Path("D:/app/nonebot-plugin-parser/test_render_pixiv_html.png")
+    out_path.write_bytes(png_bytes)
+    logger.info(f"HTML 渲染图片已保存: {out_path} ({len(png_bytes) / 1024:.1f} KB)")

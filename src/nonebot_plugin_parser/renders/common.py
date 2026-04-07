@@ -136,10 +136,13 @@ class CommonRenderer(ImageRenderer):
 
     @classmethod
     def load_resources(cls):
-        """加载资源"""
+        """加载资源（幂等，可安全重复调用）"""
+        if getattr(cls, "_resources_loaded", False):
+            return
         cls._load_fonts()
         cls._load_platform_logos()
         cls._load_other_resources()
+        cls._resources_loaded = True
 
     @classmethod
     def _load_fonts(cls):
@@ -176,6 +179,7 @@ class CommonRenderer(ImageRenderer):
 
     @override
     async def render_image(self, result: ParseResult) -> bytes:
+        self.load_resources()
         image = await self._create_card_image(result)
         output = BytesIO()
         image.save(output, format="PNG")

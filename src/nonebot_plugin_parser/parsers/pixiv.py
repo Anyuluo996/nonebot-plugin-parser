@@ -33,9 +33,17 @@ class PixivUgoiraMetaResponse(Struct):
     body: dict[str, Any] = {}
 
 
+class PixivUserResponse(Struct):
+    """PixivNow /ajax/user/{userId}?full=1 响应"""
+
+    error: bool = False
+    body: dict[str, Any] = {}
+
+
 pages_decoder = Decoder(PixivPagesResponse)
 illust_decoder = Decoder(PixivIllustResponse)
 ugoira_decoder = Decoder(PixivUgoiraMetaResponse)
+user_decoder = Decoder(PixivUserResponse)
 
 
 class PixivParser(BaseParser):
@@ -121,7 +129,7 @@ class PixivParser(BaseParser):
         if illust_type == 2:
             return await self._fetch_ugoira(base_url, illust_id, body)
 
-        return self._build_result(body, pages_data.body, illust_id)
+        return await self._build_result(body, pages_data.body, illust_id, base_url)
 
     async def _fetch_ugoira(
         self,
@@ -183,7 +191,11 @@ class PixivParser(BaseParser):
                 )
             ],
             url=url,
-            author=self._build_author(body),
+            author=await self._build_author(
+                body.get("userId", "") or body.get("user", {}).get("userId", ""),
+                body.get("userName", "未知作者"),
+                base_url,
+            ),
         )
 
     async def _convert_ugoira_to_gif(
@@ -197,11 +209,37 @@ class PixivParser(BaseParser):
         zip_path = await zip_task
         return await convert_ugoira_to_gif(zip_path, frames)
 
-    def _build_author(self, body: dict[str, Any]):
+    async def _build_author(
+        self,
+        user_id: str,
+        user_name: str,
+        base_url: str,
+    ):
         """构建作者信息"""
-        user = body.get("user", {}) or {}
-        author_name = user.get("userName", "未知作者")
-        return self.create_author(author_name)
+        avatar_url = None
+        # 尝试获取用户头像
+        if user_id:
+            proxy = self._get_proxy()
+            async with AsyncClient(
+                headers=self.headers,
+                timeout=self.timeout,
+                proxy=proxy,
+            ) as client:
+                try:
+                    user_resp = await client.get(
+                        f"{base_url}/ajax/user/{user_id}?full=1"
+                    )
+                    user_resp.raise_for_status()
+                    user_data = user_decoder.decode(user_resp.content)
+                    if not user_data.error:
+                        avatar_url = user_data.body.get("image")
+                except Exception:
+                    pass  # 头像获取失败不影响主流程
+
+        return self.create_author(
+            user_name or "未知作者",
+            avatar_url=avatar_url,
+        )
 
     def _build_info_text(self, body: dict[str, Any], illust_id: str) -> str:
         """构建简介文本"""
@@ -230,11 +268,12 @@ class PixivParser(BaseParser):
 
         return "\n".join(info_parts)
 
-    def _build_result(
+    async def _build_result(
         self,
         body: dict,
         pages: list[dict],
         illust_id: str,
+        base_url: str,
     ) -> ParseResult:
         """构建解析结果（静态插画）"""
         from ..download import DOWNLOADER
@@ -299,5 +338,5 @@ class PixivParser(BaseParser):
             text=text,
             contents=contents,
             url=url,
-            author=self.create_author(author_name),
+            author=await self._build_author(author_id, author_name, base_url),
         )

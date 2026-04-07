@@ -35,6 +35,7 @@
 | youtube | 链接(含短链)                      | ✅​  | ❌️  | ✅​  |
 | tiktok  | 链接                              | ✅​  | ❌️  | ❌️  |
 | twitter | 链接                              | ✅​  | ✅​  | ❌️  |
+| Pixiv   | 链接(含 artworks)                 | ❌️  | ✅​  | ❌️  |
 
 支持的链接，可参考 [测试链接](https://github.com/fllesser/nonebot-plugin-parser/blob/master/tests/others/test_urls.md)
 
@@ -215,7 +216,16 @@ parser_xhs_ck=""
 # [可选] Youtube Cookie, Youtube 视频因人机检测下载失败，需填
 parser_ytb_ck=""
 
-# [可选] 代理, 仅作用于 youtube, tiktok 解析
+# [可选] PixivNow API 地址，支持自建或第三方 PixivNow 部署
+# 参考 https://github.com/journey-ad/Pixiv-Illustration-Resolver
+# 国内访问 Pixiv 需要代理，API 请求和图片下载均会使用 parser_proxy 配置的代理
+parser_pixiv=""
+
+# [可选] 是否允许解析 R18 / R-18G 内容
+# 默认为 false（不解析），设为 true 允许解析
+parser_pixivR18=false
+
+# [可选] 代理, 仅作用于 youtube, tiktok, Pixiv 解析
 # 推特解析会自动读取环境变量中的 http_proxy / https_proxy(代理软件通常会自动设置)
 parser_proxy=None
 
@@ -235,7 +245,7 @@ parser_max_size=90
 
 # [可选] 全局禁止的解析
 # 示例 parser_disabled_platforms=["bilibili", "douyin"] 表示禁止了哔哩哔哩和抖音
-# 可选值: ["bilibili", "douyin", "kuaishou", "twitter", "youtube", "acfun", "tiktok", "weibo", "xiaohongshu"]
+# 可选值: ["bilibili", "douyin", "kuaishou", "twitter", "youtube", "acfun", "tiktok", "weibo", "xiaohongshu", "pixiv"]
 parser_disabled_platforms='["twitter"]'
 
 # [可选] 渲染器类型

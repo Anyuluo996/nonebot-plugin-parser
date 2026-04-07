@@ -1,6 +1,7 @@
 import re
 import asyncio
 import hashlib
+import zipfile
 import importlib.util
 from typing import Any, TypeVar
 from pathlib import Path
@@ -9,6 +10,13 @@ from urllib.parse import urlparse
 
 from anyio import Path as AnyioPath
 from nonebot import logger
+
+try:
+    from PIL import Image
+
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
 
 K = TypeVar("K")
 V = TypeVar("V")
@@ -349,3 +357,67 @@ def write_json_to_data(data: dict[str, Any] | str, file_name: str):
 def is_module_available(module_name: str) -> bool:
     """检查模块是否可用"""
     return importlib.util.find_spec(module_name) is not None
+
+
+async def convert_ugoira_to_gif(
+    zip_path: Path,
+    frames: list[dict[str, Any]],
+    output_path: Path | None = None,
+) -> Path:
+    """将 Pixiv 动图 ZIP 包转换为 GIF
+
+    Args:
+        zip_path: 动图 ZIP 文件路径
+        frames: 帧信息列表，如 [{"file": "000000.jpg", "delay": 1000}, ...]
+                delay 单位为毫秒
+        output_path: 输出 GIF 路径，默认为 ZIP 同目录的 .gif 文件
+
+    Returns:
+        Path: 输出 GIF 文件路径
+    """
+    if not PIL_AVAILABLE:
+        raise RuntimeError("PIL (Pillow) 未安装，无法转换动图为 GIF")
+
+    if output_path is None:
+        output_path = zip_path.with_suffix(".gif")
+
+    logger.info(f"转换动图到 GIF: {zip_path.name} -> {output_path.name}")
+
+    if not zip_path.exists():
+        raise FileNotFoundError(f"动图 ZIP 文件不存在: {zip_path}")
+
+    images: list[Image.Image] = []
+    durations: list[int] = []
+
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        for frame in frames:
+            file_name = frame.get("file", "")
+            delay_ms = int(frame.get("delay", 100))
+            if not file_name:
+                continue
+            try:
+                with zf.open(file_name) as img_file:
+                    img = Image.open(img_file)
+                    images.append(img.convert("P"))
+                    # PIL ImageSequence 会用到 duration 参数
+                    durations.append(max(delay_ms // 10, 1))
+            except KeyError:
+                logger.warning(f"动图帧文件不存在于 ZIP 中: {file_name}")
+
+    if not images:
+        raise RuntimeError(f"动图 ZIP 中未找到任何帧: {zip_path}")
+
+    if len(images) == 1:
+        images[0].save(output_path, save_all=True, durations=durations)
+    else:
+        images[0].save(
+            output_path,
+            save_all=True,
+            append_images=images[1:],
+            duration=durations,
+            loop=0,
+            optimize=False,
+        )
+
+    logger.success(f"动图 GIF 转换成功: {output_path.name}, {fmt_size(output_path)}")
+    return output_path

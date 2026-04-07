@@ -1,4 +1,5 @@
 import re
+import asyncio
 from typing import Any, ClassVar
 
 from httpx import Proxy, AsyncClient
@@ -6,7 +7,7 @@ from msgspec import Struct
 from msgspec.json import Decoder
 
 from .base import BaseParser, handle
-from .data import Platform, ParseResult, ImageContent
+from .data import Platform, ParseResult, ImageContent, DynamicContent
 from ..config import pconfig as pconfig
 from ..constants import PlatformEnum
 
@@ -25,8 +26,16 @@ class PixivPagesResponse(Struct):
     body: list[dict[str, Any]] = []
 
 
+class PixivUgoiraMetaResponse(Struct):
+    """PixivNow /ajax/illust/{id}/ugoira_meta 响应"""
+
+    error: bool = False
+    body: dict[str, Any] = {}
+
+
 pages_decoder = Decoder(PixivPagesResponse)
 illust_decoder = Decoder(PixivIllustResponse)
+ugoira_decoder = Decoder(PixivUgoiraMetaResponse)
 
 
 class PixivParser(BaseParser):
@@ -107,7 +116,119 @@ class PixivParser(BaseParser):
             if pages_data.error:
                 raise ParseException(f"Pixiv 图片获取失败: {illust_id}")
 
+        # 判断是否为动图
+        illust_type = body.get("illustType", 0)
+        if illust_type == 2:
+            return await self._fetch_ugoira(base_url, illust_id, body)
+
         return self._build_result(body, pages_data.body, illust_id)
+
+    async def _fetch_ugoira(
+        self,
+        base_url: str,
+        illust_id: str,
+        body: dict[str, Any],
+    ) -> ParseResult:
+        """获取 Pixiv 动图 (Ugoira) 详情"""
+        from ..exception import ParseException
+
+        proxy = self._get_proxy()
+
+        # 获取动图元数据（ZIP URL 和帧信息）
+        async with AsyncClient(
+            headers=self.headers,
+            timeout=self.timeout,
+            proxy=proxy,
+        ) as client:
+            ugoira_resp = await client.get(
+                f"{base_url}/ajax/illust/{illust_id}/ugoira_meta"
+            )
+            ugoira_resp.raise_for_status()
+            ugoira_data = ugoira_decoder.decode(ugoira_resp.content)
+
+            if ugoira_data.error:
+                raise ParseException(f"Pixiv 动图元数据获取失败: {illust_id}")
+
+            ugoira_body = ugoira_data.body
+            # 优先使用原画 ZIP
+            zip_url = ugoira_body.get("originalSrc") or ugoira_body.get("src", "")
+            frames: list[dict[str, Any]] = ugoira_body.get("frames", [])
+
+        if not zip_url or not frames:
+            raise ParseException(f"Pixiv 动图数据不完整: {illust_id}")
+
+        # 下载 ZIP 文件
+        pixiv_headers = {
+            **self.headers,
+            "Referer": "https://www.pixiv.net/",
+        }
+        zip_task = self.downloader.download_file(
+            zip_url,
+            ext_headers=pixiv_headers,
+        )
+
+        # 构建简介文本（复用通用逻辑）
+        text = self._build_info_text(body, illust_id)
+        url = f"https://www.pixiv.net/artworks/{illust_id}"
+
+        return self.result(
+            title=body.get("title", ""),
+            text=text,
+            contents=[
+                DynamicContent(
+                    path_task=zip_task,
+                    gif_path=asyncio.create_task(
+                        self._convert_ugoira_to_gif(zip_task, frames)
+                    ),
+                )
+            ],
+            url=url,
+            author=self._build_author(body),
+        )
+
+    async def _convert_ugoira_to_gif(
+        self,
+        zip_task,
+        frames: list[dict[str, Any]],
+    ):
+        """将下载的动图 ZIP 转换为 GIF"""
+        from ..utils import convert_ugoira_to_gif
+
+        zip_path = await zip_task
+        return await convert_ugoira_to_gif(zip_path, frames)
+
+    def _build_author(self, body: dict[str, Any]):
+        """构建作者信息"""
+        user = body.get("user", {}) or {}
+        author_name = user.get("userName", "未知作者")
+        return self.create_author(author_name)
+
+    def _build_info_text(self, body: dict[str, Any], illust_id: str) -> str:
+        """构建简介文本"""
+        # 标签
+        tags_data = body.get("tags", {}).get("tags", []) or []
+        tags = [
+            t.get("tag", "")
+            for t in tags_data
+            if t.get("tag") and not t.get("locked")
+        ]
+        tag_text = " ".join(f"#{t}" for t in tags) if tags else ""
+
+        info_parts: list[str] = []
+        if title := body.get("title"):
+            info_parts.append(f"标题: {title}")
+        if user := body.get("user", {}):
+            info_parts.append(f"作者: {user.get('userName', '未知作者')}")
+        if upload_date := body.get("uploadDate"):
+            info_parts.append(f"发布时间: {upload_date}")
+        if tag_text:
+            info_parts.append(f"标签: {tag_text}")
+        if description := body.get("description"):
+            desc_short = description[:200] + "..." if len(description) > 200 else description
+            info_parts.append(f"简介: {desc_short}")
+        info_parts.append(f"来源: https://www.pixiv.net/artworks/{illust_id}")
+
+        return "\n".join(info_parts)
 
     def _build_result(
         self,
@@ -115,22 +236,18 @@ class PixivParser(BaseParser):
         pages: list[dict],
         illust_id: str,
     ) -> ParseResult:
-        """构建解析结果"""
+        """构建解析结果（静态插画）"""
         from ..download import DOWNLOADER
 
-        # 标题
         title = body.get("title", "")
-
-        # 描述
         description = body.get("description", "") or ""
-
-        # 作者信息
         user = body.get("user", {}) or {}
         author_name = user.get("userName", "未知作者")
         author_id = user.get("userId", "")
         author_url = (
             f"https://www.pixiv.net/users/{author_id}" if author_id else None
         )
+        upload_date = body.get("uploadDate", "")
 
         # 标签
         tags_data = body.get("tags", {}).get("tags", []) or []
@@ -141,14 +258,10 @@ class PixivParser(BaseParser):
         ]
         tag_text = " ".join(f"#{t}" for t in tags) if tags else ""
 
-        # 发布时间
-        upload_date = body.get("uploadDate", "")
-
         # 图片 URL
         image_urls = [page.get("urls", {}).get("original") for page in pages]
         image_urls = [url for url in image_urls if url]
 
-        # 创建图片内容（直接发送图片，不渲染预览图）
         # Pixiv 图片需要 Referer 才能下载
         pixiv_headers = {
             **self.headers,

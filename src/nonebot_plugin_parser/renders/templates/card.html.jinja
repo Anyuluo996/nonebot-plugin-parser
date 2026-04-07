@@ -527,9 +527,11 @@
         {% endif %}
         {% elif result.dynamic_contents %}
         {% set dc = result.dynamic_contents[0] %}
-        {% if dc.cover_path_uri %}
+        {# 优先展示 GIF，其次用缩略图 #}
+        {% set dyn_img_uri = dc.gif_path_uri if dc.gif_path_uri else dc.cover_path_uri %}
+        {% if dyn_img_uri %}
         <div class="cover-wrapper">
-          <img src="{{ dc.cover_path_uri | safe }}" class="cover-img" alt="cover" />
+          <img src="{{ dyn_img_uri | safe }}" class="cover-img" alt="封面" />
           {% if play_button %}
           <div class="play-button">
             <img src="{{ play_button | safe }}" alt="play" />

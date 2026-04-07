@@ -118,6 +118,15 @@ async def test_pixiv_ugoira_parse():
         assert gif_size > 0, f"GIF 文件为空: {gif_path}"
         logger.info(f"动图 GIF 生成成功: {gif_path.name} ({gif_size / 1024:.1f} KB)")
 
+    # 验证 GIF 首帧缩略图提取
+    for dyn_content in dyn_contents:
+        thumb = await dyn_content.get_thumbnail_path()
+        assert thumb is not None, "缩略图路径为空"
+        assert thumb.exists(), f"缩略图不存在: {thumb}"
+        thumb_size = thumb.stat().st_size
+        assert thumb_size > 0, f"缩略图为空: {thumb}"
+        logger.info(f"动图缩略图提取成功: {thumb.name} ({thumb_size / 1024:.1f} KB)")
+
     # 验证 URL
     assert result.url, "来源链接为空"
     assert "143137108" in result.url, f"来源链接不正确: {result.url}"

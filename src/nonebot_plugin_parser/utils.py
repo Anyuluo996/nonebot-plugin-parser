@@ -421,3 +421,47 @@ async def convert_ugoira_to_gif(
 
     logger.success(f"动图 GIF 转换成功: {output_path.name}, {fmt_size(output_path)}")
     return output_path
+
+
+def extract_ugoira_thumbnail(
+    zip_path: Path,
+    frames: list[dict[str, Any]],
+) -> Path:
+    """从 Ugoira ZIP 中提取第一帧作为缩略图
+
+    Args:
+        zip_path: 动图 ZIP 文件路径
+        frames: 帧信息列表，如 [{"file": "000000.jpg", "delay": 1000}, ...]
+
+    Returns:
+        Path: 缩略图文件路径 (.thumb.jpg)
+    """
+    if not PIL_AVAILABLE:
+        raise RuntimeError("PIL (Pillow) 未安装，无法提取缩略图")
+
+    thumb_path = zip_path.with_name(f"{zip_path.stem}.thumb.jpg")
+    if thumb_path.exists():
+        return thumb_path
+
+    if not zip_path.exists():
+        raise FileNotFoundError(f"动图 ZIP 文件不存在: {zip_path}")
+
+    first_frame = frames[0] if frames else None
+    if not first_frame:
+        raise RuntimeError(f"动图帧信息为空: {zip_path}")
+
+    file_name = first_frame.get("file", "")
+    if not file_name:
+        raise RuntimeError(f"动图第一帧文件名无效: {zip_path}")
+
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        try:
+            with zf.open(file_name) as img_file:
+                img = Image.open(img_file)
+                img = img.convert("RGB")
+                img.save(thumb_path, "JPEG", quality=85)
+        except KeyError:
+            raise RuntimeError(f"动图第一帧文件不存在于 ZIP 中: {file_name}")
+
+    logger.debug(f"提取动图缩略图: {thumb_path.name}")
+    return thumb_path

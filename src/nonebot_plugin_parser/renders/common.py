@@ -12,7 +12,7 @@ from apilmoji import Apilmoji, EmojiCDNSource
 from apilmoji.core import get_font_height
 
 from . import resources
-from .base import ParseResult, ImageContent, ImageRenderer
+from .base import ParseResult, ImageContent, ImageRenderer, DynamicContent
 from ..config import pconfig
 
 Color = tuple[int, int, int]
@@ -384,6 +384,11 @@ class CommonRenderer(ImageRenderer):
             await self._render_image_grid(ctx)
             return
 
+        # 动图缩略图网格
+        if ctx.result.dynamic_contents:
+            await self._render_dynamic_grid(ctx)
+            return
+
         # 图文内容
         if graphics := ctx.result.graphics:
             for text_or_img in graphics:
@@ -456,6 +461,73 @@ class CommonRenderer(ImageRenderer):
                 img_x = self.PADDING + spacing + i * (img_size + spacing)
                 img_y = current_y + spacing + (max_h - img.height) // 2
                 ctx.image.paste(img, (img_x, img_y))
+
+                # +N 指示器
+                if has_more and row == rows - 1 and i == len(row_imgs) - 1:
+                    remaining = total - self.MAX_IMAGES_DISPLAY
+                    self._draw_more_indicator(
+                        ctx.image,
+                        img_x,
+                        current_y + spacing,
+                        img.width,
+                        img.height,
+                        remaining,
+                    )
+
+            current_y += spacing + max_h
+
+        ctx.y_pos = current_y + spacing + self.SECTION_SPACING
+
+    async def _render_dynamic_grid(self, ctx: RenderContext) -> None:
+        """渲染动图缩略图网格（提取首帧）"""
+        contents = ctx.result.dynamic_contents
+        total = len(contents)
+        has_more = total > self.MAX_IMAGES_DISPLAY
+        display_contents = contents[: self.MAX_IMAGES_DISPLAY]
+
+        images: list[PILImage] = []
+        for content in display_contents:
+            try:
+                thumb_path = await content.get_thumbnail_path()
+                if thumb_path and thumb_path.exists():
+                    img = self._load_grid_image(thumb_path, ctx.content_width, len(display_contents))
+                    if img:
+                        images.append(img)
+            except Exception:
+                continue
+
+        if not images:
+            return
+
+        count = len(images)
+        cols = 1 if count == 1 else (2 if count in (2, 4) else self.IMAGE_GRID_COLS)
+        rows = (count + cols - 1) // cols
+
+        if count == 1:
+            img_size = ctx.content_width
+        else:
+            num_gaps = cols + 1
+            max_size = self.IMAGE_2_GRID_SIZE if cols == 2 else self.IMAGE_3_GRID_SIZE
+            img_size = min((ctx.content_width - self.IMAGE_GRID_SPACING * num_gaps) // cols, max_size)
+
+        spacing = self.IMAGE_GRID_SPACING
+        current_y = ctx.y_pos
+
+        for row in range(rows):
+            row_start = row * cols
+            row_imgs = images[row_start : row_start + cols]
+            max_h = max(img.height for img in row_imgs)
+
+            for i, img in enumerate(row_imgs):
+                img_x = self.PADDING + spacing + i * (img_size + spacing)
+                img_y = current_y + spacing + (max_h - img.height) // 2
+                ctx.image.paste(img, (img_x, img_y))
+
+                # 视频播放按钮
+                btn_size = 80
+                btn_x = img_x + (img.width - btn_size) // 2
+                btn_y = img_y + (img.height - btn_size) // 2
+                ctx.image.paste(self.video_button_image, (btn_x, btn_y), self.video_button_image)
 
                 # +N 指示器
                 if has_more and row == rows - 1 and i == len(row_imgs) - 1:

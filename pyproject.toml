@@ -1,6 +1,6 @@
 [project]
 name = "nonebot-plugin-parser"
-version = "2.5.0"
+version = "2.6.0"
 description = "NoneBot2 链接分享解析 Alconna 版, 现支持B站|抖音|快手|微博|小红书|YouTube|TikTok|Twitter|AcFun|NGA"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -77,6 +77,7 @@ dev = [
   "nonebot2[fastapi]>=2.4.3,<3.0.0",
   "nonebot-adapter-onebot>=2.4.6",
   "ruff>=0.15.0,<1.0.0",
+  "bump-my-version>=0.10.0",
   { include-group = "extras" },
   { include-group = "test" },
 ]
@@ -118,7 +119,7 @@ nonebug = { git = "https://github.com/nonebot/nonebug", rev = "master" }
 [tool.bumpversion]
 tag = true
 commit = true
-current_version = "2.5.0"
+current_version = "2.6.0"
 message = "release: bump vesion from {current_version} to {new_version}"
 
 [[tool.bumpversion.files]]

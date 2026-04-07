@@ -97,6 +97,8 @@ class DynamicContent(MediaContent):
 
     gif_path: Path | Task[Path] | None = None
     cover: Path | Task[Path] | None = None
+    frames: list[dict[str, Any]] | None = None
+    """Ugoira 帧信息列表 [{"file": "000000.jpg", "delay": 1000}]，用于提取缩略图"""
 
     async def get_gif_path(self) -> Path | None:
         if self.gif_path is None:
@@ -118,6 +120,33 @@ class DynamicContent(MediaContent):
     def gif_path_uri(self):
         if isinstance(self.gif_path, Path):
             return self.gif_path.as_uri()
+
+    async def get_thumbnail_path(self) -> Path | None:
+        """获取缩略图路径：优先封面，其次 GIF 首帧，最后从 ZIP 提取首帧"""
+        # 1. 优先使用封面
+        cover = await self.get_cover_path()
+        if cover and cover.exists():
+            return cover
+
+        # 2. 其次使用 GIF 缩略图（从 GIF 第一帧提取）
+        gif_path = await self.get_gif_path()
+        if gif_path and gif_path.exists() and self.frames:
+            try:
+                from ..utils import extract_ugoira_thumbnail
+                return extract_ugoira_thumbnail(gif_path.with_suffix(".zip"), self.frames)
+            except Exception:
+                pass
+
+        # 3. 最后从 ZIP 提取第一帧
+        zip_path = await self.get_path()
+        if zip_path.exists() and self.frames:
+            try:
+                from ..utils import extract_ugoira_thumbnail
+                return extract_ugoira_thumbnail(zip_path, self.frames)
+            except Exception:
+                pass
+
+        return None
 
     @property
     def cover_path_uri(self):
@@ -249,8 +278,10 @@ class ParseResult:
     async def cover_path(self) -> Path | None:
         """获取封面路径"""
         for cont in self.contents:
-            if isinstance(cont, (VideoContent, DynamicContent)):
+            if isinstance(cont, VideoContent):
                 return await cont.get_cover_path()
+            if isinstance(cont, DynamicContent):
+                return await cont.get_thumbnail_path()
         return None
 
     def _iterate_download_coros(self, img_only: bool = False) -> Iterator[Awaitable[Path | None]]:

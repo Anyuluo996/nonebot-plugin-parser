@@ -188,6 +188,7 @@ class PixivParser(BaseParser):
                     gif_path=asyncio.create_task(
                         self._convert_ugoira_to_gif(zip_task, frames)
                     ),
+                    frames=frames,
                 )
             ],
             url=url,

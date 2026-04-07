@@ -97,18 +97,26 @@ async def test_pixiv_ugoira_parse():
     assert result.author, "作者信息为空"
     logger.info(f"作者: {result.author.name}")
 
-    # 验证图片内容（动图下载第一帧静态图）
-    img_contents = result.img_contents
-    assert img_contents, "图片内容为空"
-    logger.info(f"图片数量: {len(img_contents)}")
+    # 验证动图内容
+    dyn_contents = result.dynamic_contents
+    assert dyn_contents, "动图内容为空"
+    logger.info(f"动图内容数量: {len(dyn_contents)}")
 
-    # 下载图片并验证
-    for img_content in img_contents:
-        path = await img_content.get_path()
-        assert path.exists(), f"图片不存在: {path}"
+    # 下载并验证
+    for dyn_content in dyn_contents:
+        path = await dyn_content.get_path()
+        assert path.exists(), f"动图 ZIP 不存在: {path}"
         file_size = path.stat().st_size
-        assert file_size > 0, f"图片文件为空: {path}"
-        logger.info(f"动图帧下载成功: {path.name} ({file_size / 1024:.1f} KB)")
+        assert file_size > 0, f"动图 ZIP 文件为空: {path}"
+        logger.info(f"动图 ZIP 下载成功: {path.name} ({file_size / 1024 / 1024:.1f} MB)")
+
+        # 验证 GIF 转换
+        gif_path = await dyn_content.get_gif_path()
+        assert gif_path is not None, "GIF 路径为空"
+        assert gif_path.exists(), f"GIF 文件不存在: {gif_path}"
+        gif_size = gif_path.stat().st_size
+        assert gif_size > 0, f"GIF 文件为空: {gif_path}"
+        logger.info(f"动图 GIF 生成成功: {gif_path.name} ({gif_size / 1024:.1f} KB)")
 
     # 验证 URL
     assert result.url, "来源链接为空"

@@ -87,14 +87,14 @@ class PixivParser(BaseParser):
 
             body = illust_data.body
 
-            # 检查 R18 限制
+            # 检查 R18/R-18G 限制
             x_restrict = body.get("xRestrict", 0)
-            is_r18 = x_restrict == 2
-            if is_r18 and not self._is_r18_allowed():
+            is_restricted = x_restrict >= 1
+            if is_restricted and not self._is_r18_allowed():
                 from ..exception import IgnoreException
 
                 raise IgnoreException(
-                    "R18 内容已禁用，请开启 par_pixivR18"
+                    "R18/R-18G 内容已禁用，请开启 par_pixivR18"
                 )
 
             # 获取图片页面列表

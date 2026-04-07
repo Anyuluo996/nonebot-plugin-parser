@@ -12,7 +12,7 @@ from apilmoji import Apilmoji, EmojiCDNSource
 from apilmoji.core import get_font_height
 
 from . import resources
-from .base import ParseResult, ImageContent, ImageRenderer, DynamicContent
+from .base import ParseResult, ImageContent, ImageRenderer
 from ..config import pconfig
 
 Color = tuple[int, int, int]

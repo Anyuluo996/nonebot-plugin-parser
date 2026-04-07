@@ -217,7 +217,6 @@ class PixivParser(BaseParser):
     ):
         """构建作者信息"""
         avatar_url = None
-        # 尝试获取用户头像
         if user_id:
             proxy = self._get_proxy()
             async with AsyncClient(
@@ -234,11 +233,12 @@ class PixivParser(BaseParser):
                     if not user_data.error:
                         avatar_url = user_data.body.get("image")
                 except Exception:
-                    pass  # 头像获取失败不影响主流程
+                    pass
 
         return self.create_author(
             user_name or "未知作者",
             avatar_url=avatar_url,
+            avatar_headers={**self.headers, "Referer": "https://www.pixiv.net/"},
         )
 
     def _build_info_text(self, body: dict[str, Any], illust_id: str) -> str:
@@ -281,8 +281,8 @@ class PixivParser(BaseParser):
         title = body.get("title", "")
         description = body.get("description", "") or ""
         user = body.get("user", {}) or {}
-        author_name = user.get("userName", "未知作者")
-        author_id = user.get("userId", "")
+        author_name = body.get("userName", "") or user.get("userName", "未知作者")
+        author_id = body.get("userId", "") or user.get("userId", "")
         author_url = (
             f"https://www.pixiv.net/users/{author_id}" if author_id else None
         )

@@ -3,7 +3,8 @@ from nonebot import logger
 
 
 class FakeStreamResponse:
-    def __init__(self, *, headers: dict[str, str], chunks: list[bytes]):
+    def __init__(self, *, status_code: int = 200, headers: dict[str, str], chunks: list[bytes]):
+        self.status_code = status_code
         self.headers = headers
         self._chunks = chunks
 
@@ -22,11 +23,26 @@ class FakeStreamResponse:
 
 
 class FakeStreamClient:
-    def __init__(self, response: FakeStreamResponse):
-        self.response = response
+    def __init__(
+        self,
+        *,
+        status_code: int = 200,
+        headers: dict[str, str],
+        chunks: list[bytes],
+        responses: list[tuple[int, dict[str, str], list[bytes]]] | None = None,
+    ):
+        self._responses = responses or [(status_code, headers, chunks)]
+        self.calls = 0
 
     def stream(self, method: str, url: str, headers: dict[str, str] | None = None, follow_redirects: bool = True):
-        return self.response
+        index = min(self.calls, len(self._responses) - 1)
+        status_code, response_headers, chunks = self._responses[index]
+        self.calls += 1
+        return FakeStreamResponse(
+            status_code=status_code,
+            headers=response_headers,
+            chunks=chunks,
+        )
 
 
 def test_generate_file_name():
@@ -78,7 +94,7 @@ async def test_download_file_without_content_length(tmp_path):
     await downloader.client.aclose()
     downloader.cache_dir = tmp_path
     downloader.client = FakeStreamClient(
-        FakeStreamResponse(headers={"Transfer-Encoding": "chunked"}, chunks=[b"hello", b"world"])
+        status_code=200, headers={"Transfer-Encoding": "chunked"}, chunks=[b"hello", b"world"],
     )
 
     path = await downloader.download_file("https://example.com/video.mp4")
@@ -97,7 +113,7 @@ async def test_download_file_without_content_length_respects_max_size(tmp_path, 
     await downloader.client.aclose()
     downloader.cache_dir = tmp_path
     downloader.client = FakeStreamClient(
-        FakeStreamResponse(headers={}, chunks=[b"a" * (1024 * 1024), b"b"])
+        status_code=200, headers={}, chunks=[b"a" * (1024 * 1024), b"b"],
     )
     monkeypatch.setattr(pconfig, "parser_max_size", 1)
 
@@ -105,3 +121,51 @@ async def test_download_file_without_content_length_respects_max_size(tmp_path, 
         await downloader.download_file("https://example.com/large-video.mp4")
 
     assert not any(tmp_path.iterdir())
+
+
+@pytest.mark.asyncio
+async def test_download_file_follows_redirect_without_losing_success_path(tmp_path):
+    from nonebot_plugin_parser.download import StreamDownloader
+
+    downloader = StreamDownloader()
+    await downloader.client.aclose()
+    downloader.cache_dir = tmp_path
+    downloader.client = FakeStreamClient(
+        headers={},
+        chunks=[],
+        responses=[
+            (302, {"Location": "https://cdn.example.com/video.mp4"}, []),
+            (200, {"Transfer-Encoding": "chunked"}, [b"hello", b"world"]),
+        ],
+    )
+
+    path = await downloader.download_file("https://example.com/video.mp4")
+
+    assert downloader.client.calls == 2
+    assert path.exists()
+    assert path.read_bytes() == b"helloworld"
+
+
+@pytest.mark.asyncio
+async def test_download_file_retries_after_redirected_567(tmp_path):
+    from nonebot_plugin_parser.download import StreamDownloader
+
+    downloader = StreamDownloader()
+    await downloader.client.aclose()
+    downloader.cache_dir = tmp_path
+    downloader.client = FakeStreamClient(
+        headers={},
+        chunks=[],
+        responses=[
+            (302, {"Location": "https://cdn.example.com/video.mp4"}, []),
+            (567, {}, []),
+            (302, {"Location": "https://cdn.example.com/video.mp4"}, []),
+            (200, {"Transfer-Encoding": "chunked"}, [b"hello", b"world"]),
+        ],
+    )
+
+    path = await downloader.download_file("https://example.com/video.mp4")
+
+    assert downloader.client.calls == 4
+    assert path.exists()
+    assert path.read_bytes() == b"helloworld"

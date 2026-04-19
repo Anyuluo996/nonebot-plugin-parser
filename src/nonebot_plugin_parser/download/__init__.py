@@ -30,6 +30,18 @@ _REFERRER_MAP: dict[str, str] = {
 _CURL_ONLY_DOMAINS: frozenset[str] = frozenset({
     "img.nga.178.com",
 })
+_REDIRECT_STATUSES: frozenset[int] = frozenset({301, 302, 303, 307, 308})
+
+
+class _RetryDownload(Exception):
+    """Signal that the current request should be retried."""
+
+
+class _FollowRedirect(Exception):
+    """Signal that the current request should continue with a redirect target."""
+
+    def __init__(self, location: str):
+        self.location = location
 
 
 def _auto_referer(url: str) -> str | None:
@@ -167,7 +179,6 @@ class StreamDownloader:
         if not file_name:
             file_name = generate_file_name(url)
         file_path = self.cache_dir / file_name
-        # 如果文件存在，则直接返回
         if file_path.exists():
             return file_path
 
@@ -176,86 +187,130 @@ class StreamDownloader:
             if auto_ref := _auto_referer(url):
                 headers["Referer"] = auto_ref
 
-        # NGA 图片走 curl，绕过 httpx 特征检测
         if _use_curl(url):
             return await _download_by_curl(url, file_path, headers, max_retries)
 
         max_size_bytes = pconfig.max_size * 1024 * 1024
+        max_redirects = 10
 
         for attempt in range(max_retries + 1):
+            redirect_count = 0
+            current_url = url
             try:
-                async with self.client.stream("GET", url, headers=headers, follow_redirects=True) as response:
-                    status = response.status_code
-
-                    if status == 567 and attempt < max_retries:
-                        wait = 2 ** attempt
-                        logger.warning(
-                            "媒体服务器返回 567 (疑似频率限制), "
-                            "%ds 后重试 (%d/%d) | url: %s",
-                            wait, attempt + 1, max_retries, url,
-                        )
-                        await asyncio.sleep(wait)
-                        continue
-
-                    if status != 200:
-                        response.raise_for_status()
-
-                    content_length_header = response.headers.get("Content-Length")
+                while True:
                     try:
-                        content_length = int(content_length_header) if content_length_header else None
-                    except ValueError:
-                        content_length = None
+                        async with self.client.stream(
+                            "GET", current_url, headers=headers, follow_redirects=False,
+                        ) as response:
+                            status = response.status_code
 
-                    if content_length == 0:
-                        logger.warning(f"媒体 url: {url}, 大小为 0, 取消下载")
-                        raise IgnoreException
+                            if status == 567:
+                                if attempt == max_retries:
+                                    await safe_unlink(file_path)
+                                    logger.error("567 重试耗尽 | url: %s", current_url)
+                                    raise DownloadException("媒体下载失败")
+                                raise _RetryDownload
 
-                    if content_length is not None and (file_size := content_length / 1024 / 1024) > pconfig.max_size:
-                        logger.warning(f"媒体 url: {url} 大小 {file_size:.2f} MB, 超过 {pconfig.max_size} MB, 取消下载")
-                        raise IgnoreException
+                            if status in _REDIRECT_STATUSES:
+                                redirect_url = response.headers.get("Location")
+                                if redirect_url:
+                                    redirect_count += 1
+                                    if redirect_count > max_redirects:
+                                        await safe_unlink(file_path)
+                                        logger.error(
+                                            "重定向次数超过上限 %d | url: %s",
+                                            max_redirects, current_url,
+                                        )
+                                        raise DownloadException("媒体下载失败")
+                                    raise _FollowRedirect(urljoin(current_url, redirect_url))
 
-                    downloaded_size = 0
-                    exceed_size_limit = False
-                    with self.rich_progress(file_name, content_length) as update_progress:
-                        async with aiofiles.open(file_path, "wb") as file:
-                            async for chunk in response.aiter_bytes(chunk_size):
-                                if not chunk:
-                                    continue
+                            if status != 200:
+                                response.raise_for_status()
 
-                                downloaded_size += len(chunk)
-                                if content_length is None and downloaded_size > max_size_bytes:
-                                    exceed_size_limit = True
-                                    break
+                            content_length_header = response.headers.get("Content-Length")
+                            try:
+                                content_length = (
+                                    int(content_length_header) if content_length_header else None
+                                )
+                            except ValueError:
+                                content_length = None
 
-                                await file.write(chunk)
-                                update_progress(advance=len(chunk))
+                            if content_length == 0:
+                                logger.warning(
+                                    "媒体 url: %s, 大小为 0, 取消下载", current_url,
+                                )
+                                raise IgnoreException
 
-                    if exceed_size_limit:
-                        await safe_unlink(file_path)
-                        file_size = downloaded_size / 1024 / 1024
-                        logger.warning(f"媒体 url: {url} 大小 {file_size:.2f} MB, 超过 {pconfig.max_size} MB, 取消下载")
-                        raise IgnoreException
+                            if content_length is not None and (
+                                file_size := content_length / 1024 / 1024
+                            ) > pconfig.max_size:
+                                logger.warning(
+                                    "媒体 url: %s 大小 %.2f MB, 超过 %d MB, 取消下载",
+                                    current_url, file_size, pconfig.max_size,
+                                )
+                                raise IgnoreException
 
-                    if downloaded_size == 0:
-                        await safe_unlink(file_path)
-                        logger.warning(f"媒体 url: {url}, 大小为 0, 取消下载")
-                        raise IgnoreException
+                            downloaded_size = 0
+                            exceed_size_limit = False
+                            with self.rich_progress(
+                                file_name, content_length,
+                            ) as update_progress:
+                                async with aiofiles.open(file_path, "wb") as file:
+                                    async for chunk in response.aiter_bytes(chunk_size):
+                                        if not chunk:
+                                            continue
 
-                    # 下载成功，跳出重试循环
-                    break
+                                        downloaded_size += len(chunk)
+                                        if content_length is None and downloaded_size > max_size_bytes:
+                                            exceed_size_limit = True
+                                            break
+
+                                        await file.write(chunk)
+                                        update_progress(advance=len(chunk))
+
+                            if exceed_size_limit:
+                                await safe_unlink(file_path)
+                                file_size = downloaded_size / 1024 / 1024
+                                logger.warning(
+                                    "媒体 url: %s 大小 %.2f MB, 超过 %d MB, 取消下载",
+                                    current_url, file_size, pconfig.max_size,
+                                )
+                                raise IgnoreException
+
+                            if downloaded_size == 0:
+                                await safe_unlink(file_path)
+                                logger.warning(
+                                    "媒体 url: %s, 大小为 0, 取消下载", current_url,
+                                )
+                                raise IgnoreException
+
+                            return file_path
+                    except _FollowRedirect as redirect:
+                        current_url = redirect.location
+                        continue
+            except _RetryDownload:
+                wait = 2 ** attempt
+                logger.warning(
+                    "媒体服务器返回 567 (疑似频率限制), "
+                    "%ds 后重试 (%d/%d) | url: %s",
+                    wait, attempt + 1, max_retries, current_url,
+                )
+                await asyncio.sleep(wait)
+                continue
 
             except HTTPError:
                 if attempt == max_retries:
                     await safe_unlink(file_path)
-                    logger.exception(f"下载失败 | url: {url}, file_path: {file_path}")
+                    logger.exception(
+                        "下载失败 | url: %s, file_path: %s", current_url, file_path,
+                    )
                     raise DownloadException("媒体下载失败")
                 wait = 2 ** attempt
                 logger.warning(
                     "下载异常, %ds 后重试 (%d/%d) | url: %s",
-                    wait, attempt + 1, max_retries, url,
+                    wait, attempt + 1, max_retries, current_url,
                 )
                 await asyncio.sleep(wait)
-                continue
 
         return file_path
 

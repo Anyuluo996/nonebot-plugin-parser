@@ -111,9 +111,9 @@ async def _download_by_curl(
             if content_len > max_size_bytes:
                 await safe_unlink(file_path)
                 logger.warning(
-                "媒体 url: %s 大小 %.2f MB, 超过 %d MB, 取消下载",
-                url, content_len / 1024 / 1024, pconfig.max_size,
-            )
+                    "媒体 url: %s 大小 %.2f MB, 超过 %d MB, 取消下载",
+                    url, content_len / 1024 / 1024, pconfig.max_size,
+                )
                 raise IgnoreException
 
             async with aiofiles.open(file_path, "wb") as f:

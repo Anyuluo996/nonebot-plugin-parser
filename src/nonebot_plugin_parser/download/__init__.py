@@ -30,6 +30,20 @@ _REFERRER_MAP: dict[str, str] = {
 _CURL_ONLY_DOMAINS: frozenset[str] = frozenset({
     "img.nga.178.com",
 })
+
+# 不走代理的域名（抖音 CDN 在国内，走代理反而容易 TLS 握手失败）
+_NO_PROXY_DOMAINS: frozenset[str] = frozenset({
+    "douyinvod.com",
+    "douyinvod.net",
+    "bytevcloud.com",
+    "bytevc.com",
+    "douyinpic.com",
+    "pstatp.com",
+    "byteimg.com",
+    "amemv.com",
+    "bytecdn.cn",
+    "douyinstatic.com",
+})
 _REDIRECT_STATUSES: frozenset[int] = frozenset({301, 302, 303, 307, 308})
 
 
@@ -62,6 +76,15 @@ def _use_curl(url: str) -> bool:
         return False
 
 
+def _bypass_proxy(url: str) -> bool:
+    """判断该 URL 是否应绕过代理（抖音等国内 CDN）"""
+    try:
+        netloc = urlparse(url).netloc.rsplit(":", 1)[0]
+        return any(netloc == d or netloc.endswith("." + d) for d in _NO_PROXY_DOMAINS)
+    except Exception:
+        return False
+
+
 async def _download_by_curl(
     url: str,
     file_path: Path,
@@ -88,30 +111,30 @@ async def _download_by_curl(
                     wait = 2 ** attempt
                     logger.warning(
                         "媒体服务器返回 567 (疑似频率限制), "
-                        "%ds 后重试 (%d/%d) | url: %s",
+                        "{}s 后重试 ({}/{}) | url: {}",
                         wait, attempt + 1, max_retries, url,
                     )
                     await asyncio.sleep(wait)
                     continue
                 await safe_unlink(file_path)
-                logger.error("567 重试耗尽 | url: %s", url)
+                logger.error("567 重试耗尽 | url: {}", url)
                 raise DownloadException("媒体下载失败")
 
             if status != 200:
                 await safe_unlink(file_path)
-                logger.error("curl_cffi 下载失败 HTTP %d | url: %s", status, url)
+                logger.error("curl_cffi 下载失败 HTTP {} | url: {}", status, url)
                 raise DownloadException("媒体下载失败")
 
             content_len = len(resp.content)
             if content_len == 0:
                 await safe_unlink(file_path)
-                logger.warning("媒体 url: %s, 大小为 0, 取消下载", url)
+                logger.warning("媒体 url: {}, 大小为 0, 取消下载", url)
                 raise IgnoreException
 
             if content_len > max_size_bytes:
                 await safe_unlink(file_path)
                 logger.warning(
-                    "媒体 url: %s 大小 %.2f MB, 超过 %d MB, 取消下载",
+                    "媒体 url: {} 大小 {:.2f} MB, 超过 {} MB, 取消下载",
                     url, content_len / 1024 / 1024, pconfig.max_size,
                 )
                 raise IgnoreException
@@ -124,11 +147,11 @@ async def _download_by_curl(
         except Exception as e:
             if attempt == max_retries:
                 await safe_unlink(file_path)
-                logger.exception("curl_cffi 下载异常 | url: %s", url)
+                logger.exception("curl_cffi 下载异常 | url: {}", url)
                 raise DownloadException("媒体下载失败")
             wait = 2 ** attempt
             logger.warning(
-                "curl_cffi 下载异常: %s, %ds 后重试 (%d/%d) | url: %s",
+                "curl_cffi 下载异常: {}, {}s 后重试 ({}/{}) | url: {}",
                 e, wait, attempt + 1, max_retries, url,
             )
             await asyncio.sleep(wait)
@@ -148,10 +171,14 @@ class StreamDownloader:
         self.client: AsyncClient = AsyncClient(
             timeout=DOWNLOAD_TIMEOUT, verify=False, proxy=proxy
         )
+        self.direct_client: AsyncClient = AsyncClient(
+            timeout=DOWNLOAD_TIMEOUT, verify=False,
+        )
 
     async def close(self):
         """关闭下载器"""
         await self.client.aclose()
+        await self.direct_client.aclose()
 
     @contextmanager
     def rich_progress(self, desc: str, total: int | None = None):
@@ -190,6 +217,7 @@ class StreamDownloader:
         if _use_curl(url):
             return await _download_by_curl(url, file_path, headers, max_retries)
 
+        client = self.direct_client if _bypass_proxy(url) else self.client
         max_size_bytes = pconfig.max_size * 1024 * 1024
         max_redirects = 10
 
@@ -199,7 +227,7 @@ class StreamDownloader:
             try:
                 while True:
                     try:
-                        async with self.client.stream(
+                        async with client.stream(
                             "GET", current_url, headers=headers, follow_redirects=False,
                         ) as response:
                             status = response.status_code
@@ -207,7 +235,7 @@ class StreamDownloader:
                             if status == 567:
                                 if attempt == max_retries:
                                     await safe_unlink(file_path)
-                                    logger.error("567 重试耗尽 | url: %s", current_url)
+                                    logger.error("567 重试耗尽 | url: {}", current_url)
                                     raise DownloadException("媒体下载失败")
                                 raise _RetryDownload
 
@@ -218,7 +246,7 @@ class StreamDownloader:
                                     if redirect_count > max_redirects:
                                         await safe_unlink(file_path)
                                         logger.error(
-                                            "重定向次数超过上限 %d | url: %s",
+                                            "重定向次数超过上限 {} | url: {}",
                                             max_redirects, current_url,
                                         )
                                         raise DownloadException("媒体下载失败")
@@ -237,7 +265,7 @@ class StreamDownloader:
 
                             if content_length == 0:
                                 logger.warning(
-                                    "媒体 url: %s, 大小为 0, 取消下载", current_url,
+                                    "媒体 url: {}, 大小为 0, 取消下载", current_url,
                                 )
                                 raise IgnoreException
 
@@ -245,7 +273,7 @@ class StreamDownloader:
                                 file_size := content_length / 1024 / 1024
                             ) > pconfig.max_size:
                                 logger.warning(
-                                    "媒体 url: %s 大小 %.2f MB, 超过 %d MB, 取消下载",
+                                    "媒体 url: {} 大小 {:.2f} MB, 超过 {} MB, 取消下载",
                                     current_url, file_size, pconfig.max_size,
                                 )
                                 raise IgnoreException
@@ -272,7 +300,7 @@ class StreamDownloader:
                                 await safe_unlink(file_path)
                                 file_size = downloaded_size / 1024 / 1024
                                 logger.warning(
-                                    "媒体 url: %s 大小 %.2f MB, 超过 %d MB, 取消下载",
+                                    "媒体 url: {} 大小 {:.2f} MB, 超过 {} MB, 取消下载",
                                     current_url, file_size, pconfig.max_size,
                                 )
                                 raise IgnoreException
@@ -280,7 +308,7 @@ class StreamDownloader:
                             if downloaded_size == 0:
                                 await safe_unlink(file_path)
                                 logger.warning(
-                                    "媒体 url: %s, 大小为 0, 取消下载", current_url,
+                                    "媒体 url: {}, 大小为 0, 取消下载", current_url,
                                 )
                                 raise IgnoreException
 
@@ -292,7 +320,7 @@ class StreamDownloader:
                 wait = 2 ** attempt
                 logger.warning(
                     "媒体服务器返回 567 (疑似频率限制), "
-                    "%ds 后重试 (%d/%d) | url: %s",
+                    "{}s 后重试 ({}/{}) | url: {}",
                     wait, attempt + 1, max_retries, current_url,
                 )
                 await asyncio.sleep(wait)
@@ -302,12 +330,12 @@ class StreamDownloader:
                 if attempt == max_retries:
                     await safe_unlink(file_path)
                     logger.exception(
-                        "下载失败 | url: %s, file_path: %s", current_url, file_path,
+                        "下载失败 | url: {}, file_path: {}", current_url, file_path,
                     )
                     raise DownloadException("媒体下载失败")
                 wait = 2 ** attempt
                 logger.warning(
-                    "下载异常, %ds 后重试 (%d/%d) | url: %s",
+                    "下载异常, {}s 后重试 ({}/{}) | url: {}",
                     wait, attempt + 1, max_retries, current_url,
                 )
                 await asyncio.sleep(wait)
@@ -402,7 +430,8 @@ class StreamDownloader:
                 total_size = 0
                 with self.rich_progress(desc=video_name) as update_progress:
                     for url in await self._get_m3u8_slices(m3u8_url):
-                        async with self.client.stream("GET", url, headers=ext_headers) as response:
+                        slice_client = self.direct_client if _bypass_proxy(url) else self.client
+                        async with slice_client.stream("GET", url, headers=ext_headers) as response:
                             async for chunk in response.aiter_bytes(chunk_size=1024 * 1024):
                                 await f.write(chunk)
                                 total_size += len(chunk)
@@ -417,7 +446,8 @@ class StreamDownloader:
     async def _get_m3u8_slices(self, m3u8_url: str):
         """获取 m3u8 分片"""
 
-        response = await self.client.get(m3u8_url)
+        m3u8_client = self.direct_client if _bypass_proxy(m3u8_url) else self.client
+        response = await m3u8_client.get(m3u8_url)
         response.raise_for_status()
 
         slices_text = response.text

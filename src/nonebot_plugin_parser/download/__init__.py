@@ -26,9 +26,22 @@ _REFERRER_MAP: dict[str, str] = {
 }
 
 
-# curl 专用域名（httpx 会被检测拦截）
+# curl 专用域名（httpx 会被检测拦截或受代理环境变量影响导致 TLS 握手失败）
 _CURL_ONLY_DOMAINS: frozenset[str] = frozenset({
     "img.nga.178.com",
+    # 抖音 CDN 域名（国内 CDN，走代理会导致 TLS 握手失败）
+    "qtaeixd.com",
+    "qtlde.com",
+    "douyinvod.com",
+    "douyinvod.net",
+    "bytevcloud.com",
+    "bytevc.com",
+    "douyinpic.com",
+    "pstatp.com",
+    "byteimg.com",
+    "amemv.com",
+    "bytecdn.cn",
+    "douyinstatic.com",
 })
 
 # 不走代理的域名（抖音 CDN 在国内，走代理反而容易 TLS 握手失败）
@@ -172,7 +185,7 @@ class StreamDownloader:
             timeout=DOWNLOAD_TIMEOUT, verify=False, proxy=proxy
         )
         self.direct_client: AsyncClient = AsyncClient(
-            timeout=DOWNLOAD_TIMEOUT, verify=False,
+            timeout=DOWNLOAD_TIMEOUT, verify=False, proxy=None,
         )
 
     async def close(self):

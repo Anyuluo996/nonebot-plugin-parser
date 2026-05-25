@@ -84,7 +84,7 @@ def _use_curl(url: str) -> bool:
     """判断该 URL 是否走 curl 下载"""
     try:
         netloc = urlparse(url).netloc.rsplit(":", 1)[0]
-        return netloc in _CURL_ONLY_DOMAINS
+        return any(netloc == d or netloc.endswith("." + d) for d in _CURL_ONLY_DOMAINS)
     except Exception:
         return False
 

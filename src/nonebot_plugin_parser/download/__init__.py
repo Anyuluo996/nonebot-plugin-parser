@@ -109,7 +109,13 @@ async def _download_by_curl(
 
     max_size_bytes = pconfig.max_size * 1024 * 1024
     impersonate = "chrome110"
-    proxies = {"https": pconfig.proxy, "http": pconfig.proxy} if pconfig.proxy else None
+    # CDN 域名不走代理（国内 CDN 走代理会导致 TLS 握手失败）
+    if _bypass_proxy(url):
+        proxies = {"https": "", "http": ""}
+    elif pconfig.proxy:
+        proxies = {"https": pconfig.proxy, "http": pconfig.proxy}
+    else:
+        proxies = {"https": "", "http": ""}
 
     for attempt in range(max_retries + 1):
         try:
@@ -185,7 +191,7 @@ class StreamDownloader:
             timeout=DOWNLOAD_TIMEOUT, verify=False, proxy=proxy
         )
         self.direct_client: AsyncClient = AsyncClient(
-            timeout=DOWNLOAD_TIMEOUT, verify=False, proxy=None,
+            timeout=DOWNLOAD_TIMEOUT, verify=False, trust_env=False,
         )
 
     async def close(self):
@@ -227,7 +233,9 @@ class StreamDownloader:
             if auto_ref := _auto_referer(url):
                 headers["Referer"] = auto_ref
 
-        if _use_curl(url):
+        use_curl_result = _use_curl(url)
+        logger.debug("_use_curl check | url: {}, result: {}", url[:80], use_curl_result)
+        if use_curl_result:
             return await _download_by_curl(url, file_path, headers, max_retries)
 
         client = self.direct_client if _bypass_proxy(url) else self.client

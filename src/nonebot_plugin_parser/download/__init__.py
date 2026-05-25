@@ -29,6 +29,8 @@ _REFERRER_MAP: dict[str, str] = {
 # curl 专用域名（httpx 会被检测拦截或受代理环境变量影响导致 TLS 握手失败）
 _CURL_ONLY_DOMAINS: frozenset[str] = frozenset({
     "img.nga.178.com",
+    # 抖音视频播放域名（重定向至 CDN）
+    "snssdk.com",
     # 抖音 CDN 域名（国内 CDN，走代理会导致 TLS 握手失败）
     "qtaeixd.com",
     "qtlde.com",
@@ -46,6 +48,7 @@ _CURL_ONLY_DOMAINS: frozenset[str] = frozenset({
 
 # 不走代理的域名（抖音 CDN 在国内，走代理反而容易 TLS 握手失败）
 _NO_PROXY_DOMAINS: frozenset[str] = frozenset({
+    "snssdk.com",
     "qtaeixd.com",
     "qtlde.com",
     "douyinvod.com",

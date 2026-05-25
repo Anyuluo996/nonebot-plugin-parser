@@ -46,6 +46,8 @@ _CURL_ONLY_DOMAINS: frozenset[str] = frozenset({
 
 # 不走代理的域名（抖音 CDN 在国内，走代理反而容易 TLS 握手失败）
 _NO_PROXY_DOMAINS: frozenset[str] = frozenset({
+    "qtaeixd.com",
+    "qtlde.com",
     "douyinvod.com",
     "douyinvod.net",
     "bytevcloud.com",
@@ -234,7 +236,7 @@ class StreamDownloader:
                 headers["Referer"] = auto_ref
 
         use_curl_result = _use_curl(url)
-        logger.debug("_use_curl check | url: {}, result: {}", url[:80], use_curl_result)
+        logger.info("_use_curl check | url: {}, result: {}", url[:80], use_curl_result)
         if use_curl_result:
             return await _download_by_curl(url, file_path, headers, max_retries)
 

@@ -86,3 +86,33 @@ async def test_dynamic():
 
     await asyncio.gather(*[test_parse_dynamic(dynamic_url) for dynamic_url in dynamic_urls])
     logger.success("B站动态解析成功")
+
+
+def test_fallback_select_streams_filters_none_codecs():
+    from bilibili_api.video import VideoQuality, VideoCodecs, AudioQuality
+    from bilibili_api.video import VideoStreamDownloadURL, AudioStreamDownloadURL
+    from nonebot_plugin_parser.parsers.bilibili import BilibiliParser
+
+    v_good = VideoStreamDownloadURL(url="https://example.com/v1", video_quality=VideoQuality._480P, video_codecs=VideoCodecs.AVC)
+    v_none_codecs = VideoStreamDownloadURL(url="https://example.com/v2", video_quality=VideoQuality._480P, video_codecs=None)
+    v_low = VideoStreamDownloadURL(url="https://example.com/v3", video_quality=VideoQuality._360P, video_codecs=VideoCodecs.AV1)
+    a_high = AudioStreamDownloadURL(url="https://example.com/a1", audio_quality=AudioQuality._192K)
+    a_low = AudioStreamDownloadURL(url="https://example.com/a2", audio_quality=AudioQuality._64K)
+
+    # 混合 codecs=None 的流，应过滤并选最佳
+    result = BilibiliParser._fallback_select_streams([v_none_codecs, v_good, v_low, a_high, a_low])
+    assert result[0] is v_good
+    assert result[1] is a_high
+
+    # 全部 codecs=None → 返回 None
+    result = BilibiliParser._fallback_select_streams([v_none_codecs, a_high])
+    assert result[0] is None
+    assert result[1] is a_high
+
+    # 质量上限过滤
+    result = BilibiliParser._fallback_select_streams([v_good, v_low], max_quality=VideoQuality._360P.value)
+    assert result[0] is v_low
+
+    # 空列表
+    result = BilibiliParser._fallback_select_streams([])
+    assert result == [None, None]

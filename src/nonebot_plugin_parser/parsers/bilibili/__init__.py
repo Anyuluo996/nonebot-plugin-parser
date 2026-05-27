@@ -333,12 +333,23 @@ class BilibiliParser(BaseParser):
         # 获取下载数据
         download_url_data = await video.get_download_url(page_index=page_index)
         detecter = VideoDownloadURLDataDetecter(download_url_data)
-        streams = detecter.detect_best_streams(
-            video_max_quality=pconfig.bili_video_quality,
-            codecs=pconfig.bili_video_codes,
-            no_dolby_video=True,
-            no_hdr=True,
-        )
+        try:
+            streams = detecter.detect_best_streams(
+                video_max_quality=pconfig.bili_video_quality,
+                codecs=pconfig.bili_video_codes,
+                no_dolby_video=True,
+                no_hdr=True,
+            )
+        except AttributeError:
+            # bilibili_api detect_best_streams 排序时 codecs=None 的流会触发 AttributeError
+            # 降级: 用 detect() 获取全部流，手动过滤再选最佳
+            logger.debug("detect_best_streams() failed (likely codecs=None), using fallback")
+            all_streams = detecter.detect()
+            streams = self._fallback_select_streams(
+                all_streams,
+                max_quality=pconfig.bili_video_quality,
+            )
+
         video_stream = streams[0]
         if not isinstance(video_stream, VideoStreamDownloadURL):
             raise DownloadException("未找到可下载的视频流")
@@ -349,6 +360,24 @@ class BilibiliParser(BaseParser):
             return video_stream.url, None
         logger.debug(f"音频流质量: {audio_stream.audio_quality.name}")
         return video_stream.url, audio_stream.url
+
+    @staticmethod
+    def _fallback_select_streams(
+        all_streams: list,
+        max_quality: int = 120,
+    ) -> list:
+        """bilibili_api detect_best_streams 降级: 过滤 codecs=None 的视频流后选最佳"""
+        from bilibili_api.video import AudioStreamDownloadURL, VideoStreamDownloadURL
+
+        video_streams = [
+            s for s in all_streams
+            if isinstance(s, VideoStreamDownloadURL) and s.video_codecs is not None and s.video_quality.value <= max_quality
+        ]
+        audio_streams = [s for s in all_streams if isinstance(s, AudioStreamDownloadURL)]
+
+        best_video = max(video_streams, key=lambda s: s.video_quality.value, default=None)
+        best_audio = max(audio_streams, key=lambda s: s.audio_quality.value, default=None)
+        return [best_video, best_audio]
 
     def _save_credential(self):
         """存储哔哩哔哩登录凭证"""

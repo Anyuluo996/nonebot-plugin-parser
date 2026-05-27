@@ -109,8 +109,8 @@ def test_fallback_select_streams_filters_none_codecs():
     assert result[0] is None
     assert result[1] is a_high
 
-    # 质量上限过滤
-    result = BilibiliParser._fallback_select_streams([v_good, v_low], max_quality=VideoQuality._360P.value)
+    # 质量上限过滤 (传枚举)
+    result = BilibiliParser._fallback_select_streams([v_good, v_low], max_quality=VideoQuality._360P)
     assert result[0] is v_low
 
     # 空列表

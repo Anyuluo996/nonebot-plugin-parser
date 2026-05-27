@@ -364,14 +364,15 @@ class BilibiliParser(BaseParser):
     @staticmethod
     def _fallback_select_streams(
         all_streams: list,
-        max_quality: int = 120,
+        max_quality=120,
     ) -> list:
         """bilibili_api detect_best_streams 降级: 过滤 codecs=None 的视频流后选最佳"""
         from bilibili_api.video import AudioStreamDownloadURL, VideoStreamDownloadURL
 
+        max_qv = max_quality.value if hasattr(max_quality, "value") else max_quality
         video_streams = [
             s for s in all_streams
-            if isinstance(s, VideoStreamDownloadURL) and s.video_codecs is not None and s.video_quality.value <= max_quality
+            if isinstance(s, VideoStreamDownloadURL) and s.video_codecs is not None and s.video_quality.value <= max_qv
         ]
         audio_streams = [s for s in all_streams if isinstance(s, AudioStreamDownloadURL)]
 

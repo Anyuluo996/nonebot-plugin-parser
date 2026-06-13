@@ -20,7 +20,7 @@ from ..base import (
     handle,
     pconfig,
 )
-from ..data import Platform, ImageContent, MediaContent
+from ..data import Platform, ParseResult, ImageContent, MediaContent
 from ..cookie import ck2dict
 from .dynamic import DynamicInfo
 
@@ -42,13 +42,53 @@ class BilibiliParser(BaseParser):
 
     @handle("b23.tv", r"b23\.tv/[A-Za-z\d\._?%&+\-=/#]+")
     @handle("bili2233", r"bili2233\.cn/[A-Za-z\d\._?%&+\-=/#]+")
-    async def _parse_short_link(self, searched: Match[str]):
-        """解析短链"""
+    async def _parse_short_link(self, searched: Match[str]) -> ParseResult:
+        """解析短链
+
+        重定向后若匹配不到 handler（会员购商城/漫画等子站），走浏览器截图兜底。
+        """
         url = f"https://{searched.group(0)}"
         logger.info(f"B站短链解析: {url}")
-        result = await self.parse_with_redirect(url)
+        redirect_url = await self.get_redirect_url(url)
+        if redirect_url == url:
+            raise ParseException(f"无法重定向 URL: {url}")
+        logger.info(f"URL 重定向: {url} -> {redirect_url}")
+        try:
+            keyword, searched_new = self.search_url(redirect_url)
+        except ParseException:
+            logger.info(f"重定向 URL 无匹配 handler，走浏览器截图: {redirect_url}")
+            return await self._screenshot_fallback(redirect_url)
+        logger.info(f"重定向 URL 匹配到: {keyword}")
+        result = await self.parse(keyword, searched_new)
         logger.info(f"短链重定向解析完成: {result.title}")
         return result
+
+    async def _screenshot_fallback(self, target_url: str) -> ParseResult:
+        """短链重定向到无 handler 页面（会员购/漫画等）时，浏览器截图兜底"""
+        from ...browser import screenshot_url, is_browser_available
+        from ...exception import TipException
+
+        if not pconfig.screenshot:
+            # 关闭截图兜底则保留原"无法匹配"行为
+            raise ParseException(f"无法匹配 {target_url}")
+        if not is_browser_available():
+            raise TipException(
+                "B站短链指向暂不支持解析的页面，且未安装截图依赖\n"
+                '请安装: uv add "nonebot-plugin-parser[htmlrender]"'
+                " 并执行 playwright install chromium\n"
+                f"链接: {target_url}"
+            )
+        try:
+            path, title = await screenshot_url(target_url, full_page=pconfig.screenshot_full_page)
+        except Exception as e:
+            logger.exception(f"页面截图失败: {target_url}")
+            raise ParseException(f"页面截图失败: {e}")
+        return self.result(
+            url=target_url,
+            title=title or "B站链接截图",
+            contents=[ImageContent(path)],
+            extra={"content_type": "网页截图"},
+        )
 
     @handle("BV", r"^(?P<bvid>BV[0-9a-zA-Z]{10})(?:\s)?(?P<page_num>\d{1,3})?$")
     @handle("/BV", r"bilibili\.com(?:/video)?/(?P<bvid>BV[0-9a-zA-Z]{10})")

@@ -70,6 +70,10 @@ class Config(BaseModel):
     """Pilmoji 表情样式"""
     parser_force_prefix: str = ""
     """解析前缀，用于强制触发解析"""
+    parser_screenshot: bool = True
+    """短链重定向到无 handler 页面时，是否启用浏览器截图兜底（需安装 [htmlrender] extras）"""
+    parser_screenshot_full_page: bool = False
+    """浏览器截图是否整页（默认仅首屏）"""
 
     @property
     def nickname(self) -> str:
@@ -205,6 +209,16 @@ class Config(BaseModel):
     def parse_prefix(self) -> str:
         """解析前缀"""
         return self.parser_force_prefix.strip()
+
+    @property
+    def screenshot(self) -> bool:
+        """是否启用截图兜底"""
+        return self.parser_screenshot
+
+    @property
+    def screenshot_full_page(self) -> bool:
+        """截图是否整页"""
+        return self.parser_screenshot_full_page
 
 
 pconfig: Config = get_plugin_config(Config)

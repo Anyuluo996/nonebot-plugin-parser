@@ -274,6 +274,13 @@ parser_emoji_cdn="https://emojicdn.elk.sh"
 
 # [可选] emoji 渲染样式 "apple", "google", "twitter", "facebook"(默认)
 parser_emoji_style="facebook"
+
+# [可选] 短链重定向到暂不支持解析的页面（如 B站会员购商城）时，是否启用浏览器截图兜底
+# 需安装 [htmlrender] extras: uv add "nonebot-plugin-parser[htmlrender]" 并执行 playwright install chromium
+parser_screenshot=True
+
+# [可选] 截图是否整页（默认仅首屏）
+parser_screenshot_full_page=False
 ```
 
 </details>

@@ -16,6 +16,7 @@ from ..config import pconfig
 from ..helper import UniHelper, UniMessage
 from ..parsers import BaseParser, ParseResult, BilibiliParser
 from ..renders import get_renderer
+from ..exception import TipException
 
 
 def _get_enabled_parser_classes() -> list[type[BaseParser]]:
@@ -137,6 +138,16 @@ async def parser_handler(
         except Exception:
             pass
 
+    except TipException as e:
+        # 可恢复的用户提示：发消息，不冒泡成 ERROR
+        try:
+            await UniMessage(e.message).send()
+        except Exception:
+            logger.exception("发送 TipException 提示失败")
+        try:
+            await UniHelper.message_reaction(event, "done")
+        except Exception:
+            pass
     except Exception:
         # 发生错误，添加"失败"表情
         try:

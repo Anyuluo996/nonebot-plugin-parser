@@ -14,13 +14,13 @@ class Cover(Struct):
 
 class Video(Struct):
     play_addr: PlayAddr
-    cover: Cover
-    duration: int
+    cover: Cover | None = None
+    duration: int = 0
 
 
 class Image(Struct):
-    video: Video | None = None
     url_list: list[str] = field(default_factory=list)
+    video: Video | None = None
 
 
 class Avatar(Struct):
@@ -34,6 +34,8 @@ class Author(Struct):
 
 
 class SlidesData(Struct):
+    """抖音图文/实况照片(slides)单条数据"""
+
     author: Author
     desc: str
     create_time: int
@@ -49,15 +51,26 @@ class SlidesData(Struct):
 
     @property
     def image_urls(self) -> list[str]:
-        return [choice(image.url_list) for image in self.images]
+        # 跳过带 video 的图片(实况照片), 它们由 dynamic_urls 作为视频单独输出
+        return [choice(img.url_list) for img in self.images if not img.video]
 
     @property
     def dynamic_urls(self) -> list[str]:
-        return [choice(image.video.play_addr.url_list) for image in self.images if image.video]
+        """实况照片(live photo)对应的视频 URL,仅当图片带有 video 字段时返回"""
+        return [choice(img.video.play_addr.url_list) for img in self.images if img.video]
 
 
+# PC web detail API 顶层结构: {"aweme_detail": {...}}
+class AwemeDetailRes(Struct):
+    aweme_detail: SlidesData | None = None
+
+
+# 顶层结构(兼容旧的 slidesinfo v2 API): {"aweme_details": [...]}
 class SlidesInfo(Struct):
     aweme_details: list[SlidesData] = field(default_factory=list)
 
 
+# PC web detail API 解码器
+detail_decoder = Decoder(AwemeDetailRes)
+# 旧 slidesinfo v2 API 解码器
 decoder = Decoder(SlidesInfo)

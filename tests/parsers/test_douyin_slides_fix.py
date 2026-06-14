@@ -41,11 +41,13 @@ async def test_decoder_picks_download_addr_with_covers():
     dynamic_urls = aweme_detail.dynamic_urls
     assert len(dynamic_urls) == 2, f"应解析出 2 段视频, 实际 {len(dynamic_urls)}"
 
-    # 断言: dynamic_urls 是 download_addr (含 /mps/logo/ 路径或 watermark=1),
-    # 即完整时长版本(含原始音频如说话声), 而非 play_addr 的截断预览流
+    # 断言: dynamic_urls 是 download_addr 完整版, 且优先使用官方 play API 形式
+    # (CDN 镜像 /mps/logo/ 偶发 403/404, 官方 play API 更稳定)
     for i, u in enumerate(dynamic_urls):
-        is_full = "/mps/logo/" in u or "watermark=1" in u
+        is_full = "watermark=1" in u or "/mps/logo/" in u
         assert is_full, f"dynamic[{i}] 不是 download_addr 完整版 URL: {u[:120]}"
+        is_play_api = "/aweme/v1/play" in u
+        assert is_play_api, f"dynamic[{i}] 未优先使用官方 play API URL(易触发 403): {u[:120]}"
 
     # 断言: 每个视频都有封面
     cover_urls = aweme_detail.dynamic_cover_urls

@@ -61,16 +61,25 @@ class SlidesData(Struct):
 
         优先使用 download_addr (完整时长, 含原始音频如说话声),
         回退到 play_addr (多为缩短的预览流)。
+
+        每个 url_list 里把官方 play API (/aweme/v1/play/) 排到最前,
+        CDN 镜像偶发 403/404, play API 更稳定。
         """
         urls = []
         for img in self.images:
             if not img.video:
                 continue
-            # download_addr 是完整时长版本(含说话等原始音频), 但带水印;
-            # play_addr 是精简预览流(通常截断、音频可能是 BGM 片段)
             addr = img.video.download_addr or img.video.play_addr
-            urls.append(choice(addr.url_list))
+            urls.append(self._prefer_play_api(addr.url_list))
         return urls
+
+    @staticmethod
+    def _prefer_play_api(url_list: list[str]) -> str:
+        """优先返回官方 play API 形式的 URL, 其次随机选 CDN 镜像。"""
+        for u in url_list:
+            if "/aweme/v1/play" in u:
+                return u
+        return choice(url_list)
 
     @property
     def dynamic_cover_urls(self) -> list[str]:

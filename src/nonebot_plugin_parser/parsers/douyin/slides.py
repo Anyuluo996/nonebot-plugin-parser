@@ -14,7 +14,6 @@ class Cover(Struct):
 
 class Video(Struct):
     play_addr: PlayAddr
-    download_addr: PlayAddr | None = None
     cover: Cover | None = None
     duration: int = 0
 
@@ -59,18 +58,17 @@ class SlidesData(Struct):
     def dynamic_urls(self) -> list[str]:
         """实况照片(live photo)对应的视频 URL
 
-        优先使用 download_addr (完整时长, 含原始音频如说话声),
-        回退到 play_addr (多为缩短的预览流)。
+        使用 play_addr: 音频完整(含说话声)、无水印、无抖音片尾;
+        download_addr 虽时长更长但会在结尾多拼一段抖音片尾, 且带水印。
 
-        每个 url_list 里把官方 play API (/aweme/v1/play/) 排到最前,
-        CDN 镜像偶发 403/404, play API 更稳定。
+        每个 url_list 里优先取官方 play API (/aweme/v1/play/) 形式,
+        CDN 镜像 (douyinvod.com) 偶发 403/404, play API 更稳定。
         """
         urls = []
         for img in self.images:
             if not img.video:
                 continue
-            addr = img.video.download_addr or img.video.play_addr
-            urls.append(self._prefer_play_api(addr.url_list))
+            urls.append(self._prefer_play_api(img.video.play_addr.url_list))
         return urls
 
     @staticmethod

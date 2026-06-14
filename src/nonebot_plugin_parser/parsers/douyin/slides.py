@@ -14,6 +14,7 @@ class Cover(Struct):
 
 class Video(Struct):
     play_addr: PlayAddr
+    download_addr: PlayAddr | None = None
     cover: Cover | None = None
     duration: int = 0
 
@@ -56,8 +57,33 @@ class SlidesData(Struct):
 
     @property
     def dynamic_urls(self) -> list[str]:
-        """实况照片(live photo)对应的视频 URL,仅当图片带有 video 字段时返回"""
-        return [choice(img.video.play_addr.url_list) for img in self.images if img.video]
+        """实况照片(live photo)对应的视频 URL
+
+        优先使用 download_addr (完整时长, 含原始音频如说话声),
+        回退到 play_addr (多为缩短的预览流)。
+        """
+        urls = []
+        for img in self.images:
+            if not img.video:
+                continue
+            # download_addr 是完整时长版本(含说话等原始音频), 但带水印;
+            # play_addr 是精简预览流(通常截断、音频可能是 BGM 片段)
+            addr = img.video.download_addr or img.video.play_addr
+            urls.append(choice(addr.url_list))
+        return urls
+
+    @property
+    def dynamic_cover_urls(self) -> list[str]:
+        """实况照片视频对应的封面 URL"""
+        covers = []
+        for img in self.images:
+            if not img.video:
+                continue
+            if img.video.cover:
+                covers.append(choice(img.video.cover.url_list))
+            else:
+                covers.append(choice(img.url_list))
+        return covers
 
 
 # PC web detail API 顶层结构: {"aweme_detail": {...}}

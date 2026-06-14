@@ -221,26 +221,32 @@ class BaseParser:
         dynamic_urls: list[str],
         convert_to_gif: bool = False,
         cover_url: str | None = None,
+        cover_urls: list[str] | None = None,
     ):
         """创建动态图片内容列表
 
         Args:
             dynamic_urls: 动态图片 URL 列表
             convert_to_gif: 是否转换为 GIF，默认 False（仅推特平台使用）
-            cover_url: 缩略图 URL
+            cover_url: 缩略图 URL，对所有动态内容生效
+            cover_urls: 每个动态内容单独的缩略图 URL（与 dynamic_urls 一一对应）
         """
         import asyncio
 
         from .data import DynamicContent
 
+        if cover_urls is not None and len(cover_urls) != len(dynamic_urls):
+            raise ValueError(f"cover_urls 长度({len(cover_urls)}) 与 dynamic_urls 长度({len(dynamic_urls)}) 不一致")
+
         contents: list[DynamicContent] = []
-        for url in dynamic_urls:
+        for i, url in enumerate(dynamic_urls):
             task = DOWNLOADER.download_video(url, ext_headers=self.headers)
 
-            # 处理缩略图
+            # 处理缩略图: 优先使用每个视频单独的封面, 其次统一封面
             cover_task = None
-            if cover_url:
-                cover_task = DOWNLOADER.download_img(cover_url, ext_headers=self.headers)
+            individual_cover = cover_urls[i] if cover_urls else cover_url
+            if individual_cover:
+                cover_task = DOWNLOADER.download_img(individual_cover, ext_headers=self.headers)
 
             if convert_to_gif:
                 # 创建转换任务（仅在指定时才进行GIF转换）

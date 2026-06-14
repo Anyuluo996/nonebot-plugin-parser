@@ -123,7 +123,12 @@ class DouyinParser(BaseParser):
 
         # 添加动态内容 (实况照片对应的 mp4 视频)
         if dynamic_urls := aweme_detail.dynamic_urls:
-            contents.extend(self.create_dynamic_contents(dynamic_urls))
+            contents.extend(
+                self.create_dynamic_contents(
+                    dynamic_urls,
+                    cover_urls=aweme_detail.dynamic_cover_urls,
+                )
+            )
 
         # 构建作者
         author = self.create_author(aweme_detail.name, aweme_detail.avatar_url)

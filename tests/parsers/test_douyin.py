@@ -100,8 +100,8 @@ async def test_note():
 @pytest.mark.asyncio
 async def test_slides():
     """
-    含视频的图集
-    https://v.douyin.com/CeiJfqyWs # 将会解析出视频
+    含视频的图集(实况照片/live photo)
+    https://v.douyin.com/Gz4nn_2caaU # 实况照片, 解析出 2 段视频
     https://www.douyin.com/note/7450744229229235491 # 解析成普通图片
     """
     from nonebot_plugin_parser.parsers import DouyinParser
@@ -109,23 +109,28 @@ async def test_slides():
 
     parser = DouyinParser()
 
-    dynamic_image_url = "https://v.douyin.com/CeiJfqyWs"
+    live_photo_url = "https://v.douyin.com/Gz4nn_2caaU"
 
-    logger.info(f"开始解析抖音图集(含视频解析出视频) {dynamic_image_url}")
-    keyword, searched = parser.search_url(dynamic_image_url)
+    logger.info(f"开始解析抖音图集(实况照片解析出视频) {live_photo_url}")
+    keyword, searched = parser.search_url(live_photo_url)
     assert searched, "无法匹配 URL"
     result = await parser.parse(keyword, searched)
-    logger.debug(f"{dynamic_image_url} | 解析结果: \n{result}")
+    logger.debug(f"{live_photo_url} | 解析结果: \n{result}")
     assert result.title, "标题为空"
+
+    # 关键断言: 实况照片必须解析出 DynamicContent(视频), 而非静态图片
     dynamic_contents = result.dynamic_contents
-    assert dynamic_contents, "动态内容为空"
+    assert len(dynamic_contents) == 2, (
+        f"实况照片应解析出 2 段视频, 实际得到 {len(dynamic_contents)} 段 "
+        f"(contents={[type(c).__name__ for c in result.contents]})"
+    )
     for dynamic_content in dynamic_contents:
         try:
             path = await dynamic_content.get_path()
         except DownloadException:
             pytest.skip("抖音动态内容下载失败, 随机到的 cdn 过期")
         assert path.exists(), "动态内容不存在"
-    logger.success(f"抖音图集(含视频解析出视频)解析成功 {dynamic_image_url}")
+    logger.success(f"抖音图集(实况照片解析出视频)解析成功 {live_photo_url}")
 
     static_image_url = "https://www.douyin.com/note/7450744229229235491"
     logger.info(f"开始解析抖音图集(含视频解析出静态图片) {static_image_url}")

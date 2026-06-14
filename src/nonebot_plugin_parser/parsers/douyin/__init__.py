@@ -102,32 +102,35 @@ class DouyinParser(BaseParser):
     async def parse_slides(self, video_id: str):
         from . import slides
 
-        url = "https://www.iesdouyin.com/web/api/v2/aweme/slidesinfo/"
-        params = {
-            "aweme_ids": f"[{video_id}]",
-            "request_source": "200",
-        }
-        async with AsyncClient(headers=self.android_headers, verify=False) as client:
-            response = await client.get(url, params=params)
+        # 优先使用 PC web detail API, 它能返回实况照片(live photo)的视频地址
+        # 旧的 slidesinfo v2 API 返回的 images 不含 video 字段, 实况照片会丢失
+        detail_url = "https://www.douyin.com/aweme/v1/web/aweme/detail/"
+        headers = {**self.headers, "Referer": "https://www.douyin.com/"}
+        params = {"aweme_id": video_id, "aid": "6383"}
+        async with AsyncClient(headers=headers, verify=False, timeout=COMMON_TIMEOUT) as client:
+            response = await client.get(detail_url, params=params)
             response.raise_for_status()
 
-        slides_data = slides.decoder.decode(response.content).aweme_details[0]
+        aweme_detail = slides.detail_decoder.decode(response.content).aweme_detail
+        if aweme_detail is None:
+            raise ParseException(f"can't find aweme_detail in PC detail API: {video_id}")
+
         contents = []
 
-        # 添加图片内容
-        if image_urls := slides_data.image_urls:
+        # 添加图片内容 (纯静态图, 实况照片由 dynamic_urls 单独处理)
+        if image_urls := aweme_detail.image_urls:
             contents.extend(self.create_image_contents(image_urls))
 
-        # 添加动态内容
-        if dynamic_urls := slides_data.dynamic_urls:
+        # 添加动态内容 (实况照片对应的 mp4 视频)
+        if dynamic_urls := aweme_detail.dynamic_urls:
             contents.extend(self.create_dynamic_contents(dynamic_urls))
 
         # 构建作者
-        author = self.create_author(slides_data.name, slides_data.avatar_url)
+        author = self.create_author(aweme_detail.name, aweme_detail.avatar_url)
 
         return self.result(
-            title=slides_data.desc,
+            title=aweme_detail.desc,
             author=author,
             contents=contents,
-            timestamp=slides_data.create_time,
+            timestamp=aweme_detail.create_time,
         )

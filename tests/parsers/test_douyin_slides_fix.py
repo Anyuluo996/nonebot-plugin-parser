@@ -1,8 +1,8 @@
-"""Verification test: live-photo slides parses to 2 full-duration videos with covers.
+"""Verification test: live-photo slides parses to 2 videos with covers.
 
 回归: 修复前 parse_slides 用 slidesinfo v2 API, images 无 video 字段,
 导致只输出 ImageContent; 修复后用 PC web detail API, 正确取到视频地址,
-使用 download_addr (完整时长含原始音频) 并附带封面用于渲染缩略图。
+使用 play_addr (无水印、无抖音片尾、含原始音频) 并附带封面用于渲染缩略图。
 """
 
 import json as _json
@@ -26,8 +26,8 @@ PC_HEADERS = {
 
 
 @pytest.mark.asyncio
-async def test_decoder_picks_download_addr_with_covers():
-    """decoder 优先选择 download_addr (完整视频), 且每个视频都带封面。"""
+async def test_decoder_picks_play_addr_with_covers():
+    """decoder 使用 play_addr (无水印/无片尾), 且每个视频都带封面。"""
     from nonebot_plugin_parser.parsers.douyin import slides
 
     async with httpx.AsyncClient(headers=PC_HEADERS, verify=False, timeout=30) as c:
@@ -41,13 +41,11 @@ async def test_decoder_picks_download_addr_with_covers():
     dynamic_urls = aweme_detail.dynamic_urls
     assert len(dynamic_urls) == 2, f"应解析出 2 段视频, 实际 {len(dynamic_urls)}"
 
-    # 断言: dynamic_urls 是 download_addr 完整版, 且优先使用官方 play API 形式
-    # (CDN 镜像 /mps/logo/ 偶发 403/404, 官方 play API 更稳定)
+    # 断言: dynamic_urls 优先使用官方 play API 形式
+    # (CDN 镜像 douyinvod.com 偶发 403/404, 官方 play API 更稳定)
     for i, u in enumerate(dynamic_urls):
-        is_full = "watermark=1" in u or "/mps/logo/" in u
-        assert is_full, f"dynamic[{i}] 不是 download_addr 完整版 URL: {u[:120]}"
         is_play_api = "/aweme/v1/play" in u
-        assert is_play_api, f"dynamic[{i}] 未优先使用官方 play API URL(易触发 403): {u[:120]}"
+        assert is_play_api, f"dynamic[{i}] 未优先使用官方 play API URL: {u[:120]}"
 
     # 断言: 每个视频都有封面
     cover_urls = aweme_detail.dynamic_cover_urls
@@ -81,7 +79,7 @@ async def test_live_photo_slides_parses_to_videos():
     for i, cont in enumerate(result.dynamic_contents):
         assert cont.cover is not None, f"dynamic_contents[{i}] 缺少封面 cover"
 
-    # 可选断言: 下载成功时验证时长是完整版本(download_addr, >3s)
+    # 可选断言: 下载成功时验证时长 (play_addr 约 2.1s)
     for i, cont in enumerate(result.dynamic_contents):
         try:
             path = await cont.get_path()
@@ -98,7 +96,6 @@ async def test_live_photo_slides_parses_to_videos():
             )
             duration = float(_json.loads(out.stdout)["format"]["duration"])
             logger.info(f"dynamic[{i}] duration={duration:.2f}s")
-            # play_addr 预览约 2.1s, download_addr 完整版约 5.1s
-            assert duration > 3.0, f"dynamic[{i}] 时长 {duration:.2f}s 偏短, 可能取到的是 play_addr 预览流"
+            assert duration > 1.0, f"dynamic[{i}] 时长 {duration:.2f}s 异常偏短"
         except (FileNotFoundError, KeyError, ValueError):
             logger.warning(f"dynamic[{i}] 无法用 ffprobe 检测时长, 跳过时长断言")

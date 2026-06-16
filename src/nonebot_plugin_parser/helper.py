@@ -55,6 +55,29 @@ class UniHelper:
         return Reference(nodes=nodes)
 
     @staticmethod
+    def extract_forward_nodes(message: UniMessage[Any]) -> list[UniMessage[Any]]:
+        """拆解合并转发消息为节点内容列表, 用于合并转发失败后降级直接发送。
+
+        遍历消息中的所有 Reference 段, 提取每个 CustomNode 的 content (UniMessage);
+        非 Reference 段原样返回。返回值可直接逐条 send(), 避开协议端对合并转发的
+        兼容性问题 (如 NTQQ sendMsg 超时)。
+
+        注: alconna 的 Reference.nodes property 在构造后可能为 None,
+        真实节点数据存储在 _children (alconna 内部 exporter 也用此模式访问)。
+        """
+        flattened: list[UniMessage[Any]] = []
+        for seg in message:
+            if isinstance(seg, Reference):
+                nodes = getattr(seg, "_children", None) or seg.nodes or []
+                for node in nodes:
+                    content = getattr(node, "content", None)
+                    if content:
+                        flattened.append(content)
+            else:
+                flattened.append(UniMessage([seg]))
+        return flattened
+
+    @staticmethod
     def img_seg(
         file: Path | bytes,
     ) -> Image:

@@ -73,16 +73,24 @@ class BaseRenderer(ABC):
                 img_seg += cont.alt
             forwardable_segs.append(img_seg)
 
-        if forwardable_segs:
+        # 合并发送策略: 单个内容(图片或视频)一律直接发送, 不合并转发,
+        # 以最大化协议端兼容性; 多个内容才合并转发 (need_forward_contents=False 时
+        # 图片少于等于 4 张仍直接发送, 超过则强制合并转发避免刷屏)。
+        all_segs = forwardable_segs + dynamic_segs
+        if len(all_segs) == 1:
+            # 单个内容: 直接发送, 不走合并转发
+            yield UniMessage(all_segs)
+        elif forwardable_segs and dynamic_segs:
+            # 图片 + 视频混合: 合并转发
+            yield UniMessage(UniHelper.construct_forward_message(all_segs))
+        elif forwardable_segs:
+            # 仅图片
             if pconfig.need_forward_contents or len(forwardable_segs) > 4:
-                forward_msg = UniHelper.construct_forward_message(forwardable_segs + dynamic_segs)
-                yield UniMessage(forward_msg)
+                yield UniMessage(UniHelper.construct_forward_message(forwardable_segs))
             else:
                 yield UniMessage(forwardable_segs)
-
-                if dynamic_segs:
-                    yield UniMessage(UniHelper.construct_forward_message(dynamic_segs))
         elif dynamic_segs:
+            # 仅视频/动图
             if pconfig.need_forward_contents or len(dynamic_segs) > 1:
                 yield UniMessage(UniHelper.construct_forward_message(dynamic_segs))
             else:

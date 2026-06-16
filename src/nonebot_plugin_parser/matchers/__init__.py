@@ -127,7 +127,23 @@ async def parser_handler(
         # 6. 渲染内容消息并发送
         renderer = get_renderer(result.platform.name)
         async for message in renderer.render_messages(result):
-            await message.send()
+            try:
+                await message.send()
+            except Exception as send_err:
+                # 合并转发发送失败 (如 NTQQ sendMsg 超时) 时, 降级为逐条直接发送,
+                # 提升协议端兼容性; 非合并转发消息的重发失败才向上抛出。
+                nodes = UniHelper.extract_forward_nodes(message)
+                if len(nodes) <= 1:
+                    # 不是合并转发或仅单节点, 重发无意义, 抛出原异常
+                    raise
+                logger.warning(
+                    f"合并转发发送失败({send_err!r}), 降级为逐条直接发送 {len(nodes)} 条"
+                )
+                for node_msg in nodes:
+                    try:
+                        await node_msg.send()
+                    except Exception:
+                        logger.warning(f"降级发送单条消息失败, 跳过该条: {send_err!r}")
 
         # 7. 缓存解析结果
         _cache_result(cache_key, result)

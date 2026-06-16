@@ -36,6 +36,16 @@ class DouyinParser(BaseParser):
         if ty == "slides":
             return await self.parse_slides(vid)
 
+        # note 可能是纯图文, 也可能是含实况照片(live photo)的图文:
+        # 后者重定向成 note/ 而非 slides/, 而 parse_video 依赖的 _ROUTER_DATA
+        # 不返回 images[].video, 会丢失实况视频; PC detail API 才返回。
+        # 因此 note 优先走 parse_slides, 失败再回退 parse_video (兼容纯视频/旧结构)。
+        if ty == "note":
+            try:
+                return await self.parse_slides(vid)
+            except ParseException as e:
+                logger.warning(f"parse_slides failed for note {vid}, fallback to parse_video: {e}")
+
         for url in (self._build_m_douyin_url(ty, vid), self._build_iesdouyin_url(ty, vid)):
             try:
                 return await self.parse_video(url)

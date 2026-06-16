@@ -1,8 +1,12 @@
-"""Verification test: live-photo slides parses to 2 videos with covers.
+"""Verification tests: live-photo slides/notes parse to videos with covers.
 
-回归: 修复前 parse_slides 用 slidesinfo v2 API, images 无 video 字段,
+回归1: 修复前 parse_slides 用 slidesinfo v2 API, images 无 video 字段,
 导致只输出 ImageContent; 修复后用 PC web detail API, 正确取到视频地址,
 使用 play_addr (无水印、无抖音片尾、含原始音频) 并附带封面用于渲染缩略图。
+
+回归2: 实况照片图文分享短链会重定向成 note/ 而非 slides/,
+note 原本走 parse_video (_ROUTER_DATA 不返回 images[].video, 丢失实况视频);
+修复后 note 优先走 parse_slides, 正确解析出实况照片视频。
 """
 
 import json as _json
@@ -15,6 +19,10 @@ from nonebot import logger
 
 VID = "7650785539410446179"
 URL = "https://v.douyin.com/Gz4nn_2caaU"
+# 重定向成 note/ 的实况照片图文 (share_type=note, 含 live photo)
+LIVE_NOTE_URL = "https://v.douyin.com/PsRRzmKjer8/"
+# 对应的 note id
+LIVE_NOTE_VID = "7651838242916592867"
 PC_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -99,3 +107,59 @@ async def test_live_photo_slides_parses_to_videos():
             assert duration > 1.0, f"dynamic[{i}] 时长 {duration:.2f}s 异常偏短"
         except (FileNotFoundError, KeyError, ValueError):
             logger.warning(f"dynamic[{i}] 无法用 ffprobe 检测时长, 跳过时长断言")
+
+
+@pytest.mark.asyncio
+async def test_live_photo_note_redirect_parses_to_video():
+    """回归2: 重定向成 note/ 的实况照片图文必须解析出 DynamicContent 视频。
+
+    修复前 note 走 parse_video, _ROUTER_DATA 的 images 不含 video 字段,
+    只输出 1 张静态图, 实况视频丢失; 修复后 note 优先走 parse_slides,
+    PC detail API 返回 images[].video.play_addr, 正确输出实况视频。
+    """
+    from nonebot_plugin_parser.parsers import DouyinParser
+
+    parser = DouyinParser()
+    keyword, searched = parser.search_url(LIVE_NOTE_URL)
+    assert searched, "无法匹配 URL"
+    result = await parser.parse(keyword, searched)
+
+    content_types = [type(c).__name__ for c in result.contents]
+    logger.info(
+        f"note-live title={result.title!r}, contents types={content_types}, "
+        f"dynamic_contents={len(result.dynamic_contents)}, "
+        f"img_contents={len(result.img_contents)}"
+    )
+
+    assert result.title, "标题为空"
+
+    # 核心断言: note 实况照片必须解析出 DynamicContent 视频 (修复前是 0)
+    assert result.dynamic_contents, (
+        f"note 实况照片应解析出视频, 实际 dynamic=0 "
+        f"(contents={content_types})"
+    )
+    for i, cont in enumerate(result.dynamic_contents):
+        assert cont.cover is not None, f"dynamic_contents[{i}] 缺少封面 cover"
+
+
+@pytest.mark.asyncio
+async def test_decoder_picks_live_video_for_note():
+    """单元: PC detail API 对 note 实况照片返回 images[].video.play_addr。"""
+    from nonebot_plugin_parser.parsers.douyin import slides
+
+    async with httpx.AsyncClient(headers=PC_HEADERS, verify=False, timeout=30) as c:
+        r = await c.get(
+            "https://www.douyin.com/aweme/v1/web/aweme/detail/",
+            params={"aweme_id": LIVE_NOTE_VID, "aid": "6383"},
+        )
+        aweme_detail = slides.detail_decoder.decode(r.content).aweme_detail
+
+    assert aweme_detail is not None, "aweme_detail 为空"
+    dynamic_urls = aweme_detail.dynamic_urls
+    assert dynamic_urls, (
+        f"note 实况照片应解析出至少 1 段视频, 实际 {len(dynamic_urls)}"
+    )
+    for i, u in enumerate(dynamic_urls):
+        is_play_api = "/aweme/v1/play" in u
+        assert is_play_api, f"dynamic[{i}] 未优先使用官方 play API URL: {u[:120]}"
+

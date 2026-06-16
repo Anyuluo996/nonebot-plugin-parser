@@ -61,7 +61,8 @@ douyin:
   - https://v.douyin.com/iUrHrruH
 含视频的图集
   - https://v.douyin.com/CeiJfqyWs # 将会解析出视频
-  - https://www.douyin.com/note/7450744229229235491 # 解析成普通图片
+  - https://www.douyin.com/note/7450744229229235491 # 重定向 note/ 的实况照片, 解析出 4 段视频
+  - https://v.douyin.com/PsRRzmKjer8/ # 重定向成 note/ 的实况照片图文, 解析出视频
 
 xiaohongshu: 测试前先检查链接是否能访问
 - http://xhslink.com/o/49ufwc0ipbn

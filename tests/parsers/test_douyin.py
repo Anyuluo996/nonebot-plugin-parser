@@ -139,12 +139,16 @@ async def test_slides():
     result = await parser.parse(keyword, searched)
     logger.debug(f"{static_image_url} | 解析结果: \n{result}")
     assert result.title, "标题为空"
-    img_contents = result.img_contents
-    assert img_contents, "图片内容为空"
-    for img_content in img_contents:
+    # 该 note 实为 4 段实况照片(live photo), note 改走 parse_slides 后正确输出视频
+    dynamic_contents = result.dynamic_contents
+    assert len(dynamic_contents) == 4, (
+        f"该实况照片 note 应解析出 4 段视频, 实际 {len(dynamic_contents)} "
+        f"(contents={[type(c).__name__ for c in result.contents]})"
+    )
+    for dynamic_content in dynamic_contents:
         try:
-            path = await img_content.get_path()
+            path = await dynamic_content.get_path()
         except DownloadException:
             pytest.skip("抖音动态内容下载失败, 随机到的 cdn 过期")
-        assert path.exists(), "图片内容不存在"
-    logger.success(f"抖音图集(含视频解析出静态图片)解析成功 {static_image_url}")
+        assert path.exists(), "动态内容不存在"
+    logger.success(f"抖音图集(实况照片 note 解析出视频)解析成功 {static_image_url}")

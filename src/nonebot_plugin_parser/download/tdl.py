@@ -386,17 +386,23 @@ def _terminate_handle(handle: LoginQrHandle) -> None:
 
 
 def _kill_stale_tdl_processes() -> None:
-    """清理可能残留的 tdl 进程，避免 bolt 数据库锁冲突。
+    """清理所有残留的 tdl 进程，避免 bolt 数据库锁冲突。
 
     扫描 /proc（Linux）下所有进程，kill 掉 cmdline 含 tdl 的进程。
-    Windows/macOS 无 /proc 或 pty 不支持时跳过。
+    tdl 用 bolt 数据库存会话，同一 namespace 只能有一个 tdl 进程持有锁；
+    残留进程（上次 login 超时未清理、探针脚本 detached 的 tdl）会导致
+    新的 login 立即报 'Current database is used by another process'。
+    Windows 无 /proc，跳过。
     """
+    import time
+
     if os.name != "posix":
         return
     proc_dir = "/proc"
     if not os.path.isdir(proc_dir):
         return
     current_pid = os.getpid()
+    killed = 0
     for name in os.listdir(proc_dir):
         if not name.isdigit():
             continue
@@ -408,12 +414,19 @@ def _kill_stale_tdl_processes() -> None:
                 cmdline = f.read().replace(b"\x00", b" ").decode(errors="replace")
         except (FileNotFoundError, ProcessLookupError, PermissionError):
             continue
-        if "tdl" in cmdline and "login" in cmdline:
+        # 匹配所有 tdl 二进制调用（login/dl/export/chat 等子命令均可能持锁或残留）
+        # tdl 进程的 cmdline 形如: /usr/local/bin/tdl -n default --proxy ... login --type qr
+        # 或被 setsid 包装: tdl-ndefault--proxy...
+        if "tdl" in cmdline:
             try:
                 os.kill(pid, 9)
+                killed += 1
                 logger.warning(f"清理残留 tdl 进程: PID={pid} cmd={cmdline[:80]}")
             except (ProcessLookupError, PermissionError):
                 pass
+    if killed:
+        # 给 bolt 锁文件锁释放一点时间
+        time.sleep(1)
 
 
 def extract_qr_ascii(text: str) -> str:

@@ -382,11 +382,11 @@ async def _tg_password(matcher: Matcher):
 
     from ..download import submit_2fa_password, wait_login_complete
 
-    password = matcher.get_plaintext().strip()
+    # 从 event 取纯文本（get_plaintext 是 MessageEvent 的方法，非 Matcher）
+    password = event_obj.get_plaintext().strip() if hasattr(event_obj, "get_plaintext") else ""
     logger.debug(f"收到 {user_id} 的 2FA 密码，长度={len(password)}")
     if not password:
         # 空消息，忽略（等真正的密码）
-        matcher.stop_handle = False  # 不阻断其他 matcher
         return
 
     # 消费 pending（一次性）

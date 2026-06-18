@@ -79,8 +79,9 @@ async def _run_subprocess(
     process = await asyncio.create_subprocess_exec(*cmd, **kwargs)
     try:
         stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
-    except (asyncio.TimeoutError, BaseException):
-        # 超时或被取消：强制终止子进程，避免变孤儿；wait 回收资源/关闭管道
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        # 超时或被取消（外层超时/用户撤回）：强制终止子进程，避免变孤儿；
+        # wait 回收资源/关闭 stdout/stderr 管道，再重新抛出原异常
         try:
             process.kill()
         except ProcessLookupError:

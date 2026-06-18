@@ -386,15 +386,23 @@ def _terminate_handle(handle: LoginQrHandle) -> None:
 
 
 def _kill_stale_tdl_processes() -> None:
-    """清理所有残留的 tdl 进程，避免 bolt 数据库锁冲突。
+    """清理所有残留的 tdl 进程 + 损坏的 bolt 数据库锁，确保 login 能干净启动。
 
-    扫描 /proc（Linux）下所有进程，kill 掉 cmdline 含 tdl 的进程。
-    tdl 用 bolt 数据库存会话，同一 namespace 只能有一个 tdl 进程持有锁；
-    残留进程（上次 login 超时未清理、探针脚本 detached 的 tdl）会导致
-    新的 login 立即报 'Current database is used by another process'。
+    两步清理：
+    1. kill 所有 tdl 进程（避免进程持锁）
+    2. 删除 bolt 会话数据库文件（bbolt 在进程被 kill -9 后，
+       数据库文件的锁页可能处于脏状态，导致 tdl 误报
+       'Current database is used by another process'）。
+
+    注意：第 2 步会删除已登录的会话。但本函数仅在 login 前调用，
+    login 本就是要创建新会话，删除旧会话是合理的（若旧会话有效，
+    用户不会重新 login）。
+
+    会话目录结构：~/.tdl/data/<namespace>（如 default）
     Windows 无 /proc，跳过。
     """
     import time
+    from pathlib import Path
 
     if os.name != "posix":
         return
@@ -415,8 +423,6 @@ def _kill_stale_tdl_processes() -> None:
         except (FileNotFoundError, ProcessLookupError, PermissionError):
             continue
         # 匹配所有 tdl 二进制调用（login/dl/export/chat 等子命令均可能持锁或残留）
-        # tdl 进程的 cmdline 形如: /usr/local/bin/tdl -n default --proxy ... login --type qr
-        # 或被 setsid 包装: tdl-ndefault--proxy...
         if "tdl" in cmdline:
             try:
                 os.kill(pid, 9)
@@ -425,8 +431,23 @@ def _kill_stale_tdl_processes() -> None:
             except (ProcessLookupError, PermissionError):
                 pass
     if killed:
-        # 给 bolt 锁文件锁释放一点时间
+        # 等 bolt flock 释放
         time.sleep(1)
+
+    # 删除当前 namespace 的会话数据库文件，避免脏锁导致 login 失败。
+    # login 会创建全新会话，删除旧会话不影响（旧会话有效时不会重新 login）。
+    # data_dir 由 localstore 提供，形如 .../nonebot_plugin_parser/.../data
+    # tdl 的会话默认在 ~/.tdl/data/<namespace>
+    import os as _os
+
+    home = _os.path.expanduser("~")
+    tdl_data = Path(home) / ".tdl" / "data" / pconfig.tdl_ns
+    if tdl_data.exists():
+        try:
+            tdl_data.unlink()
+            logger.info(f"删除 tdl 会话数据库: {tdl_data}（login 将创建新会话）")
+        except (PermissionError, OSError) as e:
+            logger.warning(f"删除 tdl 会话数据库失败: {e}")
 
 
 def extract_qr_ascii(text: str) -> str:

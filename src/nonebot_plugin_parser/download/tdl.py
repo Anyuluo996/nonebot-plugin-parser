@@ -280,6 +280,9 @@ async def submit_2fa_password(handle: LoginQrHandle, password: str) -> None:
         raise ParseException("tdl 进程未运行，无法提交 2FA 密码")
     # 清除 2FA_REQUIRED 标记
     handle.error = ""
+    # 清空 buffer 中残留的旧 2FA 提示，避免下次 wait_login_complete
+    # 第一次轮询就匹配到旧的 "Enter 2FA Password:" 而误判失败
+    handle._output_buffer.clear()
     await asyncio.to_thread(_write_pty, handle.master_fd, password + "\n")
     logger.info("已向 tdl 提交 2FA 密码")
 

@@ -62,13 +62,21 @@ async def screenshot_url(
 
     from nonebot_plugin_htmlrender import get_new_page
 
+    from .browser_retry import with_browser_retry
+
     logger.info(f"开始截图（手机模式）: {url}")
-    async with get_new_page(**_MOBILE_PAGE_KWARGS) as page:
-        await page.goto(url, wait_until="networkidle", timeout=timeout_ms)
-        if extra_wait_ms > 0:
-            await page.wait_for_timeout(extra_wait_ms)
-        title = (await page.title()) or ""
-        img = await page.screenshot(full_page=full_page, type="png")
+
+    async def _do_screenshot() -> tuple[bytes, str]:
+        async with get_new_page(**_MOBILE_PAGE_KWARGS) as page:
+            await page.goto(url, wait_until="networkidle", timeout=timeout_ms)
+            if extra_wait_ms > 0:
+                await page.wait_for_timeout(extra_wait_ms)
+            title = (await page.title()) or ""
+            img = await page.screenshot(full_page=full_page, type="png")
+        return img, title
+
+    # 浏览器传输断连时自动重启并重试
+    img, title = await with_browser_retry(_do_screenshot)
 
     # 强制 .png 扩展名：URL path 可能带 .html 等后缀，generate_file_name 会原样保留
     file_name = f"{Path(generate_file_name(url)).stem}.png"

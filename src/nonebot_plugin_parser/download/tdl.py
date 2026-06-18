@@ -4,15 +4,22 @@ tdl 是 iyear/tdl 提供的 Telegram 下载 CLI，通过子进程调用。
 注意 tdl 不读取 http_proxy/https_proxy 环境变量，代理必须通过 --proxy 显式传入。
 """
 
+from __future__ import annotations
+
 import json
 import shutil
+from typing import TYPE_CHECKING
 from pathlib import Path
+from dataclasses import dataclass
 
 from nonebot import logger
 
 from ..utils import generate_file_name
 from ..config import pconfig
 from ..exception import ParseException
+
+if TYPE_CHECKING:
+    from asyncio.subprocess import Process
 
 # 单条消息导出的字段映射
 _VIDEO_EXTS = frozenset({".mp4", ".mov", ".mkv", ".webm", ".avi"})
@@ -65,73 +72,210 @@ async def _run(cmd: list[str], timeout: float = 300.0) -> tuple[int, str, str]:
 async def login_qr(timeout: float = 180.0) -> tuple[bool, str]:
     """执行 `tdl login --type qr` 扫码登录，返回 (是否登录成功, 提示信息/二维码ASCII)。
 
-    tdl 会打印 ASCII 二维码到 stdout 并阻塞等待 Telegram App 扫码确认。
-    本函数流式读取 stdout，进程在用户扫码确认后退出（exit 0）；
-    超时则 kill 进程，把已捕获的 stdout（含二维码）返回，由调用方渲染。
+    这是 start_login_qr + wait_login_complete 的便捷封装，适合不需要中途
+    发送二维码的场景。若需要在拿到二维码后立即发送给用户（避免二维码过期），
+    请直接使用 start_login_qr / wait_login_complete 两阶段调用。
+    """
+    handle = await start_login_qr()
+    if handle.error:
+        return False, handle.error
+    # 先把二维码返回（调用方据此前导渲染），但这里无法中途发送，故仅作等待
+    success = await wait_login_complete(handle, timeout=timeout)
+    if success:
+        return True, "Telegram 登录成功"
+    return False, handle.ascii_qr or "tdl 登录未完成（未捕获到二维码）"
+
+
+@dataclass
+class LoginQrHandle:
+    """tdl login qr 的运行句柄（两阶段登录用）。"""
+
+    proc: Process | None
+    pgid: int | None
+    ascii_qr: str
+    """捕获到的 ASCII 二维码（start 阶段已填充）"""
+    error: str
+    """start 阶段的错误信息（若有则 ascii_qr 为空）"""
+    _terminated: bool = False
+
+
+async def start_login_qr(qr_wait_timeout: float = 30.0) -> LoginQrHandle:
+    """启动 `tdl login --type qr` 并等待二维码输出。
+
+    tdl 启动后会先打印 WARN + 'Scan QR code...' 然后输出 ASCII 二维码。
+    本函数流式读取 stdout 直到捕获二维码（或超时/出错），然后返回句柄。
+    进程仍在运行（等待用户扫码），调用方应：
+    1. 用 handle.ascii_qr 渲染 PNG 发送给用户
+    2. 调用 wait_login_complete(handle) 等待扫码完成
 
     Args:
-        timeout: 等待扫码的最长时间（秒），超时则返回失败提示
+        qr_wait_timeout: 等待二维码出现的最长时间（秒）
 
     Returns:
-        tuple[bool, str]:
-            - (True, "Telegram 登录成功")：登录成功（tdl exit 0）
-            - (False, ascii_qr)：超时/失败但已捕获二维码，调用方渲染 PNG 发送
-            - (False, reason)：失败且无二维码，第二项为原因
+        LoginQrHandle: 若 error 非空表示启动失败；否则 ascii_qr 含二维码
     """
+    import os
     import asyncio
 
     if not is_tdl_available():
-        raise ParseException("tdl 不可用，无法执行登录")
+        return LoginQrHandle(proc=None, pgid=None, ascii_qr="", error="tdl 不可用，无法执行登录")
+
+    # 先清理可能残留的 tdl 进程（避免 bolt 数据库锁冲突）
+    _kill_stale_tdl_processes()
 
     cmd = [*_build_base_args(), "login", "--type", "qr"]
-    logger.info(f"tdl login qr 启动（等待扫码，超时 {timeout}s）")
+    logger.info(f"tdl login qr 启动（等待二维码，最长 {qr_wait_timeout}s）")
     try:
+        # start_new_session=True 让 tdl 独立成进程组，
+        # 便于结束时用 os.killpg 杀整个组（含 go runtime 子进程），避免 bolt 锁残留
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            start_new_session=True,
         )
-    except FileNotFoundError as e:
-        raise ParseException(f"未找到 tdl 二进制（{pconfig.tdl_path}），请安装 tdl 或配置 parser_tdl_path") from e
+    except FileNotFoundError:
+        return LoginQrHandle(
+            proc=None,
+            pgid=None,
+            ascii_qr="",
+            error=f"未找到 tdl 二进制（{pconfig.tdl_path}），请安装 tdl 或配置 parser_tdl_path",
+        )
 
     assert proc.stdout is not None
     assert proc.stderr is not None
 
-    # 流式读取 stdout（二维码 + 状态行），stderr 异步读后丢弃
-    stdout_chunks: list[bytes] = []
+    pgid = os.getpgid(proc.pid) if proc.pid else None
+    chunks: list[bytes] = []
 
-    async def _drain(stream, sink: list[bytes]) -> None:
+    async def _read_until_qr_or_exit() -> str:
+        """读取 stdout 直到捕获二维码或进程退出。返回提取的二维码（可能为空）。"""
         while True:
-            chunk = await stream.read(4096)
+            try:
+                chunk = await asyncio.wait_for(proc.stdout.read(4096), timeout=2.0)
+            except asyncio.TimeoutError:
+                # 检查进程是否已退出（出错退出时 stdout 可能没更多数据）
+                if proc.returncode is not None:
+                    break
+                continue
             if not chunk:
                 break
-            sink.append(chunk)
-
-    stderr_task = asyncio.create_task(_drain(proc.stderr, []))
-    stdout_task = asyncio.create_task(_drain(proc.stdout, stdout_chunks))
+            chunks.append(chunk)
+            # 尝试提取二维码，拿到就停（不必读完全部输出）
+            text = b"".join(chunks).decode(errors="replace")
+            if extract_qr_ascii(text):
+                return extract_qr_ascii(text)
+        text = b"".join(chunks).decode(errors="replace")
+        return extract_qr_ascii(text)
 
     try:
-        await asyncio.wait_for(proc.wait(), timeout=timeout)
-        exited_cleanly = True
+        qr = await asyncio.wait_for(_read_until_qr_or_exit(), timeout=qr_wait_timeout)
     except asyncio.TimeoutError:
-        exited_cleanly = False
-        proc.kill()
-        await proc.wait()
+        _terminate_process_group(proc, pgid)
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            pass
+        text = b"".join(chunks).decode(errors="replace")
+        return LoginQrHandle(
+            proc=None,
+            pgid=pgid,
+            ascii_qr=extract_qr_ascii(text),
+            error="等待 tdl 二维码超时（请检查代理/网络）" if not extract_qr_ascii(text) else "",
+        )
 
-    # 等待两个 drain 任务收尾（EOF）
-    await asyncio.gather(stdout_task, stderr_task, return_exceptions=True)
+    # 进程可能已因错误退出（如锁冲突），检查
+    if proc.returncode is not None and proc.returncode != 0:
+        text = b"".join(chunks).decode(errors="replace")
+        return LoginQrHandle(
+            proc=None,
+            pgid=pgid,
+            ascii_qr=qr,
+            error=f"tdl 启动后立即退出 (exit {proc.returncode}): {text.strip()[:200]}",
+        )
 
-    text = b"".join(stdout_chunks).decode(errors="replace")
-    qr = extract_qr_ascii(text)
+    return LoginQrHandle(proc=proc, pgid=pgid, ascii_qr=qr, error="")
 
-    if exited_cleanly and proc.returncode == 0:
-        return True, "Telegram 登录成功"
-    # 失败/超时：若已有二维码，返回给调用方渲染（提示超时由调用方补充）
-    if qr:
-        return False, qr
-    if not exited_cleanly:
-        return False, "tdl 登录超时，未捕获到二维码，请检查代理/网络后重试"
-    return False, f"tdl 登录失败 (exit {proc.returncode})"
+
+async def wait_login_complete(handle: LoginQrHandle, timeout: float = 120.0) -> bool:
+    """等待 tdl login 进程结束（用户扫码确认后 exit 0）。
+
+    Args:
+        handle: start_login_qr 返回的句柄
+        timeout: 等待扫码完成的最长时间（秒）
+
+    Returns:
+        bool: True 表示登录成功（exit 0）
+    """
+    import asyncio
+
+    if handle.proc is None:
+        return False
+
+    try:
+        await asyncio.wait_for(handle.proc.wait(), timeout=timeout)
+        success = handle.proc.returncode == 0
+    except asyncio.TimeoutError:
+        success = False
+
+    # 无论成功失败，确保进程组被彻底清理（避免 bolt 锁残留）
+    _terminate_process_group(handle.proc, handle.pgid)
+    try:
+        await asyncio.wait_for(handle.proc.wait(), timeout=5)
+    except asyncio.TimeoutError:
+        pass
+    handle._terminated = True
+    return success
+
+
+def _terminate_process_group(proc: Process, pgid: int | None) -> None:
+    """杀掉整个进程组（含 tdl 的 go runtime 子进程），避免 bolt 锁残留。"""
+    import os
+
+    if pgid is not None:
+        try:
+            os.killpg(pgid, 9)
+        except ProcessLookupError:
+            pass  # 进程组已退出
+    else:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+
+
+def _kill_stale_tdl_processes() -> None:
+    """清理可能残留的 tdl 进程，避免 bolt 数据库锁冲突。
+
+    扫描 /proc（Linux）下所有进程，kill 掉 cmdline 含 tdl 的进程。
+    Windows 无 /proc，跳过（Windows 下 tdl 无此锁问题）。
+    """
+    import os
+
+    if os.name != "posix":
+        return
+    proc_dir = "/proc"
+    if not os.path.isdir(proc_dir):
+        return
+    current_pid = os.getpid()
+    for name in os.listdir(proc_dir):
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        if pid == current_pid:
+            continue
+        try:
+            with open(f"{proc_dir}/{pid}/cmdline", "rb") as f:
+                cmdline = f.read().replace(b"\x00", b" ").decode(errors="replace")
+        except (FileNotFoundError, ProcessLookupError, PermissionError):
+            continue
+        # 匹配 tdl 二进制调用（排除当前 python 进程）
+        if "tdl" in cmdline and "login" in cmdline:
+            try:
+                os.kill(pid, 9)
+                logger.warning(f"清理残留 tdl 进程: PID={pid} cmd={cmdline[:80]}")
+            except (ProcessLookupError, PermissionError):
+                pass
 
 
 def extract_qr_ascii(text: str) -> str:

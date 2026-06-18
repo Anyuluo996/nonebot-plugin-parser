@@ -293,12 +293,13 @@ async def _tg_list(matcher: Matcher):
 async def _tg_login(matcher: Matcher):
     """SUPERUSER: 触发 tdl 扫码登录，把二维码渲染成 PNG 发送。
 
-    tdl login qr 会阻塞等待 Telegram App 扫码确认，登录成功后会话写入 ~/.tdl。
-    本命令先提示用户准备扫码，执行登录（最长等 180s），并把捕获的 ASCII
-    二维码用 PIL 渲染成 PNG 发回，便于手机直接扫码。
+    两阶段流程（避免二维码在等待扫码期间过期）：
+    1. start_login_qr: 启动 tdl，捕获二维码后立即返回（进程继续等扫码）
+    2. 渲染 PNG 发给用户，提示扫码
+    3. wait_login_complete: 等待用户扫码确认（最长 120s）
     """
     from ..utils import render_qr_ascii_to_png
-    from ..download import login_qr, is_tdl_available
+    from ..download import start_login_qr, is_tdl_available, wait_login_complete
     from ..exception import ParseException
 
     if not is_tdl_available():
@@ -306,28 +307,37 @@ async def _tg_login(matcher: Matcher):
             "tdl 不可用，请先安装 tdl (https://github.com/iyear/tdl)，或配置 parser_tdl_path 指向 tdl 路径"
         )
 
-    await matcher.send("正在生成 Telegram 登录二维码，请准备用 Telegram App 扫码（最多等待 180 秒）…")
+    await matcher.send("正在生成 Telegram 登录二维码…")
 
+    # 阶段1：启动 tdl，等待二维码输出（最长 30s）
     try:
-        success, payload = await login_qr(timeout=180.0)
+        handle = await start_login_qr(qr_wait_timeout=30.0)
     except ParseException as e:
-        await matcher.finish(f"登录失败: {e}")
+        await matcher.finish(f"登录启动失败: {e}")
         return
 
-    if success:
-        await matcher.finish(payload)  # "Telegram 登录成功"
+    if handle.error:
+        await matcher.finish(f"登录失败: {handle.error}")
         return
 
-    # 失败/超时：payload 可能是 ASCII 二维码
-    ascii_qr = payload
+    if not handle.ascii_qr:
+        await matcher.finish("未能捕获到二维码，请检查代理/网络后重试")
+        return
+
+    # 阶段2：立即渲染并发送二维码（趁未过期）
     try:
-        png_bytes = render_qr_ascii_to_png(ascii_qr)
+        png_bytes = render_qr_ascii_to_png(handle.ascii_qr)
     except Exception as e:
         logger.warning(f"渲染二维码失败: {e}")
-        await matcher.finish(f"登录未完成（无法渲染二维码），原始输出:\n{ascii_qr[:500]}")
+        await matcher.finish(f"渲染二维码失败: {e}")
         return
 
     await matcher.send(UniMessage(UniHelper.img_seg(png_bytes)))
-    await matcher.send(
-        "请在 Telegram App「设置 → 设备 → 扫描二维码」扫描上图完成登录。\n若已超时，请重新执行「tg登录」。"
-    )
+    await matcher.send("请用 Telegram App「设置 → 设备 → 扫描二维码」扫描上图（二维码有效，请尽快扫）")
+
+    # 阶段3：等待扫码完成（最长 120s），不阻塞其他解析
+    success = await wait_login_complete(handle, timeout=120.0)
+    if success:
+        await matcher.finish("✅ Telegram 登录成功")
+    else:
+        await matcher.finish("⏱ 扫码超时或未确认，请重新执行「tg登录」")

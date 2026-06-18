@@ -2,7 +2,7 @@ import re
 from copy import deepcopy
 from typing import TypeVar
 
-from nonebot import logger, get_driver, on_command
+from nonebot import logger, get_driver, on_command, on_message
 from nonebot.params import CommandArg
 from nonebot.typing import T_State
 from nonebot.matcher import Matcher, current_event
@@ -289,50 +289,23 @@ async def _tg_list(matcher: Matcher):
     await matcher.finish("Telegram 解析授权列表:\n" + "\n".join(whitelist))
 
 
+# 模块级 2FA 密码等待状态：{user_id: LoginQrHandle}
+# tg登录 检测到 2FA 时写入，tg密码 matcher 消费后删除
+_tg_2fa_pending: dict[str, object] = {}
+
+
 @on_command("tg登录", block=True, permission=SUPERUSER).handle()
 async def _tg_login(matcher: Matcher):
     """SUPERUSER: 触发 tdl 扫码登录，支持 2FA 两步验证密码。
 
-    流程（通过 matcher.state 阶段标记驱动，pause 后从顶部恢复）:
+    流程:
     1. start_login_qr: pty 启动 tdl，捕获二维码 -> 渲染 PNG 发送 -> 提示扫码
     2. wait_login_complete: 等待扫码（自动检测 2FA）
-       - 检测到 2FA: 提示用户发密码 -> pause -> 恢复后 submit_2fa_password -> 继续等待
-       - 登录成功/失败: 返回结果
+       - 登录成功/失败: 直接返回结果
+       - 检测到 2FA: 把 handle 存入 _tg_2fa_pending[user_id]，提示用户发密码
+         （密码由独立的 _tg_password matcher 接收并提交，不用 pause，
+          因为 on_command 的 pause 恢复要求消息仍满足命令格式）
     """
-    state = matcher.state
-    phase = state.get("_tg_phase", "init")
-    logger.debug(f"tg登录 handler 进入，phase={phase}, state_keys={list(state.keys())}")
-
-    # ---------- 阶段：2FA 密码已输入，提交并等待 ----------
-    if phase == "2fa":
-        from ..download import submit_2fa_password, wait_login_complete
-
-        handle = state.get("_tg_handle")
-        logger.debug(f"2fa 阶段: handle={handle}, alive={handle.pid if handle else None}")
-        if handle is None:
-            await matcher.finish("登录会话已失效，请重新执行「tg登录」")
-            return
-        password = matcher.get_plaintext().strip()
-        logger.debug(f"2fa 阶段: 收到密码长度={len(password)}")
-        if not password:
-            await matcher.pause(prompt="密码不能为空，请重新发送两步验证密码:")
-            return
-        try:
-            await submit_2fa_password(handle, password)
-            logger.info("已提交 2FA 密码，等待 tdl 验证")
-        except Exception as e:
-            logger.exception(f"提交 2FA 密码失败: {e}")
-            await matcher.finish(f"提交密码失败: {e}")
-            return
-        success = await wait_login_complete(handle, timeout=30.0)
-        logger.debug(f"2fa 提交后 wait_login 结果: {success}")
-        if success:
-            await matcher.finish("✅ Telegram 登录成功（2FA 验证通过）")
-        else:
-            await matcher.finish("❌ 2FA 密码错误或登录失败，请重新执行「tg登录」")
-        return
-
-    # ---------- 阶段：首次启动登录 ----------
     from ..utils import render_qr_ascii_to_png
     from ..download import start_login_qr, is_tdl_available, wait_login_complete
     from ..exception import ParseException
@@ -341,6 +314,10 @@ async def _tg_login(matcher: Matcher):
         await matcher.finish(
             "tdl 不可用，请先安装 tdl (https://github.com/iyear/tdl)，或配置 parser_tdl_path 指向 tdl 路径"
         )
+
+    user_id = str(event.user_id) if (event := current_event.get()) else "unknown"
+    # 清理该用户之前的 pending（避免残留）
+    _tg_2fa_pending.pop(user_id, None)
 
     await matcher.send("正在生成 Telegram 登录二维码…")
 
@@ -371,12 +348,11 @@ async def _tg_login(matcher: Matcher):
     success = await wait_login_complete(handle, timeout=120.0)
     logger.debug(f"wait_login_complete 返回 success={success} error={handle.error!r}")
 
-    # 检测到 2FA：保存 handle，切换阶段，pause 等用户发密码
+    # 检测到 2FA：保存 handle 到 pending，由独立密码 matcher 接收密码
     if not success and handle.error == "2FA_REQUIRED":
-        logger.info("检测到 2FA，切换到密码输入阶段，pause 等待用户发密码")
-        state["_tg_phase"] = "2fa"
-        state["_tg_handle"] = handle
-        await matcher.pause(prompt="⚠ 检测到两步验证(2FA)，请直接发送你的两步验证密码完成登录:")
+        logger.info(f"检测到 2FA，用户 {user_id} 进入密码输入等待")
+        _tg_2fa_pending[user_id] = handle
+        await matcher.finish("⚠ 检测到两步验证(2FA)，请在 30 秒内直接发送你的两步验证密码完成登录（仅发密码）")
         return
 
     if success:
@@ -384,3 +360,51 @@ async def _tg_login(matcher: Matcher):
     else:
         logger.debug(f"登录未成功（非2FA），error={handle.error!r}")
         await matcher.finish("⏱ 扫码超时或未确认，请重新执行「tg登录」")
+
+
+@on_message(block=False).handle()
+async def _tg_password(matcher: Matcher):
+    """接收 2FA 密码：仅当用户在 _tg_2fa_pending 中时，把消息作为密码提交给 tdl。
+
+    不用 on_command/pause，因为恢复时纯密码不以命令前缀开头会被拒绝。
+    用 on_message + 显式 pending 检查，实现条件性多轮交互。
+    """
+    if not _tg_2fa_pending:
+        return  # 没人在等 2FA 密码，跳过
+
+    event_obj = current_event.get()
+    if event_obj is None or not hasattr(event_obj, "user_id"):
+        return
+    user_id = str(event_obj.user_id)
+    handle = _tg_2fa_pending.get(user_id)
+    if handle is None:
+        return  # 该用户没在等密码，跳过
+
+    from ..download import submit_2fa_password, wait_login_complete
+
+    password = matcher.get_plaintext().strip()
+    logger.debug(f"收到 {user_id} 的 2FA 密码，长度={len(password)}")
+    if not password:
+        # 空消息，忽略（等真正的密码）
+        matcher.stop_handle = False  # 不阻断其他 matcher
+        return
+
+    # 消费 pending（一次性）
+    _tg_2fa_pending.pop(user_id, None)
+    matcher.stop_handle(no_reply=False)  # 阻断其他 matcher 处理这条密码消息
+
+    try:
+        await submit_2fa_password(handle, password)
+        logger.info(f"已提交 {user_id} 的 2FA 密码，等待 tdl 验证")
+    except Exception as e:
+        logger.exception(f"提交 2FA 密码失败: {e}")
+        await matcher.send(f"提交密码失败: {e}")
+        return
+
+    await matcher.send("正在验证 2FA 密码…")
+    success = await wait_login_complete(handle, timeout=30.0)
+    logger.debug(f"2FA 提交后 wait_login 结果: {success}")
+    if success:
+        await matcher.finish("✅ Telegram 登录成功（2FA 验证通过）")
+    else:
+        await matcher.finish("❌ 2FA 密码错误或登录失败，请重新执行「tg登录」")

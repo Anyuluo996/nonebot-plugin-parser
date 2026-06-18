@@ -519,6 +519,9 @@ DOWNLOADER: StreamDownloader = StreamDownloader()
 
 # tdl (Telegram Downloader) 辅助函数：按需调用，二进制不可用时不影响导入
 from .tdl import (
+    LoginQrHandle as LoginQrHandle,
+)
+from .tdl import (
     login_qr as login_qr,
 )
 from .tdl import (
@@ -528,6 +531,9 @@ from .tdl import (
     fetch_messages as fetch_messages,
 )
 from .tdl import (
+    start_login_qr as start_login_qr,
+)
+from .tdl import (
     classify_by_ext as classify_by_ext,
 )
 from .tdl import (
@@ -535,6 +541,9 @@ from .tdl import (
 )
 from .tdl import (
     is_tdl_available as is_tdl_available,
+)
+from .tdl import (
+    wait_login_complete as wait_login_complete,
 )
 
 try:

@@ -190,23 +190,51 @@
 <summary>Telegram 解析前置（可选）</summary>
 
 Telegram 解析依赖 [tdl](https://github.com/iyear/tdl)（Telegram Downloader CLI）。
+tdl 不在 PyPI，需手动安装二进制；登录后才能解析 t.me 链接。
 
 `macOS / Linux`
 
     # 安装
     curl -fsSL https://docs.iyear.me/tdl/install.sh | bash
-    # 登录（交互式，扫码或手机验证码）
-    tdl login
 
 `windows` (PowerShell)
 
     # 安装
     irm https://docs.iyear.me/tdl/install.ps1 | iex
-    # 登录
-    tdl login
 
 > 注意：tdl 不读取 `http_proxy`/`https_proxy` 环境变量，国内服务器请配置 `parser_tdl_proxy`。
 > 登录会话默认存储于 `~/.tdl`，如需切换账号可用 `tdl login -n <namespace>` 并配置 `parser_tdl_ns`。
+
+</details>
+
+<details>
+<summary>Telegram 登录方式（二选一）</summary>
+
+tdl 的登录涉及二维码终端渲染和两步验证(2FA)密码交互，均依赖 TTY 终端环境。
+
+**方式一：bot 全自动登录 `tg登录`（推荐）**
+
+SUPERUSER 在 QQ 发送 `tg登录`，bot 会自动启动 tdl、把二维码渲染成 PNG 发回，
+用户扫码后 bot 自动处理 2FA（账号开启两步验证时，再直接发送密码即可）。
+
+> [!CAUTION]
+> **平台限制**：`tg登录` 依赖 Unix 伪终端（pty），**仅支持 Linux / macOS / Docker / WSL**。
+> Windows 原生环境不可用（`os.fork` / `pty` / `termios` 等 API 不存在）。
+>
+> Windows 用户请：
+> - 在 **Docker 容器**内部署 bot 并登录（推荐），或
+> - 在 **WSL** 内部署 bot 并登录，或
+> - 改用下方「方式二」在终端手动登录后，把会话目录共享给 bot
+
+**方式二：终端手动登录 `tdl login`**
+
+在 tdl 安装好、且 bot 能访问到同一个 `~/.tdl` 会话目录的终端里执行：
+
+    tdl login            # 扫码登录
+    tdl login --type code  # 或手机验证码登录
+
+登录成功后会话写入 `~/.tdl/data/<namespace>`，bot 即可解析 t.me 链接。
+注意：bot 与登录终端必须共享同一用户主目录（`HOME`），否则 bot 读不到会话。
 
 </details>
 
@@ -345,6 +373,7 @@ parser_screenshot_full_page=False
 
 > Telegram 解析需消耗本机 tdl 会话，仅 SUPERUSER 或被 SUPERUSER 授权（`tg授权 <用户ID/@用户名>`）的用户可触发。
 > 首次使用需登录：SUPERUSER 执行 `tg登录`，bot 会把二维码渲染成图片发回，用 Telegram App 扫码即可（会话写入 `~/.tdl`）。
+> ⚠ `tg登录`（bot 全自动登录）仅支持 **Linux / macOS / Docker / WSL**，Windows 原生环境不可用。Windows 用户请使用容器/WSL 部署，或在终端执行 `tdl login` 手动登录（详见上方「Telegram 登录方式」）。
 
 ## 🧩 扩展
 

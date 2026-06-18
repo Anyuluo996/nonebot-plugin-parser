@@ -159,3 +159,6 @@ coverage*.xml
 
 # 原仓库对比文件
 原仓库/
+
+# 内部实现总结文档（不随仓库发布）
+docs/tdl-login-implementation.md

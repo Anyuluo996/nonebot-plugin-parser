@@ -291,13 +291,43 @@ async def _tg_list(matcher: Matcher):
 
 @on_command("tg登录", block=True, permission=SUPERUSER).handle()
 async def _tg_login(matcher: Matcher):
-    """SUPERUSER: 触发 tdl 扫码登录，把二维码渲染成 PNG 发送。
+    """SUPERUSER: 触发 tdl 扫码登录，支持 2FA 两步验证密码。
 
-    两阶段流程（避免二维码在等待扫码期间过期）：
-    1. start_login_qr: 启动 tdl，捕获二维码后立即返回（进程继续等扫码）
-    2. 渲染 PNG 发给用户，提示扫码
-    3. wait_login_complete: 等待用户扫码确认（最长 120s）
+    流程（通过 matcher.state 阶段标记驱动，pause 后从顶部恢复）:
+    1. start_login_qr: pty 启动 tdl，捕获二维码 -> 渲染 PNG 发送 -> 提示扫码
+    2. wait_login_complete: 等待扫码（自动检测 2FA）
+       - 检测到 2FA: 提示用户发密码 -> pause -> 恢复后 submit_2fa_password -> 继续等待
+       - 登录成功/失败: 返回结果
     """
+    state = matcher.state
+    phase = state.get("_tg_phase", "init")
+
+    # ---------- 阶段：2FA 密码已输入，提交并等待 ----------
+    if phase == "2fa":
+        from ..download import submit_2fa_password, wait_login_complete
+
+        handle = state.get("_tg_handle")
+        if handle is None:
+            await matcher.finish("登录会话已失效，请重新执行「tg登录」")
+            return
+        password = matcher.get_plaintext().strip()
+        if not password:
+            await matcher.pause(prompt="密码不能为空，请重新发送两步验证密码:")
+            return
+        try:
+            await submit_2fa_password(handle, password)
+        except Exception as e:
+            logger.exception(f"提交 2FA 密码失败: {e}")
+            await matcher.finish(f"提交密码失败: {e}")
+            return
+        success = await wait_login_complete(handle, timeout=30.0)
+        if success:
+            await matcher.finish("✅ Telegram 登录成功（2FA 验证通过）")
+        else:
+            await matcher.finish("❌ 2FA 密码错误或登录失败，请重新执行「tg登录」")
+        return
+
+    # ---------- 阶段：首次启动登录 ----------
     from ..utils import render_qr_ascii_to_png
     from ..download import start_login_qr, is_tdl_available, wait_login_complete
     from ..exception import ParseException
@@ -309,7 +339,6 @@ async def _tg_login(matcher: Matcher):
 
     await matcher.send("正在生成 Telegram 登录二维码…")
 
-    # 阶段1：启动 tdl，等待二维码输出（最长 30s）
     try:
         handle = await start_login_qr(qr_wait_timeout=30.0)
     except ParseException as e:
@@ -324,7 +353,6 @@ async def _tg_login(matcher: Matcher):
         await matcher.finish("未能捕获到二维码，请检查代理/网络后重试")
         return
 
-    # 阶段2：立即渲染并发送二维码（趁未过期）
     try:
         png_bytes = render_qr_ascii_to_png(handle.ascii_qr)
     except Exception as e:
@@ -333,10 +361,17 @@ async def _tg_login(matcher: Matcher):
         return
 
     await UniMessage(UniHelper.img_seg(png_bytes)).send()
-    await UniMessage("请用 Telegram App「设置 → 设备 → 扫描二维码」扫描上图（二维码有效，请尽快扫）").send()
+    await UniMessage("请用 Telegram App「设置 → 设备 → 扫描二维码」扫描上图（请尽快扫）").send()
 
-    # 阶段3：等待扫码完成（最长 120s），不阻塞其他解析
     success = await wait_login_complete(handle, timeout=120.0)
+
+    # 检测到 2FA：保存 handle，切换阶段，pause 等用户发密码
+    if not success and handle.error == "2FA_REQUIRED":
+        state["_tg_phase"] = "2fa"
+        state["_tg_handle"] = handle
+        await matcher.pause(prompt="⚠ 检测到两步验证(2FA)，请直接发送你的两步验证密码完成登录:")
+        return
+
     if success:
         await matcher.finish("✅ Telegram 登录成功")
     else:

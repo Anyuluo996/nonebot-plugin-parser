@@ -543,6 +543,9 @@ from .tdl import (
     is_tdl_available as is_tdl_available,
 )
 from .tdl import (
+    submit_2fa_password as submit_2fa_password,
+)
+from .tdl import (
     wait_login_complete as wait_login_complete,
 )
 

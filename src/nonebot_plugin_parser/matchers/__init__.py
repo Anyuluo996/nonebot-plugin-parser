@@ -391,7 +391,7 @@ async def _tg_password(matcher: Matcher):
 
     # 消费 pending（一次性）
     _tg_2fa_pending.pop(user_id, None)
-    matcher.stop_handle(no_reply=False)  # 阻断其他 matcher 处理这条密码消息
+    matcher.stop_propagation()  # 阻断其他 matcher 处理这条密码消息
 
     try:
         await submit_2fa_password(handle, password)

@@ -9,7 +9,11 @@ def save_cookies_with_netscape(cookies_str: str, file_path: Path, domain: str):
 
     # 从字符串创建 cookies 并添加到 MozillaCookieJar 对象
     for cookie in cookies_str.split(";"):
-        name, value = cookie.strip().split("=", 1)
+        cookie = cookie.strip()
+        if not cookie or "=" not in cookie:
+            # 跳过空段（尾部多余分号）和无值属性（Secure/HttpOnly 等），避免 ValueError
+            continue
+        name, value = cookie.split("=", 1)
         cj.set_cookie(
             cookiejar.Cookie(
                 version=0,
@@ -40,6 +44,10 @@ def ck2dict(cookies_str: str) -> dict[str, str]:
     """将 cookies 字符串转换为字典"""
     res = {}
     for cookie in cookies_str.split(";"):
-        name, value = cookie.strip().split("=", 1)
+        cookie = cookie.strip()
+        if not cookie or "=" not in cookie:
+            # 跳过空段和无值属性，避免 ValueError
+            continue
+        name, value = cookie.split("=", 1)
         res[name] = value
     return res

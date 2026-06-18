@@ -49,9 +49,7 @@ user_decoder = Decoder(PixivUserResponse)
 class PixivParser(BaseParser):
     """Pixiv 解析器"""
 
-    platform: ClassVar[Platform] = Platform(
-        name=PlatformEnum.PIXIV, display_name="Pixiv"
-    )
+    platform: ClassVar[Platform] = Platform(name=PlatformEnum.PIXIV, display_name="Pixiv")
 
     @classmethod
     def _get_base_url(cls) -> str:
@@ -110,14 +108,10 @@ class PixivParser(BaseParser):
             if is_restricted and not self._is_r18_allowed():
                 from ..exception import IgnoreException
 
-                raise IgnoreException(
-                    "R18/R-18G 内容已禁用，请开启 par_pixivR18"
-                )
+                raise IgnoreException("R18/R-18G 内容已禁用，请开启 par_pixivR18")
 
             # 获取图片页面列表
-            pages_resp = await client.get(
-                f"{base_url}/ajax/illust/{illust_id}/pages"
-            )
+            pages_resp = await client.get(f"{base_url}/ajax/illust/{illust_id}/pages")
             pages_resp.raise_for_status()
             pages_data = pages_decoder.decode(pages_resp.content)
 
@@ -148,9 +142,7 @@ class PixivParser(BaseParser):
             timeout=self.timeout,
             proxy=proxy,
         ) as client:
-            ugoira_resp = await client.get(
-                f"{base_url}/ajax/illust/{illust_id}/ugoira_meta"
-            )
+            ugoira_resp = await client.get(f"{base_url}/ajax/illust/{illust_id}/ugoira_meta")
             ugoira_resp.raise_for_status()
             ugoira_data = ugoira_decoder.decode(ugoira_resp.content)
 
@@ -185,9 +177,7 @@ class PixivParser(BaseParser):
             contents=[
                 DynamicContent(
                     path_task=zip_task,
-                    gif_path=asyncio.create_task(
-                        self._convert_ugoira_to_gif(zip_task, frames)
-                    ),
+                    gif_path=asyncio.create_task(self._convert_ugoira_to_gif(zip_task, frames)),
                     frames=frames,
                 )
             ],
@@ -226,9 +216,7 @@ class PixivParser(BaseParser):
                 proxy=proxy,
             ) as client:
                 try:
-                    user_resp = await client.get(
-                        f"{base_url}/ajax/user/{user_id}?full=1"
-                    )
+                    user_resp = await client.get(f"{base_url}/ajax/user/{user_id}?full=1")
                     user_resp.raise_for_status()
                     user_data = user_decoder.decode(user_resp.content)
                     if not user_data.error:
@@ -246,11 +234,7 @@ class PixivParser(BaseParser):
         """构建简介文本"""
         # 标签
         tags_data = body.get("tags", {}).get("tags", []) or []
-        tags = [
-            t.get("tag", "")
-            for t in tags_data
-            if t.get("tag") and not t.get("locked")
-        ]
+        tags = [t.get("tag", "") for t in tags_data if t.get("tag") and not t.get("locked")]
         tag_text = " ".join(f"#{t}" for t in tags) if tags else ""
 
         info_parts: list[str] = []
@@ -284,18 +268,12 @@ class PixivParser(BaseParser):
         user = body.get("user", {}) or {}
         author_name = body.get("userName", "") or user.get("userName", "未知作者")
         author_id = body.get("userId", "") or user.get("userId", "")
-        author_url = (
-            f"https://www.pixiv.net/users/{author_id}" if author_id else None
-        )
+        author_url = f"https://www.pixiv.net/users/{author_id}" if author_id else None
         upload_date = body.get("uploadDate", "")
 
         # 标签
         tags_data = body.get("tags", {}).get("tags", []) or []
-        tags = [
-            t.get("tag", "")
-            for t in tags_data
-            if t.get("tag") and not t.get("locked")
-        ]
+        tags = [t.get("tag", "") for t in tags_data if t.get("tag") and not t.get("locked")]
         tag_text = " ".join(f"#{t}" for t in tags) if tags else ""
 
         # 图片 URL
@@ -324,11 +302,7 @@ class PixivParser(BaseParser):
         if tag_text:
             info_parts.append(f"标签: {tag_text}")
         if description:
-            desc_short = (
-                description[:200] + "..."
-                if len(description) > 200
-                else description
-            )
+            desc_short = description[:200] + "..." if len(description) > 200 else description
             info_parts.append(f"简介: {desc_short}")
 
         text = "\n".join(info_parts)

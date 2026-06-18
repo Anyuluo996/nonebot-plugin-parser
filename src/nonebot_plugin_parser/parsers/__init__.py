@@ -8,6 +8,7 @@ from .douyin import DouyinParser as DouyinParser
 from .twitter import TwitterParser as TwitterParser
 from .bilibili import BilibiliParser as BilibiliParser
 from .kuaishou import KuaiShouParser as KuaiShouParser
+from .telegram import TelegramParser as TelegramParser
 from ..download import YTDLP_DOWNLOADER
 from .xiaohongshu import XiaoHongShuParser as XiaoHongShuParser
 
@@ -20,6 +21,7 @@ PARSERS: dict[str, type[BaseParser]] = {
     "twitter": TwitterParser,
     "bilibili": BilibiliParser,
     "kuaishou": KuaiShouParser,
+    "telegram": TelegramParser,
     "xiaohongshu": XiaoHongShuParser,
     "pixiv": PixivParser,
 }
@@ -27,6 +29,7 @@ PARSERS: dict[str, type[BaseParser]] = {
 if YTDLP_DOWNLOADER is not None:
     from .tiktok import TikTokParser as TikTokParser
     from .youtube import YouTubeParser as YouTubeParser
+
     PARSERS["tiktok"] = TikTokParser
     PARSERS["youtube"] = YouTubeParser
 

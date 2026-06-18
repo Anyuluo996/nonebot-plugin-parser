@@ -36,6 +36,7 @@
 | tiktok  | 链接                              | ✅​  | ❌️  | ❌️  |
 | twitter | 链接                              | ✅​  | ✅​  | ❌️  |
 | Pixiv   | 链接(含 artworks)                 | ❌️  | ✅​  | ❌️  |
+| Telegram| 链接(t.me，需权限)               | ✅​  | ✅​  | ✅​  |
 
 支持的链接，可参考 [测试链接](https://github.com/fllesser/nonebot-plugin-parser/blob/master/tests/others/test_urls.md)
 
@@ -185,6 +186,30 @@
 
 </details>
 
+<details>
+<summary>Telegram 解析前置（可选）</summary>
+
+Telegram 解析依赖 [tdl](https://github.com/iyear/tdl)（Telegram Downloader CLI）。
+
+`macOS / Linux`
+
+    # 安装
+    curl -fsSL https://docs.iyear.me/tdl/install.sh | bash
+    # 登录（交互式，扫码或手机验证码）
+    tdl login
+
+`windows` (PowerShell)
+
+    # 安装
+    irm https://docs.iyear.me/tdl/install.ps1 | iex
+    # 登录
+    tdl login
+
+> 注意：tdl 不读取 `http_proxy`/`https_proxy` 环境变量，国内服务器请配置 `parser_tdl_proxy`。
+> 登录会话默认存储于 `~/.tdl`，如需切换账号可用 `tdl login -n <namespace>` 并配置 `parser_tdl_ns`。
+
+</details>
+
 ## ⚙️ 配置
 
 <details>
@@ -245,7 +270,7 @@ parser_max_size=90
 
 # [可选] 全局禁止的解析
 # 示例 parser_disabled_platforms=["bilibili", "douyin"] 表示禁止了哔哩哔哩和抖音
-# 可选值: ["bilibili", "douyin", "kuaishou", "twitter", "youtube", "acfun", "tiktok", "weibo", "xiaohongshu", "pixiv"]
+# 可选值: ["bilibili", "douyin", "kuaishou", "twitter", "youtube", "acfun", "tiktok", "weibo", "xiaohongshu", "pixiv", "telegram"]
 parser_disabled_platforms='["twitter"]'
 
 # [可选] 渲染器类型
@@ -254,6 +279,17 @@ parser_render_type="common"
 
 # [可选] 是否在解析结果中附加原始URL
 parser_append_url=False
+
+# [可选] Telegram 解析所用 tdl 二进制路径，默认走 PATH 查找
+# 部署前需安装 tdl 并执行 `tdl login` 登录 Telegram 账号
+parser_tdl_path="tdl"
+
+# [可选] tdl session namespace，对应 `tdl login -n <ns>` 的命名空间
+parser_tdl_ns="default"
+
+# [可选] tdl 专用代理（tdl 不读取 http_proxy 环境变量，必须显式传入）
+# 留空时沿用 parser_proxy
+parser_tdl_proxy=None
 
 # [可选] 强制解析前缀
 # 仅在显式配置后生效；未配置时不会回退到机器人昵称
@@ -301,7 +337,14 @@ parser_screenshot_full_page=False
 | 关闭解析 | SUPERUSER/OWNER/ADMIN |  是   | 群聊 |     关闭解析      |
 |    bm    |           -           |  否   | 群聊 |   下载 B 站音频   |
 |    ym    |           -           |  否   | 群聊 | 下载 youtube 音频 |
+|  tg授权  |       SUPERUSER       |  否   | 任意 | 授权用户使用 TG 解析 |
+| tg取消授权|      SUPERUSER       |  否   | 任意 | 取消 TG 解析授权  |
+|  tg白名单|       SUPERUSER       |  否   | 任意 | 查看 TG 授权列表  |
+|  tg登录  |       SUPERUSER       |  否   | 任意 | TG 扫码登录(生成二维码) |
 |  blogin  |       SUPERUSER       |  否   | 私聊 | 扫码获取 B 站凭证 |
+
+> Telegram 解析需消耗本机 tdl 会话，仅 SUPERUSER 或被 SUPERUSER 授权（`tg授权 <用户ID/@用户名>`）的用户可触发。
+> 首次使用需登录：SUPERUSER 执行 `tg登录`，bot 会把二维码渲染成图片发回，用 Telegram App 扫码即可（会话写入 `~/.tdl`）。
 
 ## 🧩 扩展
 

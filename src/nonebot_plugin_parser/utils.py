@@ -340,6 +340,65 @@ def generate_file_name(url: str, default_suffix: str = "") -> str:
     return file_name
 
 
+def render_qr_ascii_to_png(ascii_qr: str, scale: int = 10, border: int = 4) -> bytes:
+    """把 tdl 输出的 ASCII 二维码渲染成 PNG 图片字节。
+
+    tdl 的二维码由 4 种 Unicode block 字符构成，每个字符代表 2 个像素行：
+        ' ' (空格)      上下半都白
+        '▀' (U+2580)    上半黑、下半白
+        '▄' (U+2584)    上半白、下半黑
+        '█' (U+2588)    上下半都黑
+
+    Args:
+        ascii_qr: 由 extract_qr_ascii 提取的二维码文本（多行）
+        scale: 每个二维码模块放大的像素倍数（提升扫码成功率）
+        border: 四周留白（模块数），便于扫码器识别
+
+    Returns:
+        bytes: PNG 图片字节流
+    """
+    if not PIL_AVAILABLE:
+        raise RuntimeError("PIL (Pillow) 未安装，无法渲染二维码")
+
+    lines = [line for line in ascii_qr.splitlines() if line]
+    if not lines:
+        raise ValueError("二维码文本为空")
+
+    width = max(len(line) for line in lines)
+    # 每个字符 = 2 个像素行（上半 + 下半）
+    height = len(lines) * 2
+
+    # 1. 先画 1:1 的位图
+    img = Image.new("1", (width, height), 1)  # 模式 1：0=黑 1=白
+    pixels = img.load()
+    for row_idx, line in enumerate(lines):
+        for col, ch in enumerate(line):
+            upper = ch in ("█", "▀")  # 上半黑
+            lower = ch in ("█", "▄")  # 下半黑
+            if col < width:
+                pixels[col, row_idx * 2] = 0 if upper else 1
+                pixels[col, row_idx * 2 + 1] = 0 if lower else 1
+
+    # 2. 加白边 + 放大
+    bordered_w = width + border * 2
+    bordered_h = height + border * 2
+    final_w = bordered_w * scale
+    final_h = bordered_h * scale
+    final = Image.new("RGB", (final_w, final_h), (255, 255, 255))
+    # 先把 1:1 图加边
+    padded = Image.new("1", (bordered_w, bordered_h), 1)
+    padded.paste(img, (border, border))
+    # 放大到最终尺寸
+    resized = padded.resize((final_w, final_h), Image.Resampling.NEAREST).convert("RGB")
+    final.paste(resized, (0, 0))
+
+    import io
+
+    buf = io.BytesIO()
+    final.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def write_json_to_data(data: dict[str, Any] | str, file_name: str):
     """将数据写入数据目录"""
     import json

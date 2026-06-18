@@ -411,7 +411,8 @@ class BilibiliParser(BaseParser):
 
         max_qv = max_quality.value if hasattr(max_quality, "value") else max_quality
         video_streams = [
-            s for s in all_streams
+            s
+            for s in all_streams
             if isinstance(s, VideoStreamDownloadURL) and s.video_codecs is not None and s.video_quality.value <= max_qv
         ]
         audio_streams = [s for s in all_streams if isinstance(s, AudioStreamDownloadURL)]

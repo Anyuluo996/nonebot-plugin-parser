@@ -3,6 +3,7 @@
 复用 nonebot_plugin_htmlrender 已管理的全局 playwright driver，以手机模式对网页截图。
 用于短链重定向到无解析 handler 的子站（B站会员购商城等）时的兜底展示。
 """
+
 from typing import Any
 from pathlib import Path
 

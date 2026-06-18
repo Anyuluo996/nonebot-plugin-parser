@@ -221,26 +221,46 @@ async def wait_login_complete(handle: LoginQrHandle, timeout: float = 120.0) -> 
         return False
 
     deadline = asyncio.get_event_loop().time() + timeout
+    poll_count = 0
     while asyncio.get_event_loop().time() < deadline:
-        # 检测 2FA 提示
         text = bytes(handle._output_buffer).decode(errors="replace")
-        if "2FA Password" in text or "2FA password" in text:
+        poll_count += 1
+        # 每 2 秒打印一次 buffer 状态，便于排查（DEBUG 级别）
+        if poll_count % 4 == 0:
+            alive = _is_process_alive(handle.pid)
+            buf_tail = strip_ansi(text).replace("\n", "|")[-120:]
+            logger.debug(
+                f"wait_login poll#{poll_count} alive={alive} "
+                f"buf={len(handle._output_buffer)}B "
+                f"has_2fa={'2FA Password' in text} "
+                f"has_success={'Login successfully' in text} "
+                f"tail=...{buf_tail}"
+            )
+        # 检测 2FA 提示（大小写不敏感）
+        lower = text.lower()
+        if "2fa password" in lower or "enter 2fa" in lower:
+            logger.info("检测到 2FA 密码提示，等待用户输入密码")
             handle.error = "2FA_REQUIRED"
             return False
         # 检测成功
-        if "Login successfully" in text:
+        if "login successfully" in lower:
+            logger.info("检测到登录成功")
             # 等待进程自然退出
             await asyncio.to_thread(_wait_pid, handle.pid, 10)
             _terminate_handle(handle)
             return True
         # 检测进程退出
         if not _is_process_alive(handle.pid):
-            text = bytes(handle._output_buffer).decode(errors="replace")
-            success = "Login successfully" in text
+            text2 = bytes(handle._output_buffer).decode(errors="replace")
+            success = "login successfully" in text2.lower()
+            logger.debug(
+                f"tdl 进程退出 alive=False success={success} tail=...{strip_ansi(text2).replace(chr(10), '|')[-150:]}"
+            )
             _terminate_handle(handle)
             return success
         await asyncio.sleep(0.5)
 
+    logger.debug("wait_login 超时退出")
     _terminate_handle(handle)
     return False
 
@@ -325,10 +345,16 @@ def _pty_reader_loop(handle: LoginQrHandle) -> None:
         if not data:
             break
         handle._output_buffer.extend(data)
+        # 检测关键内容时打印日志（2FA / 成功 / 光标请求）
+        if b"2FA" in data or b"2fa" in data:
+            logger.debug(f"pty reader 捕获 2FA 相关: {data!r}")
+        if b"successfully" in data.lower():
+            logger.debug(f"pty reader 捕获 success: {data!r}")
         # 自动应答 survey 的光标位置请求 \x1b[6n
         if b"\x1b[6n" in data:
             try:
                 os.write(master, b"\x1b[1;1R")
+                logger.debug("pty reader 应答光标位置请求")
             except OSError:
                 pass
 

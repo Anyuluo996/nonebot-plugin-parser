@@ -301,26 +301,31 @@ async def _tg_login(matcher: Matcher):
     """
     state = matcher.state
     phase = state.get("_tg_phase", "init")
+    logger.debug(f"tg登录 handler 进入，phase={phase}, state_keys={list(state.keys())}")
 
     # ---------- 阶段：2FA 密码已输入，提交并等待 ----------
     if phase == "2fa":
         from ..download import submit_2fa_password, wait_login_complete
 
         handle = state.get("_tg_handle")
+        logger.debug(f"2fa 阶段: handle={handle}, alive={handle.pid if handle else None}")
         if handle is None:
             await matcher.finish("登录会话已失效，请重新执行「tg登录」")
             return
         password = matcher.get_plaintext().strip()
+        logger.debug(f"2fa 阶段: 收到密码长度={len(password)}")
         if not password:
             await matcher.pause(prompt="密码不能为空，请重新发送两步验证密码:")
             return
         try:
             await submit_2fa_password(handle, password)
+            logger.info("已提交 2FA 密码，等待 tdl 验证")
         except Exception as e:
             logger.exception(f"提交 2FA 密码失败: {e}")
             await matcher.finish(f"提交密码失败: {e}")
             return
         success = await wait_login_complete(handle, timeout=30.0)
+        logger.debug(f"2fa 提交后 wait_login 结果: {success}")
         if success:
             await matcher.finish("✅ Telegram 登录成功（2FA 验证通过）")
         else:
@@ -364,9 +369,11 @@ async def _tg_login(matcher: Matcher):
     await UniMessage("请用 Telegram App「设置 → 设备 → 扫描二维码」扫描上图（请尽快扫）").send()
 
     success = await wait_login_complete(handle, timeout=120.0)
+    logger.debug(f"wait_login_complete 返回 success={success} error={handle.error!r}")
 
     # 检测到 2FA：保存 handle，切换阶段，pause 等用户发密码
     if not success and handle.error == "2FA_REQUIRED":
+        logger.info("检测到 2FA，切换到密码输入阶段，pause 等待用户发密码")
         state["_tg_phase"] = "2fa"
         state["_tg_handle"] = handle
         await matcher.pause(prompt="⚠ 检测到两步验证(2FA)，请直接发送你的两步验证密码完成登录:")
@@ -375,4 +382,5 @@ async def _tg_login(matcher: Matcher):
     if success:
         await matcher.finish("✅ Telegram 登录成功")
     else:
+        logger.debug(f"登录未成功（非2FA），error={handle.error!r}")
         await matcher.finish("⏱ 扫码超时或未确认，请重新执行「tg登录」")

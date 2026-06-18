@@ -74,6 +74,12 @@ class Config(BaseModel):
     """短链重定向到无 handler 页面时，是否启用浏览器截图兜底（需安装 [htmlrender] extras）"""
     parser_screenshot_full_page: bool = False
     """浏览器截图是否整页（默认仅首屏）"""
+    parser_tdl_path: str = "tdl"
+    """tdl 二进制路径，默认走 PATH 查找，找不到可填绝对路径"""
+    parser_tdl_ns: str = "default"
+    """tdl session namespace，对应 `tdl login -n <ns>` 的命名空间"""
+    parser_tdl_proxy: str | None = None
+    """tdl 专用代理（tdl 不读 http_proxy 环境变量，必须显式 --proxy），为空时沿用 parser_proxy"""
 
     @property
     def nickname(self) -> str:
@@ -219,6 +225,21 @@ class Config(BaseModel):
     def screenshot_full_page(self) -> bool:
         """截图是否整页"""
         return self.parser_screenshot_full_page
+
+    @property
+    def tdl_path(self) -> str:
+        """tdl 二进制路径"""
+        return self.parser_tdl_path
+
+    @property
+    def tdl_ns(self) -> str:
+        """tdl session namespace"""
+        return self.parser_tdl_ns
+
+    @property
+    def tdl_proxy(self) -> str | None:
+        """tdl 专用代理，为空时沿用 parser_proxy"""
+        return self.parser_tdl_proxy or self.proxy
 
 
 pconfig: Config = get_plugin_config(Config)

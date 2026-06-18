@@ -5,14 +5,15 @@ from typing import TypeVar
 from nonebot import logger, get_driver, on_command
 from nonebot.params import CommandArg
 from nonebot.typing import T_State
-from nonebot.matcher import current_event
+from nonebot.matcher import Matcher, current_event
 from nonebot.adapters import Message
+from nonebot.permission import SUPERUSER
 from nonebot_plugin_uninfo import Session, UniSession
 
 from .rule import SUPER_PRIVATE, PSR_FORCE_PARSE_KEY, Searched, SearchResult, on_keyword_regex
 from ..utils import LimitedSizeDict
-from .filter import is_platform_enabled
-from ..config import pconfig
+from .filter import is_tg_authorized, is_platform_enabled
+from ..config import gconfig, pconfig
 from ..helper import UniHelper, UniMessage
 from ..parsers import BaseParser, ParseResult, BilibiliParser
 from ..renders import get_renderer
@@ -105,6 +106,15 @@ async def parser_handler(
         logger.debug(f"平台 {parser.platform.name} 在群组 {session.scene_path} 中已被禁用，跳过解析")
         return
 
+    # 3.1 Telegram 解析需额外权限：仅 SUPERUSER 或被授权用户可用
+    if parser.platform.name == "telegram":
+        user_id = session.user.id if session.user else None
+        is_super = user_id is not None and str(user_id) in set(gconfig.superusers)
+        authorized = is_super or (user_id is not None and is_tg_authorized(str(user_id)))
+        if not authorized:
+            logger.info(f"用户 {user_id} 无 Telegram 解析权限，拒绝")
+            raise TipException("无 Telegram 解析权限，请联系 SUPERUSER 执行「tg授权」")
+
     # 3. 添加"处理中"表情
     event = current_event.get()
     try:
@@ -136,9 +146,7 @@ async def parser_handler(
                 if len(nodes) <= 1:
                     # 不是合并转发或仅单节点, 重发无意义, 抛出原异常
                     raise
-                logger.warning(
-                    f"合并转发发送失败({send_err!r}), 降级为逐条直接发送 {len(nodes)} 条"
-                )
+                logger.warning(f"合并转发发送失败({send_err!r}), 降级为逐条直接发送 {len(nodes)} 条")
                 for node_msg in nodes:
                     try:
                         await node_msg.send()
@@ -229,3 +237,97 @@ async def _():
     await UniMessage(UniHelper.img_seg(qrcode)).send()
     async for msg in parser.check_qr_state():
         await UniMessage(msg).send()
+
+
+# ==================== Telegram 解析授权管理 ====================
+# Telegram 解析需消耗本机 tdl 会话，仅 SUPERUSER 可用，
+# SUPERUSER 可通过以下命令授权/取消授权其他用户
+from .filter import add_tg_whitelist, get_tg_whitelist, remove_tg_whitelist
+
+
+def _normalize_user_id(arg: str) -> str | None:
+    """从命令参数中提取用户 id，支持 `@用户名`(部分适配器) 或纯数字 id。
+    返回 None 表示无法识别。
+    """
+    arg = arg.strip()
+    if not arg:
+        return None
+    # 去掉 @ 前缀
+    if arg.startswith("@"):
+        arg = arg[1:]
+    return arg or None
+
+
+@on_command("tg授权", block=True, permission=SUPERUSER).handle()
+async def _tg_grant(matcher: Matcher, args: Message = CommandArg()):
+    """SUPERUSER: 授权用户使用 Telegram 解析。用法：tg授权 <用户ID/@用户名>"""
+    user_id = _normalize_user_id(args.extract_plain_text())
+    if not user_id:
+        await matcher.finish("用法: tg授权 <用户ID 或 @用户名>")
+    if add_tg_whitelist(user_id):
+        await matcher.finish(f"已授权 {user_id} 使用 Telegram 解析")
+    await matcher.finish(f"{user_id} 已在授权列表中")
+
+
+@on_command("tg取消授权", block=True, permission=SUPERUSER).handle()
+async def _tg_revoke(matcher: Matcher, args: Message = CommandArg()):
+    """SUPERUSER: 取消用户的 Telegram 解析授权。用法：tg取消授权 <用户ID/@用户名>"""
+    user_id = _normalize_user_id(args.extract_plain_text())
+    if not user_id:
+        await matcher.finish("用法: tg取消授权 <用户ID 或 @用户名>")
+    if remove_tg_whitelist(user_id):
+        await matcher.finish(f"已取消 {user_id} 的 Telegram 解析授权")
+    await matcher.finish(f"{user_id} 不在授权列表中")
+
+
+@on_command("tg白名单", block=True, permission=SUPERUSER).handle()
+async def _tg_list(matcher: Matcher):
+    """SUPERUSER: 查看当前 Telegram 解析授权列表"""
+    whitelist = get_tg_whitelist()
+    if not whitelist:
+        await matcher.finish("当前 Telegram 授权列表为空")
+    await matcher.finish("Telegram 解析授权列表:\n" + "\n".join(whitelist))
+
+
+@on_command("tg登录", block=True, permission=SUPERUSER).handle()
+async def _tg_login(matcher: Matcher):
+    """SUPERUSER: 触发 tdl 扫码登录，把二维码渲染成 PNG 发送。
+
+    tdl login qr 会阻塞等待 Telegram App 扫码确认，登录成功后会话写入 ~/.tdl。
+    本命令先提示用户准备扫码，执行登录（最长等 180s），并把捕获的 ASCII
+    二维码用 PIL 渲染成 PNG 发回，便于手机直接扫码。
+    """
+    from ..utils import render_qr_ascii_to_png
+    from ..download import login_qr, is_tdl_available
+    from ..exception import ParseException
+
+    if not is_tdl_available():
+        await matcher.finish(
+            "tdl 不可用，请先安装 tdl (https://github.com/iyear/tdl)，或配置 parser_tdl_path 指向 tdl 路径"
+        )
+
+    await matcher.send("正在生成 Telegram 登录二维码，请准备用 Telegram App 扫码（最多等待 180 秒）…")
+
+    try:
+        success, payload = await login_qr(timeout=180.0)
+    except ParseException as e:
+        await matcher.finish(f"登录失败: {e}")
+        return
+
+    if success:
+        await matcher.finish(payload)  # "Telegram 登录成功"
+        return
+
+    # 失败/超时：payload 可能是 ASCII 二维码
+    ascii_qr = payload
+    try:
+        png_bytes = render_qr_ascii_to_png(ascii_qr)
+    except Exception as e:
+        logger.warning(f"渲染二维码失败: {e}")
+        await matcher.finish(f"登录未完成（无法渲染二维码），原始输出:\n{ascii_qr[:500]}")
+        return
+
+    await matcher.send(UniMessage(UniHelper.img_seg(png_bytes)))
+    await matcher.send(
+        "请在 Telegram App「设置 → 设备 → 扫描二维码」扫描上图完成登录。\n若已超时，请重新执行「tg登录」。"
+    )

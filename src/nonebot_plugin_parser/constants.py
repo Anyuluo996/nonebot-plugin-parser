@@ -36,6 +36,7 @@ class PlatformEnum(str, Enum):
     KUAISHOU = "kuaishou"
     NGA = "nga"
     PIXIV = "pixiv"
+    TELEGRAM = "telegram"
     TIKTOK = "tiktok"
     TWITTER = "twitter"
     WEIBO = "weibo"

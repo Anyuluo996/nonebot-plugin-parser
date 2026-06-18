@@ -41,6 +41,64 @@ def save_disabled_platforms():
 _DISABLED_PLATFORMS_DICT: dict[str, set[str]] = load_or_initialize_dict()
 
 
+# Telegram 解析白名单：被 SUPERUSER 授权可使用 Telegram 解析的用户 id 集合
+_TG_WHITELIST_PATH: Path = pconfig.data_dir / "tg_whitelist.json"
+
+
+def load_or_initialize_list() -> list[str]:
+    """加载或初始化 Telegram 解析白名单
+
+    Returns:
+        list[str]: 被授权的用户 id 列表
+    """
+    if not _TG_WHITELIST_PATH.exists():
+        _TG_WHITELIST_PATH.write_text(json.dumps([]))
+    try:
+        data = json.loads(_TG_WHITELIST_PATH.read_text())
+        return [str(x) for x in data]
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+def save_tg_whitelist() -> None:
+    """保存 Telegram 解析白名单"""
+    _TG_WHITELIST_PATH.write_text(json.dumps(list(_TG_WHITELIST_SET), ensure_ascii=False, indent=2))
+
+
+# 内存中的 Telegram 白名单
+_TG_WHITELIST_SET: set[str] = set(load_or_initialize_list())
+
+
+def is_tg_authorized(user_id: str) -> bool:
+    """判断指定用户是否在 Telegram 解析白名单中"""
+    return str(user_id) in _TG_WHITELIST_SET
+
+
+def add_tg_whitelist(user_id: str) -> bool:
+    """添加用户到 Telegram 白名单，返回是否新增成功"""
+    user_id = str(user_id)
+    if user_id in _TG_WHITELIST_SET:
+        return False
+    _TG_WHITELIST_SET.add(user_id)
+    save_tg_whitelist()
+    return True
+
+
+def remove_tg_whitelist(user_id: str) -> bool:
+    """从 Telegram 白名单移除用户，返回是否移除成功"""
+    user_id = str(user_id)
+    if user_id not in _TG_WHITELIST_SET:
+        return False
+    _TG_WHITELIST_SET.discard(user_id)
+    save_tg_whitelist()
+    return True
+
+
+def get_tg_whitelist() -> list[str]:
+    """获取 Telegram 白名单（返回副本）"""
+    return sorted(_TG_WHITELIST_SET)
+
+
 def migrate_old_data():
     """迁移旧版本的禁用群组数据"""
     old_path = pconfig.data_dir / "disabled_groups.json"
@@ -203,6 +261,7 @@ async def enable_parser(matcher: Matcher, session: Session = UniSession(), args:
             await matcher.finish("解析已开启")
     except Exception as e:
         from nonebot.exception import FinishedException
+
         if isinstance(e, FinishedException):
             raise  # 重新抛出 FinishedException
         logger.exception(f"[开启解析] 发生异常: {e}")
@@ -246,6 +305,7 @@ async def disable_parser(matcher: Matcher, session: Session = UniSession(), args
             await matcher.finish("解析已关闭")
     except Exception as e:
         from nonebot.exception import FinishedException
+
         if isinstance(e, FinishedException):
             raise  # 重新抛出 FinishedException
         logger.exception(f"[关闭解析] 发生异常: {e}")

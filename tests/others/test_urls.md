@@ -102,3 +102,7 @@ pixiv:
 - https://www.pixiv.net/artworks/143155116
 动图（Ugoira）：
 - https://www.pixiv.net/artworks/143137108
+
+telegram（需本机 tdl 已登录，且 SUPERUSER 或被授权用户触发）：
+- https://t.me/anyul996/28 视频
+- https://t.me/anyul996/27 带文案视频

@@ -133,6 +133,7 @@ class DynamicContent(MediaContent):
         if gif_path and gif_path.exists() and self.frames:
             try:
                 from ..utils import extract_ugoira_thumbnail
+
                 return extract_ugoira_thumbnail(gif_path.with_suffix(".zip"), self.frames)
             except Exception:
                 pass
@@ -142,6 +143,7 @@ class DynamicContent(MediaContent):
         if zip_path.exists() and self.frames:
             try:
                 from ..utils import extract_ugoira_thumbnail
+
                 return extract_ugoira_thumbnail(zip_path, self.frames)
             except Exception:
                 pass

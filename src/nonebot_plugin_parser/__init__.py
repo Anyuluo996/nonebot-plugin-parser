@@ -35,6 +35,21 @@ __plugin_meta__ = PluginMetadata(
 require("nonebot_plugin_apscheduler")
 from nonebot_plugin_apscheduler import scheduler
 
+from .download import is_tdl_available
+
+
+@get_driver().on_startup
+def _check_tdl():
+    """启动时检测 tdl 二进制是否可用，不可用则降级（仅 Telegram 解析受影响）。"""
+    if is_tdl_available():
+        logger.info("tdl 可用，Telegram 解析已就绪")
+    else:
+        logger.warning(
+            "tdl 二进制不可用，Telegram 解析将不可用。"
+            "请安装 tdl (https://github.com/iyear/tdl) 并执行 `tdl login`，"
+            "或配置 parser_tdl_path 指向 tdl 路径。"
+        )
+
 
 @get_driver().on_shutdown
 async def close_downloader():

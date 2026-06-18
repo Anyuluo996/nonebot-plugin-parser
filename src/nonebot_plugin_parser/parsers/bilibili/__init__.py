@@ -4,7 +4,7 @@ from re import Match
 from typing import ClassVar
 from collections.abc import AsyncGenerator
 
-from msgspec import convert
+from msgspec import convert, MsgspecError
 from nonebot import logger
 from bilibili_api import HEADERS, Credential, select_client, request_settings
 from bilibili_api.opus import Opus
@@ -23,6 +23,22 @@ from ..base import (
 from ..data import Platform, ParseResult, ImageContent, MediaContent
 from ..cookie import ck2dict
 from .dynamic import DynamicInfo
+
+# 转发链递归深度上限，防止循环引用/极深嵌套导致 RecursionError 崩溃
+MAX_REPOST_DEPTH = 5
+
+
+def _safe_convert(raw, target_type, *, context: str):
+    """安全 msgspec 转换：API 返回结构变化时抛 ParseException 而非 ValidationError 崩溃。
+
+    B 站 API 在风控/改版中字段经常变动，msgspec.convert 缺字段/类型不符会抛
+    ValidationError，未捕获会让整条解析直接失败。
+    """
+    try:
+        return convert(raw, target_type)
+    except MsgspecError as e:
+        logger.warning(f"B站接口数据结构异常（{context}）: {e}")
+        raise ParseException(f"B站接口数据解析失败（{context}）") from e
 
 # 选择客户端
 select_client("curl_cffi")
@@ -158,7 +174,7 @@ class BilibiliParser(BaseParser):
         from .video import VideoInfo, AIConclusion
 
         video = await self._get_video(bvid=bvid, avid=avid)
-        video_info = convert(await video.get_info(), VideoInfo)
+        video_info = _safe_convert(await video.get_info(), VideoInfo, context="视频信息")
         # UP
         author = self.create_author(video_info.owner.name, video_info.owner.face)
         # 处理分 p
@@ -168,7 +184,7 @@ class BilibiliParser(BaseParser):
         if self._credential:
             cid = await video.get_cid(page_info.index)
             ai_conclusion = await video.get_ai_conclusion(cid)
-            ai_conclusion = convert(ai_conclusion, AIConclusion)
+            ai_conclusion = _safe_convert(ai_conclusion, AIConclusion, context="AI总结")
             ai_summary = ai_conclusion.summary
         else:
             ai_summary: str = "哔哩哔哩 cookie 未配置或失效, 无法使用 AI 总结"
@@ -219,10 +235,10 @@ class BilibiliParser(BaseParser):
         if await dynamic.is_article():
             return await self._parse_bilibli_api_opus(dynamic.turn_to_opus())
 
-        dynamic_info = convert(await dynamic.get_info(), DynamicWrapper).item
+        dynamic_info = _safe_convert(await dynamic.get_info(), DynamicWrapper, context="动态信息").item
         return await self._parse_dynamic_info(dynamic_info)
 
-    async def _parse_dynamic_info(self, dynamic_info: DynamicInfo):
+    async def _parse_dynamic_info(self, dynamic_info: DynamicInfo, depth: int = 0):
         if dynamic_info.is_video():
             if (major := dynamic_info.modules.major) and (archive := major.archive):
                 result = await self.parse_video(bvid=archive.bvid)
@@ -236,8 +252,9 @@ class BilibiliParser(BaseParser):
         contents.extend(self.create_image_contents(dynamic_info.image_urls))
 
         repost = None
-        if dynamic_info.type == "DYNAMIC_TYPE_FORWARD" and dynamic_info.orig is not None:
-            repost = await self._parse_dynamic_info(dynamic_info.orig)
+        # 限制转发链递归深度，防止循环引用/极深嵌套导致 RecursionError 崩溃
+        if dynamic_info.type == "DYNAMIC_TYPE_FORWARD" and dynamic_info.orig is not None and depth < MAX_REPOST_DEPTH:
+            repost = await self._parse_dynamic_info(dynamic_info.orig, depth + 1)
 
         return self.result(
             title=dynamic_info.title,
@@ -263,7 +280,7 @@ class BilibiliParser(BaseParser):
         if not isinstance(opus_info, dict):
             raise ParseException("获取图文动态信息失败")
         # 转换为结构体
-        opus_data = convert(opus_info, OpusItem)
+        opus_data = _safe_convert(opus_info, OpusItem, context="图文动态")
         logger.debug(f"opus_data: {opus_data}")
         author = self.create_author(*opus_data.name_avatar)
 
@@ -291,7 +308,7 @@ class BilibiliParser(BaseParser):
         room = LiveRoom(room_display_id=room_id, credential=await self.credential)
         info_dict = await room.get_room_info()
 
-        room_data = convert(info_dict, RoomData)
+        room_data = _safe_convert(info_dict, RoomData, context="直播信息")
         contents: list[MediaContent] = []
         # 下载封面
         if cover := room_data.cover:
@@ -326,7 +343,7 @@ class BilibiliParser(BaseParser):
         if fav_dict["medias"] is None:
             raise ParseException("收藏夹内容为空, 或被风控")
 
-        favdata = convert(fav_dict, FavData)
+        favdata = _safe_convert(fav_dict, FavData, context="收藏夹")
 
         author = self.create_author(favdata.info.upper.name, favdata.info.upper.face)
 

@@ -45,6 +45,9 @@ class VxTwitterResponse(Struct):
 
 decoder = Decoder(VxTwitterResponse)
 
+# 转发链递归深度上限，防止循环引用/极深嵌套导致 RecursionError 崩溃
+MAX_REPOST_DEPTH = 5
+
 
 class TwitterParser(BaseParser):
     platform: ClassVar[Platform] = Platform(name=PlatformEnum.TWITTER, display_name="小蓝鸟")
@@ -65,7 +68,7 @@ class TwitterParser(BaseParser):
         data = decoder.decode(response.content)
         return self._collect_result(data)
 
-    def _collect_result(self, data: VxTwitterResponse) -> ParseResult:
+    def _collect_result(self, data: VxTwitterResponse, depth: int = 0) -> ParseResult:
         author = self.create_author(data.user_name, data.user_profile_image_url)
         title = data.article.title if isinstance(data.article, Article) else data.article
 
@@ -84,7 +87,8 @@ class TwitterParser(BaseParser):
             elif media.type == "image":
                 contents.append(self.create_image_content(media.url))
 
-        repost = self._collect_result(data.qrt) if data.qrt else None
+        # 限制转发链递归深度，防止循环引用/极深嵌套导致 RecursionError 崩溃
+        repost = self._collect_result(data.qrt, depth + 1) if data.qrt and depth < MAX_REPOST_DEPTH else None
 
         return self.result(
             author=author,

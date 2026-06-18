@@ -10,6 +10,9 @@ from . import common, article
 from ..base import Platform, BaseParser, PlatformEnum, ParseException, handle
 from ..data import ImageContent
 
+# 转发链递归深度上限，防止循环引用/极深嵌套导致 RecursionError 崩溃
+MAX_REPOST_DEPTH = 5
+
 
 class WeiBoParser(BaseParser):
     platform: ClassVar[Platform] = Platform(name=PlatformEnum.WEIBO, display_name="微博")
@@ -192,7 +195,7 @@ class WeiBoParser(BaseParser):
 
         return self._collect_result(weibo_data)
 
-    def _collect_result(self, data: common.WeiboData):
+    def _collect_result(self, data: common.WeiboData, depth: int = 0):
         contents = []
 
         # 添加视频内容
@@ -207,8 +210,9 @@ class WeiBoParser(BaseParser):
         # 构建作者
         author = self.create_author(data.display_name, data.user.profile_image_url)
         repost = None
-        if data.retweeted_status:
-            repost = self._collect_result(data.retweeted_status)
+        # 限制转发链递归深度，防止循环引用/极深嵌套导致 RecursionError 崩溃
+        if data.retweeted_status and depth < MAX_REPOST_DEPTH:
+            repost = self._collect_result(data.retweeted_status, depth + 1)
 
         return self.result(
             title=data.title,

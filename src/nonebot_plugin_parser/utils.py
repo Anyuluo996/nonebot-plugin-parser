@@ -43,19 +43,66 @@ async def safe_unlink(path: Path):
     await AnyioPath(path).unlink(missing_ok=True)
 
 
+# 子进程（ffmpeg/ffprobe/gifsicle）单次执行的超时上限（秒）。
+# 坏输入/卡扇区时避免协程被永久挂起、子进程变孤儿。
+FFMPEG_TIMEOUT = 300
+
+
+async def _run_subprocess(
+    cmd: list[str],
+    *,
+    timeout: float = FFMPEG_TIMEOUT,
+    stdin_devnull: bool = True,
+) -> tuple[int, bytes, bytes]:
+    """统一执行外部子进程：带超时、取消时强制 kill、回收 stdout/stderr 管道。
+
+    Args:
+        cmd: 命令序列（第一项为可执行文件）。
+        timeout: 超时秒数，超时后 kill 子进程并抛 ``asyncio.TimeoutError``。
+        stdin_devnull: 是否把 stdin 接到 DEVNULL（避免子进程等待 stdin 挂起）。
+
+    Returns:
+        (returncode, stdout_bytes, stderr_bytes)。
+
+    Raises:
+        FileNotFoundError: 可执行文件不存在。
+        asyncio.TimeoutError: 超时。
+        RuntimeError: 返回码非 0。
+    """
+    kwargs: dict[str, Any] = {
+        "stdout": asyncio.subprocess.PIPE,
+        "stderr": asyncio.subprocess.PIPE,
+    }
+    if stdin_devnull:
+        kwargs["stdin"] = asyncio.subprocess.DEVNULL
+
+    process = await asyncio.create_subprocess_exec(*cmd, **kwargs)
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
+    except (asyncio.TimeoutError, BaseException):
+        # 超时或被取消：强制终止子进程，避免变孤儿；wait 回收资源/关闭管道
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+        try:
+            await process.wait()
+        except BaseException:
+            pass
+        raise
+
+    return process.returncode, stdout, stderr
+
+
 async def exec_ffmpeg_cmd(cmd: list[str]) -> None:
     """执行 ffmpeg 命令"""
     try:
-        process = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        _, stderr = await process.communicate()
-        return_code = process.returncode
+        return_code, _stdout, stderr = await _run_subprocess(cmd)
     except FileNotFoundError:
         raise RuntimeError("ffmpeg 未安装或无法找到可执行文件")
 
     if return_code != 0:
-        error_msg = stderr.decode().strip()
+        error_msg = stderr.decode(errors="replace").strip()
         raise RuntimeError(f"ffmpeg 执行失败: {error_msg}")
 
 
@@ -69,19 +116,15 @@ async def exec_ffprobe_cmd(cmd: list[str]) -> str:
         str: ffprobe 输出
     """
     try:
-        process = await asyncio.create_subprocess_exec(
-            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
-        stdout, stderr = await process.communicate()
-        return_code = process.returncode
+        return_code, stdout, stderr = await _run_subprocess(cmd)
     except FileNotFoundError:
         raise RuntimeError("ffprobe 未安装或无法找到可执行文件")
 
     if return_code != 0:
-        error_msg = stderr.decode().strip()
+        error_msg = stderr.decode(errors="replace").strip()
         raise RuntimeError(f"ffprobe 执行失败: {error_msg}")
 
-    return stdout.decode()
+    return stdout.decode(errors="replace")
 
 
 async def has_audio_stream(video_path: Path) -> bool:
@@ -141,38 +184,39 @@ async def convert_video_to_gif(
     # 生成调色板的临时文件
     palette_path = video_path.with_name(f"{video_path.stem}_palette.png")
 
-    # 第一步：生成调色板
-    # 使用 palettegen 滤镜生成自定义调色板，提高 GIF 质量
-    palette_cmd = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        str(video_path),
-        "-vf",
-        f"fps={fps},scale={width}:-1:flags=lanczos,palettegen",
-        str(palette_path),
-    ]
+    try:
+        # 第一步：生成调色板
+        # 使用 palettegen 滤镜生成自定义调色板，提高 GIF 质量
+        palette_cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(video_path),
+            "-vf",
+            f"fps={fps},scale={width}:-1:flags=lanczos,palettegen",
+            str(palette_path),
+        ]
 
-    await exec_ffmpeg_cmd(palette_cmd)
+        await exec_ffmpeg_cmd(palette_cmd)
 
-    # 第二步：使用调色板生成 GIF
-    # 使用 paletteuse 滤镜应用自定义调色板
-    gif_cmd = [
-        "ffmpeg",
-        "-y",
-        "-i",
-        str(video_path),
-        "-i",
-        str(palette_path),
-        "-lavfi",
-        f"fps={fps},scale={width}:-1:flags=lanczos[x];[x][1:v]paletteuse",
-        str(output_path),
-    ]
+        # 第二步：使用调色板生成 GIF
+        # 使用 paletteuse 滤镜应用自定义调色板
+        gif_cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            str(video_path),
+            "-i",
+            str(palette_path),
+            "-lavfi",
+            f"fps={fps},scale={width}:-1:flags=lanczos[x];[x][1:v]paletteuse",
+            str(output_path),
+        ]
 
-    await exec_ffmpeg_cmd(gif_cmd)
-
-    # 清理临时调色板文件
-    await safe_unlink(palette_path)
+        await exec_ffmpeg_cmd(gif_cmd)
+    finally:
+        # 无论成功失败都清理临时调色板文件（原先异常路径会残留 _palette.png）
+        await safe_unlink(palette_path)
 
     logger.success(f"GIF 转换成功: {output_path.name}, {fmt_size(output_path)}")
 
@@ -206,17 +250,20 @@ async def optimize_gif(gif_path: Path) -> None:
         str(gif_path),
     ]
 
-    process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    _, _stderr = await process.communicate()
+    try:
+        return_code, _stdout, stderr = await _run_subprocess(cmd)
+    except FileNotFoundError:
+        raise RuntimeError("gifsicle 未安装或无法找到可执行文件")
 
-    if process.returncode == 0:
+    if return_code == 0:
         # 替换原文件
         await asyncio.to_thread(temp_path.replace, gif_path)
         logger.success(f"GIF 优化成功: {gif_path.name}, {fmt_size(gif_path)}")
     else:
-        # 清理临时文件
+        # 失败时清理可能残留的临时文件
         await safe_unlink(temp_path)
-        raise RuntimeError("gifsicle 执行失败")
+        error_msg = stderr.decode(errors="replace").strip()
+        raise RuntimeError(f"gifsicle 执行失败: {error_msg}")
 
 
 async def merge_av(

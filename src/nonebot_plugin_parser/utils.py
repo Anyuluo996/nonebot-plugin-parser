@@ -158,6 +158,47 @@ async def has_audio_stream(video_path: Path) -> bool:
         return False
 
 
+async def extract_video_thumbnail(video_path: Path, output_path: Path | None = None) -> Path | None:
+    """从视频抽取首帧作为缩略图（用于无封面 URL 的视频，如 Telegram）。
+
+    Args:
+        video_path: 视频文件路径。
+        output_path: 输出缩略图路径，默认为视频同目录的 ``<stem>_thumb.jpg``。
+
+    Returns:
+        缩略图路径；ffmpeg 不可用或抽取失败时返回 None（不抛异常，降级为无封面）。
+    """
+    if output_path is None:
+        output_path = video_path.with_name(f"{video_path.stem}_thumb.jpg")
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-ss",
+        "00:00:01",  # 跳到第 1 秒（避开黑场），避免首帧全黑
+        "-i",
+        str(video_path),
+        "-vframes",
+        "1",
+        "-vf",
+        "scale=800:-1",  # 宽度 800，高度按比例；与卡片内容宽度一致
+        "-q:v",
+        "3",
+        str(output_path),
+    ]
+
+    try:
+        await exec_ffmpeg_cmd(cmd)
+    except (RuntimeError, FileNotFoundError):
+        logger.debug(f"抽取视频缩略图失败（ffmpeg 不可用或视频异常）: {video_path.name}")
+        return None
+
+    if output_path.exists():
+        logger.debug(f"视频缩略图抽取成功: {output_path.name}")
+        return output_path
+    return None
+
+
 async def convert_video_to_gif(
     video_path: Path,
     output_path: Path | None = None,

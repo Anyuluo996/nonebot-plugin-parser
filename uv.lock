@@ -1666,7 +1666,7 @@ wheels = [
 
 [[package]]
 name = "nonebot-plugin-parser"
-version = "2.7.17"
+version = "2.7.19"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
@@ -2264,10 +2264,10 @@ resolution-markers = [
     "python_full_version < '3.13'",
 ]
 dependencies = [
-    { name = "annotated-types" },
-    { name = "pydantic-core" },
-    { name = "typing-extensions" },
-    { name = "typing-inspection" },
+    { name = "annotated-types", marker = "extra == 'group-21-nonebot-plugin-parser-pydantic-v2' or extra == 'group-21-nonebot-plugin-parser-telegram' or extra != 'group-21-nonebot-plugin-parser-pydantic-v1'" },
+    { name = "pydantic-core", marker = "extra == 'group-21-nonebot-plugin-parser-pydantic-v2' or extra == 'group-21-nonebot-plugin-parser-telegram' or extra != 'group-21-nonebot-plugin-parser-pydantic-v1'" },
+    { name = "typing-extensions", marker = "extra == 'group-21-nonebot-plugin-parser-pydantic-v2' or extra == 'group-21-nonebot-plugin-parser-telegram' or extra != 'group-21-nonebot-plugin-parser-pydantic-v1'" },
+    { name = "typing-inspection", marker = "extra == 'group-21-nonebot-plugin-parser-pydantic-v2' or extra == 'group-21-nonebot-plugin-parser-telegram' or extra != 'group-21-nonebot-plugin-parser-pydantic-v1'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/09/e5/06d23afac9973109d1e3c8ad38e1547a12e860610e327c05ee686827dc37/pydantic-2.13.2.tar.gz", hash = "sha256:b418196607e61081c3226dcd4f0672f2a194828abb9109e9cfb84026564df2d1", size = 843836, upload-time = "2026-04-17T09:31:59.636Z" }
 wheels = [
@@ -2279,7 +2279,7 @@ name = "pydantic-core"
 version = "2.46.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "extra == 'group-21-nonebot-plugin-parser-pydantic-v2' or extra == 'group-21-nonebot-plugin-parser-telegram' or extra != 'group-21-nonebot-plugin-parser-pydantic-v1'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/43/bb/4742f05b739b2478459bb16fa8470549518c802e06ddcf3f106c5081315e/pydantic_core-2.46.2.tar.gz", hash = "sha256:37bb079f9ee3f1a519392b73fda2a96379b31f2013c6b467fe693e7f2987f596", size = 471269, upload-time = "2026-04-17T09:10:07.017Z" }
 wheels = [
@@ -2963,7 +2963,7 @@ name = "typing-inspection"
 version = "0.4.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "extra == 'group-21-nonebot-plugin-parser-pydantic-v2' or extra == 'group-21-nonebot-plugin-parser-telegram' or extra != 'group-21-nonebot-plugin-parser-pydantic-v1'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/55/e3/70399cb7dd41c10ac53367ae42139cf4b1ca5f36bb3dc6c9d33acdb43655/typing_inspection-0.4.2.tar.gz", hash = "sha256:ba561c48a67c5958007083d386c3295464928b01faa735ab8547c5692e87f464", size = 75949, upload-time = "2025-10-01T02:14:41.687Z" }
 wheels = [

@@ -9,7 +9,8 @@
   "prHourlyLimit": 10,
   "separateMajorMinor": false,
   "lockFileMaintenance": {
-    "enabled": true
+    "enabled": true,
+    "schedule": []
   },
   "pip_requirements": { "enabled": false },
   "packageRules": [

@@ -12,19 +12,26 @@
   "pip_requirements": { "enabled": false },
   "packageRules": [
     {
-      "description": "运行时依赖与 dev/extras/test 分组各自单独 PR，便于精确回滚",
-      "matchPackagePatterns": ["*"],
-      "groupName": null
+      "description": "GitHub Actions 工作流依赖合并为一个 PR",
+      "matchManagers": ["github-actions"],
+      "groupName": "github actions"
     },
     {
-      "description": "nonebot 全家桶合并到一个 PR，减少噪音",
-      "matchPackagePatterns": ["^nonebot", "^nonebug"],
-      "groupName": "nonebot ecosystem"
+      "description": "Python 运行时依赖合并为一个 PR",
+      "matchManagers": ["pep621"],
+      "matchDepTypes": ["dependencies"],
+      "groupName": "python runtime"
     },
     {
-      "description": "pytest 相关测试依赖合并",
-      "matchPackagePatterns": ["^pytest", "^respx", "^poethepoet"],
-      "groupName": "test tools"
+      "description": "dev/extras/test 开发依赖合并为一个 PR",
+      "matchManagers": ["pep621"],
+      "matchDepTypes": ["dev-dependencies", "optional-dependencies", "dependency-groups"],
+      "groupName": "python dev"
+    },
+    {
+      "description": "nonebug 走 git source (rev=master)，无法按 digest 跟踪更新，关闭其 PR 避免持续 Errored",
+      "matchPackageNames": ["nonebug"],
+      "enabled": false
     }
   ]
 }

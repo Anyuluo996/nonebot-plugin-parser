@@ -90,29 +90,56 @@ async def test_dynamic():
 
 def test_fallback_select_streams_filters_none_codecs():
     from bilibili_api.video import VideoQuality, VideoCodecs, AudioQuality
-    from bilibili_api.video import VideoStreamDownloadURL, AudioStreamDownloadURL
     from nonebot_plugin_parser.parsers.bilibili import BilibiliParser
 
-    v_good = VideoStreamDownloadURL(url="https://example.com/v1", video_quality=VideoQuality._480P, video_codecs=VideoCodecs.AVC)
-    v_none_codecs = VideoStreamDownloadURL(url="https://example.com/v2", video_quality=VideoQuality._480P, video_codecs=None)
-    v_low = VideoStreamDownloadURL(url="https://example.com/v3", video_quality=VideoQuality._360P, video_codecs=VideoCodecs.AV1)
-    a_high = AudioStreamDownloadURL(url="https://example.com/a1", audio_quality=AudioQuality._192K)
-    a_low = AudioStreamDownloadURL(url="https://example.com/a2", audio_quality=AudioQuality._64K)
+    # 构造一份含 hvc1 流(上游 issue #1035 失败场景)的 dash 数据
+    dash_data = {
+        "dash": {
+            "video": [
+                {"id": VideoQuality._480P.value, "baseUrl": "https://example.com/v1",
+                 "codecs": "avc1.64001f"},
+                # hvc1: 上游 VideoCodecs.HEV.value="hev" 无法匹配 → 原 detect() 置 None
+                {"id": VideoQuality._1080P.value, "baseUrl": "https://example.com/v2",
+                 "codecs": "hvc1.1.6.L180.90"},
+                {"id": VideoQuality._360P.value, "baseUrl": "https://example.com/v3",
+                 "codecs": "av01.0.08M.08"},
+            ],
+            "audio": [
+                {"id": AudioQuality._192K.value, "baseUrl": "https://example.com/a1"},
+                {"id": AudioQuality._64K.value, "baseUrl": "https://example.com/a2"},
+            ],
+        }
+    }
 
-    # 混合 codecs=None 的流，应过滤并选最佳
-    result = BilibiliParser._fallback_select_streams([v_none_codecs, v_good, v_low, a_high, a_low])
-    assert result[0] is v_good
-    assert result[1] is a_high
+    # 默认全部编码允许 → 应恢复 hvc1 流并选最高清晰度 1080P
+    result = BilibiliParser._fallback_select_streams(
+        dash_data, max_quality=VideoQuality._8K
+    )
+    assert result[0].video_codecs is VideoCodecs.HEV
+    assert result[0].video_quality is VideoQuality._1080P
+    assert result[1].audio_quality is AudioQuality._192K
 
-    # 全部 codecs=None → 返回 None
-    result = BilibiliParser._fallback_select_streams([v_none_codecs, a_high])
+    # 限制编码白名单不含 HEV → hvc1 流被过滤，应选次高的 AVC 480P
+    result = BilibiliParser._fallback_select_streams(
+        dash_data, max_quality=VideoQuality._8K,
+        allowed_codecs=[VideoCodecs.AVC, VideoCodecs.AV1],
+    )
+    assert result[0].video_codecs is VideoCodecs.AVC
+    assert result[0].video_quality is VideoQuality._480P
+
+    # 质量上限过滤(传枚举)
+    result = BilibiliParser._fallback_select_streams(
+        dash_data, max_quality=VideoQuality._360P
+    )
+    assert result[0].video_quality is VideoQuality._360P
+
+    # 无法识别编码的流被丢弃
+    bad_data = {"dash": {"video": [
+        {"id": VideoQuality._480P.value, "baseUrl": "https://example.com/x",
+         "codecs": "weird-codec-xyz"},
+    ], "audio": []}}
+    result = BilibiliParser._fallback_select_streams(bad_data)
     assert result[0] is None
-    assert result[1] is a_high
 
-    # 质量上限过滤 (传枚举)
-    result = BilibiliParser._fallback_select_streams([v_good, v_low], max_quality=VideoQuality._360P)
-    assert result[0] is v_low
-
-    # 空列表
-    result = BilibiliParser._fallback_select_streams([])
-    assert result == [None, None]
+    # 空数据
+    assert BilibiliParser._fallback_select_streams({}) == [None, None]

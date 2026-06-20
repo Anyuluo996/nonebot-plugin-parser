@@ -399,12 +399,14 @@ class BilibiliParser(BaseParser):
             )
         except AttributeError:
             # bilibili_api detect_best_streams 排序时 codecs=None 的流会触发 AttributeError
-            # 降级: 用 detect() 获取全部流，手动过滤再选最佳
+            # 上游 issue #1035: hvc1/hev1 等编码无法匹配 VideoCodecs.value("hev")
+            # → video_codecs 残留 None → 排序崩溃
+            # 降级: 从原始 dash 数据重新解析(用自定义 codec 映射识别 hvc1)，手动过滤再选最佳
             logger.debug("detect_best_streams() failed (likely codecs=None), using fallback")
-            all_streams = detecter.detect()
             streams = self._fallback_select_streams(
-                all_streams,
+                download_url_data,
                 max_quality=pconfig.bili_video_quality,
+                allowed_codecs=pconfig.bili_video_codes,
             )
 
         video_stream = streams[0]
@@ -418,21 +420,100 @@ class BilibiliParser(BaseParser):
         logger.debug(f"音频流质量: {audio_stream.audio_quality.name}")
         return video_stream.url, audio_stream.url
 
+    # B站 dash 视频流 codecs 字符串 → VideoCodecs 映射
+    # 上游 issue #1035: VideoCodecs.HEV.value="hev" 无法匹配 "hvc1.x.x"，导致 codecs=None
+    # 这里用自定义前缀映射兜底识别 hvc1/hev1 等变体
+    _CODEC_PREFIX_MAP = {
+        "hvc1": "HEV",
+        "hev1": "HEV",
+        "hvc": "HEV",
+        "avc1": "AVC",
+        "avc": "AVC",
+        "av01": "AV1",
+        "av1": "AV1",
+    }
+
+    @staticmethod
+    def _resolve_codecs(codecs_str: str):
+        """根据 dash 返回的 codecs 字符串识别 VideoCodecs，识别不了返回 None"""
+        from bilibili_api.video import VideoCodecs
+
+        if not codecs_str:
+            return None
+        lower = codecs_str.lower()
+        for prefix, name in BilibiliParser._CODEC_PREFIX_MAP.items():
+            if prefix in lower:
+                return getattr(VideoCodecs, name, None)
+        return None
+
     @staticmethod
     def _fallback_select_streams(
-        all_streams: list,
+        download_url_data: dict,
+        *,
         max_quality=120,
+        allowed_codecs: list | None = None,
     ) -> list:
-        """bilibili_api detect_best_streams 降级: 过滤 codecs=None 的视频流后选最佳"""
-        from bilibili_api.video import AudioStreamDownloadURL, VideoStreamDownloadURL
+        """bilibili_api detect_best_streams 降级: 直接从 dash 原始数据重新解析选最佳流
+
+        绕开上游 issue #1035 中 detect() 把 hvc1 流的 video_codecs 置为 None 的问题：
+        VideoStreamDownloadURL 构造后并未保留原始 codecs 字符串，所以这里从 dash dict
+        重新提取，用 _resolve_codecs 自行识别编码。
+
+        上游修复后(VideoCodecs.HEV.value 变成 tuple) detect_best_streams 不再抛异常，
+        本方法不会被调用，自动成为 no-op。
+        """
+        from bilibili_api.video import (
+            AudioQuality,
+            AudioStreamDownloadURL,
+            VideoQuality,
+            VideoStreamDownloadURL,
+        )
 
         max_qv = max_quality.value if hasattr(max_quality, "value") else max_quality
-        video_streams = [
-            s
-            for s in all_streams
-            if isinstance(s, VideoStreamDownloadURL) and s.video_codecs is not None and s.video_quality.value <= max_qv
-        ]
-        audio_streams = [s for s in all_streams if isinstance(s, AudioStreamDownloadURL)]
+        allowed = set(allowed_codecs) if allowed_codecs is not None else None
+
+        video_streams: list[VideoStreamDownloadURL] = []
+        audio_streams: list[AudioStreamDownloadURL] = []
+
+        dash = download_url_data.get("dash") or {}
+        # bangumi 数据可能多包一层 video_info
+        if not dash and download_url_data.get("video_info"):
+            dash = download_url_data["video_info"].get("dash") or {}
+
+        for vd in dash.get("video", []) or []:
+            try:
+                q = VideoQuality(vd["id"])
+            except (KeyError, ValueError):
+                continue
+            # 忽略 HDR/杜比/超 max 的清晰度
+            if q in (VideoQuality.HDR, VideoQuality.DOLBY):
+                continue
+            if q.value > max_qv:
+                continue
+            url = vd.get("baseUrl") or vd.get("base_url")
+            if not url:
+                continue
+            codecs_enum = BilibiliParser._resolve_codecs(vd.get("codecs", ""))
+            if codecs_enum is None:
+                # 识别不出编码的流直接丢弃，避免再次触发上游排序崩溃
+                continue
+            if allowed is not None and codecs_enum not in allowed:
+                continue
+            video_streams.append(
+                VideoStreamDownloadURL(url=url, video_quality=q, video_codecs=codecs_enum)
+            )
+
+        for ad in dash.get("audio", []) or []:
+            try:
+                q = AudioQuality(ad["id"])
+            except (KeyError, ValueError):
+                continue
+            url = ad.get("baseUrl") or ad.get("base_url")
+            if not url:
+                continue
+            if q.value > AudioQuality._192K.value:
+                continue
+            audio_streams.append(AudioStreamDownloadURL(url=url, audio_quality=q))
 
         best_video = max(video_streams, key=lambda s: s.video_quality.value, default=None)
         best_audio = max(audio_streams, key=lambda s: s.audio_quality.value, default=None)

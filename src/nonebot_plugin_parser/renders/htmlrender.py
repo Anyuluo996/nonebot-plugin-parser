@@ -5,9 +5,9 @@ from nonebot import require
 require("nonebot_plugin_htmlrender")
 from nonebot_plugin_htmlrender import template_to_pic
 
-from ..browser_retry import with_browser_retry
 from . import resources
 from .base import ParseResult, ImageRenderer, pconfig
+from ..browser_retry import with_browser_retry
 
 
 class HtmlRenderer(ImageRenderer):

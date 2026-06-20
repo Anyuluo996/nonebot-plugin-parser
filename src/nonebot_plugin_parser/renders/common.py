@@ -1,3 +1,4 @@
+import asyncio
 from io import BytesIO
 from typing import ClassVar
 from pathlib import Path
@@ -181,6 +182,13 @@ class CommonRenderer(ImageRenderer):
     async def render_image(self, result: ParseResult) -> bytes:
         self.load_resources()
         image = await self._create_card_image(result)
+        # PNG 编码是同步且耗时的 CPU 操作，丢进线程池避免阻塞事件循环
+        output = await asyncio.to_thread(self._save_png, image)
+        image.close()
+        return output
+
+    @staticmethod
+    def _save_png(image: PILImage) -> bytes:
         output = BytesIO()
         image.save(output, format="PNG")
         return output.getvalue()
@@ -205,13 +213,18 @@ class CommonRenderer(ImageRenderer):
             y_pos=self.PADDING,
         )
 
-        # 单次遍历渲染各部分
-        await self._render_header(ctx)
-        await self._render_title(ctx)
-        await self._render_cover_or_images(ctx)
-        await self._render_text(ctx)
-        await self._render_extra(ctx)
-        await self._render_repost(ctx)
+        # 单次遍历渲染各部分；每步前确保画布有足够高度，防止内容画到画布外被裁剪丢失
+        # （原 _ensure_height_enough 是死代码，从未被调用，长内容会被 crop 掉）
+        for render_step in (
+            self._render_header,
+            self._render_title,
+            self._render_cover_or_images,
+            self._render_text,
+            self._render_extra,
+            self._render_repost,
+        ):
+            self._ensure_height_enough(ctx, self.AVATAR_SIZE + self.MAX_COVER_HEIGHT + self.PADDING)
+            await render_step(ctx)
 
         # 裁剪到实际高度
         final_height = ctx.y_pos + self.PADDING
@@ -221,12 +234,13 @@ class CommonRenderer(ImageRenderer):
     def _ensure_height_enough(self, ctx: RenderContext, needed_height: int) -> None:
         """确保画布有足够高度，不够则扩展"""
         if ctx.y_pos + needed_height + self.PADDING > ctx.image.height:
-            # 扩展画布（每次扩展 1.6 倍或至少满足需求）
+            # 扩展画布（每次扩展 1.5 倍或至少满足需求）
             new_height = max(int(ctx.image.height * 1.5), ctx.y_pos + needed_height + self.PADDING * 2)
             logger.debug(f"扩展画布高度: {ctx.image.height} -> {new_height}")
             bg_color = self.BG_COLOR if ctx.not_repost else self.REPOST_BG_COLOR
             new_image = Image.new("RGB", (ctx.card_width, new_height), bg_color)
             new_image.paste(ctx.image, (0, 0))
+            ctx.image.close()
             ctx.image = new_image
             ctx.draw = ImageDraw.Draw(new_image)
 

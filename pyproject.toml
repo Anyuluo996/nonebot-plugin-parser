@@ -1,6 +1,6 @@
 [project]
 name = "nonebot-plugin-parser"
-version = "2.7.18"
+version = "2.7.19"
 description = "NoneBot2 链接分享解析 Alconna 版, 现支持B站|抖音|快手|微博|小红书|YouTube|TikTok|Twitter|AcFun|NGA"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -119,7 +119,7 @@ nonebug = { git = "https://github.com/nonebot/nonebug", rev = "master" }
 [tool.bumpversion]
 tag = true
 commit = true
-current_version = "2.7.18"
+current_version = "2.7.19"
 message = "release: bump vesion from {current_version} to {new_version}"
 
 [[tool.bumpversion.files]]
@@ -179,6 +179,9 @@ asyncio_default_fixture_loop_scope = "session"
 
 [tool.ruff]
 line-length = 120
+# tests/ 根目录下是开发期手动调试/对比脚本（非 CI pytest 目标，
+# CI 只跑 tests/parsers|others|renders 子目录），完全排除 lint/format
+extend-exclude = ["tests/*.py"]
 
 [tool.ruff.format]
 line-ending = "lf"

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "schedule": ["before 6am on monday"],
+  "timezone": "Asia/Shanghai",
+  "dependencyDashboard": true,
+  "labels": ["dependencies"],
+  "commitMessagePrefix": "chore(deps):",
+  "commitMessageTopic": "{{depName}}",
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 6am on monday"]
+  },
+  "pip_requirements": { "enabled": false },
+  "packageRules": [
+    {
+      "description": "运行时依赖与 dev/extras/test 分组各自单独 PR，便于精确回滚",
+      "matchPackagePatterns": ["*"],
+      "groupName": null
+    },
+    {
+      "description": "nonebot 全家桶合并到一个 PR，减少噪音",
+      "matchPackagePatterns": ["^nonebot", "^nonebug"],
+      "groupName": "nonebot ecosystem"
+    },
+    {
+      "description": "pytest 相关测试依赖合并",
+      "matchPackagePatterns": ["^pytest", "^respx", "^poethepoet"],
+      "groupName": "test tools"
+    }
+  ]
+}

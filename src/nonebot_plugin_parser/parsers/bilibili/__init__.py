@@ -4,7 +4,7 @@ from re import Match
 from typing import ClassVar
 from collections.abc import AsyncGenerator
 
-from msgspec import convert, MsgspecError
+from msgspec import MsgspecError, convert
 from nonebot import logger
 from bilibili_api import HEADERS, Credential, select_client, request_settings
 from bilibili_api.opus import Opus
@@ -39,6 +39,7 @@ def _safe_convert(raw, target_type, *, context: str):
     except MsgspecError as e:
         logger.warning(f"B站接口数据结构异常（{context}）: {e}")
         raise ParseException(f"B站接口数据解析失败（{context}）") from e
+
 
 # 选择客户端
 select_client("curl_cffi")
@@ -423,7 +424,7 @@ class BilibiliParser(BaseParser):
     # B站 dash 视频流 codecs 字符串 → VideoCodecs 映射
     # 上游 issue #1035: VideoCodecs.HEV.value="hev" 无法匹配 "hvc1.x.x"，导致 codecs=None
     # 这里用自定义前缀映射兜底识别 hvc1/hev1 等变体
-    _CODEC_PREFIX_MAP = {
+    _CODEC_PREFIX_MAP: ClassVar[dict[str, str]] = {
         "hvc1": "HEV",
         "hev1": "HEV",
         "hvc": "HEV",
@@ -464,8 +465,8 @@ class BilibiliParser(BaseParser):
         """
         from bilibili_api.video import (
             AudioQuality,
-            AudioStreamDownloadURL,
             VideoQuality,
+            AudioStreamDownloadURL,
             VideoStreamDownloadURL,
         )
 
@@ -499,9 +500,7 @@ class BilibiliParser(BaseParser):
                 continue
             if allowed is not None and codecs_enum not in allowed:
                 continue
-            video_streams.append(
-                VideoStreamDownloadURL(url=url, video_quality=q, video_codecs=codecs_enum)
-            )
+            video_streams.append(VideoStreamDownloadURL(url=url, video_quality=q, video_codecs=codecs_enum))
 
         for ad in dash.get("audio", []) or []:
             try:

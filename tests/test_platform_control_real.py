@@ -18,7 +18,7 @@ import json
 import tempfile
 from pathlib import Path
 from datetime import datetime
-from typing import Callable
+from collections.abc import Callable
 
 from nonebot_plugin_parser.constants import PlatformEnum
 

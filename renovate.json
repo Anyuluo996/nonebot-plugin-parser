@@ -35,6 +35,18 @@
       "description": "nonebug 走 git source (rev=master)，无法按 digest 跟踪更新，关闭其 PR 避免持续 Errored",
       "matchPackageNames": ["nonebug"],
       "enabled": false
+    },
+    {
+      "description": "pydantic-v1 组刻意锁 <2.0.0 用于 v1 兼容性测试，不要放宽其上界",
+      "matchPackageNames": ["pydantic"],
+      "matchDepTypes": ["dependency-groups"],
+      "matchPackagePatterns": ["^pydantic"],
+      "enabled": false
+    },
+    {
+      "description": "renovatebot/github-action 升级会影响 Renovate 自身运行，跨大版本风险高，需手动评估，暂不自动升级",
+      "matchPackageNames": ["renovatebot/github-action"],
+      "enabled": false
     }
   ]
 }

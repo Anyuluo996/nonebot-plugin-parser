@@ -6,6 +6,7 @@
   "labels": ["dependencies"],
   "commitMessagePrefix": "chore(deps):",
   "commitMessageTopic": "{{depName}}",
+  "prHourlyLimit": 10,
   "lockFileMaintenance": {
     "enabled": true
   },

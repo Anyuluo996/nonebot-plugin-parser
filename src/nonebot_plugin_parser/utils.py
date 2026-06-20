@@ -51,7 +51,7 @@ FFMPEG_TIMEOUT = 300
 async def _run_subprocess(
     cmd: list[str],
     *,
-    timeout: float = FFMPEG_TIMEOUT,
+    timeout: float = FFMPEG_TIMEOUT,  # noqa: ASYNC109 语义即"超时秒数"，非并发原语
     stdin_devnull: bool = True,
 ) -> tuple[int, bytes, bytes]:
     """统一执行外部子进程：带超时、取消时强制 kill、回收 stdout/stderr 管道。

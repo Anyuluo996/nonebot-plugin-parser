@@ -13,8 +13,8 @@ True，而底层 asyncio 传输（`WriteUnixTransport`）已经关闭，下一�
 `shutdown_browser()` + `init_browser()` 重启浏览器，然后重试一次。
 """
 
-from collections.abc import Awaitable, Callable
 from typing import TypeVar
+from collections.abc import Callable, Awaitable
 
 from nonebot import logger
 
@@ -43,7 +43,7 @@ def _is_browser_dead_error(exc: BaseException) -> bool:
 async def _restart_global_browser() -> None:
     """强制重启 nonebot_plugin_htmlrender 的全局浏览器实例。"""
     try:
-        from nonebot_plugin_htmlrender import shutdown_browser, init_browser
+        from nonebot_plugin_htmlrender import init_browser, shutdown_browser
     except ImportError:
         logger.error("nonebot_plugin_htmlrender 未安装，无法重启浏览器")
         return

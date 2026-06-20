@@ -179,6 +179,9 @@ asyncio_default_fixture_loop_scope = "session"
 
 [tool.ruff]
 line-length = 120
+# tests/ 根目录下是开发期手动调试/对比脚本（非 CI pytest 目标，
+# CI 只跑 tests/parsers|others|renders 子目录），完全排除 lint/format
+extend-exclude = ["tests/*.py"]
 
 [tool.ruff.format]
 line-ending = "lf"

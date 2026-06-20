@@ -1,3 +1,4 @@
+import asyncio
 from io import BytesIO
 from typing import ClassVar
 from pathlib import Path
@@ -5,7 +6,6 @@ from functools import lru_cache
 from dataclasses import dataclass
 from typing_extensions import override
 
-import asyncio
 import emoji
 from PIL import Image, ImageDraw, ImageFont
 from nonebot import logger

@@ -7,20 +7,21 @@
   "commitMessagePrefix": "chore(deps):",
   "commitMessageTopic": "{{depName}}",
   "prHourlyLimit": 10,
+  "separateMajorMinor": false,
   "lockFileMaintenance": {
     "enabled": true
   },
   "pip_requirements": { "enabled": false },
   "packageRules": [
     {
-      "description": "GitHub Actions 工作流依赖合并为一个 PR",
+      "description": "GitHub Actions 工作流依赖合并为一个 PR（major/minor/patch 不拆分）",
       "matchManagers": ["github-actions"],
       "groupName": "github actions"
     },
     {
-      "description": "Python 运行时依赖合并为一个 PR",
+      "description": "Python 运行时依赖 + 构建后端合并为一个 PR",
       "matchManagers": ["pep621"],
-      "matchDepTypes": ["dependencies"],
+      "matchDepTypes": ["dependencies", "build-system"],
       "groupName": "python runtime"
     },
     {

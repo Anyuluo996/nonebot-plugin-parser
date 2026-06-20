@@ -2,3 +2,15 @@
 detecter = "detecter"
 Detecter = "Detecter"
 mapp = "mapp"
+streamd = "streamd"
+
+# 历史 API 抓取数据 / 渲染输出，含中文用户名、原始字段，非人工撰写文本
+[files]
+extend-exclude = [
+  "docs/merge-history",       # 历史合并记录文档（含 commit hash 片段、旧笔记）
+  "tests/*.json",             # API 原始数据/渲染输出快照
+  "tests/pipeline_output",    # 流水线输出快照
+  "tests/render_output",      # 渲染输出快照
+  "tests/*.md",               # 历史分析报告（含 commit hash、旧描述）
+  "tests/RENDER_LOGIC.py",    # 调试脚本，含中文变量片段
+]

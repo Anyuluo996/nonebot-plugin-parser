@@ -62,26 +62,19 @@ class MockPagesResponse:
         return json.dumps({"error": False, "body": _make_pages_body()}).encode()
 
 
-async def _make_mock_async_client(illust_resp: MockIllustResponse, pages_resp: MockPagesResponse):
-    """构造返回预设响应的 mock AsyncClient"""
+def _make_mock_request(illust_resp: MockIllustResponse, pages_resp: MockPagesResponse):
+    """构造返回预设响应的 mock ``request`` 回调。
 
-    class FakeAsyncClientContext:
-        def __init__(self):
-            self._counter = 0
-            self._responses = [illust_resp, pages_resp]
+    解析器重构后通过 ``BaseParser.request`` 统一发请求，测试改为 mock 该方法，
+    依次返回 illust / pages 响应。
+    """
 
-        async def __aenter__(self):
-            return self
+    responses = [illust_resp, pages_resp]
 
-        async def __aexit__(self, *args):
-            pass
+    async def _fake_request(*args, **kwargs):
+        return responses.pop(0)
 
-        async def get(self, url: str, **kwargs):
-            resp = self._responses[self._counter]
-            self._counter += 1
-            return resp
-
-    return FakeAsyncClientContext()
+    return _fake_request
 
 
 @pytest.mark.asyncio
@@ -102,9 +95,7 @@ async def test_pixiv_r18_block_when_disabled():
     illust_resp = MockIllustResponse(x_restrict=2)
     pages_resp = MockPagesResponse()
 
-    with mock.patch("nonebot_plugin_parser.parsers.pixiv.AsyncClient") as MockClient:
-        MockClient.return_value = await _make_mock_async_client(illust_resp, pages_resp)
-
+    with mock.patch.object(parser, "request", _make_mock_request(illust_resp, pages_resp)):
         with pytest.raises(IgnoreException) as exc_info:
             await parser.parse(keyword, searched)
 
@@ -131,9 +122,7 @@ async def test_pixiv_r18g_block_when_disabled():
     illust_resp = MockIllustResponse(x_restrict=1)
     pages_resp = MockPagesResponse()
 
-    with mock.patch("nonebot_plugin_parser.parsers.pixiv.AsyncClient") as MockClient:
-        MockClient.return_value = await _make_mock_async_client(illust_resp, pages_resp)
-
+    with mock.patch.object(parser, "request", _make_mock_request(illust_resp, pages_resp)):
         with pytest.raises(IgnoreException) as exc_info:
             await parser.parse(keyword, searched)
 
@@ -164,9 +153,7 @@ async def test_pixiv_r18_allow_when_enabled():
         illust_resp = MockIllustResponse(x_restrict=2)
         pages_resp = MockPagesResponse()
 
-        with mock.patch("nonebot_plugin_parser.parsers.pixiv.AsyncClient") as MockClient:
-            MockClient.return_value = await _make_mock_async_client(illust_resp, pages_resp)
-
+        with mock.patch.object(parser, "request", _make_mock_request(illust_resp, pages_resp)):
             with mock.patch("nonebot_plugin_parser.download.DOWNLOADER") as mock_dl:
                 mock_task = mock.MagicMock()
                 mock_dl.download_img.return_value = mock_task

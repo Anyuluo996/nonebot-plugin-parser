@@ -77,7 +77,7 @@ class TelegramParser(BaseParser):
 
         # 2. 下载媒体到 cache_dir
         # 用 url 哈希作为文件名前缀，便于去重
-        from ...utils import generate_file_name
+        from ...utils import generate_file_name, extract_video_thumbnail
 
         target_base = generate_file_name(url)  # 不带扩展名
         try:
@@ -95,13 +95,17 @@ class TelegramParser(BaseParser):
             raise ParseException("Telegram 媒体下载完成但未获得文件")
 
         # 3. 按扩展名分类，构造内容
+        from ..data import VideoContent
+
         contents = []
         for path in paths:
             media_type = classify_by_ext(path.name)
             match media_type:
                 case "video":
-                    # path 直接传入（已是 Path，非下载任务）
-                    contents.append(self.create_video_content(path))
+                    # tdl 下载的视频没有封面 URL，本地用 ffmpeg 抽首帧作为缩略图，
+                    # 让渲染卡片能显示视频封面 + 播放按钮（ffmpeg 不可用时降级为无封面）
+                    thumbnail = await extract_video_thumbnail(path)
+                    contents.append(VideoContent(path, cover=thumbnail))
                 case "audio":
                     contents.append(self.create_audio_content(path))
                 case "image":

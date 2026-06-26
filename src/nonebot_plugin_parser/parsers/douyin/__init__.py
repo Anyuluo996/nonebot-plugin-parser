@@ -1,11 +1,9 @@
 import re
 from typing import ClassVar
 
-from httpx import AsyncClient
 from nonebot import logger
 
 from ..base import (
-    COMMON_TIMEOUT,
     Platform,
     BaseParser,
     PlatformEnum,
@@ -65,16 +63,15 @@ class DouyinParser(BaseParser):
     async def parse_video(self, url: str):
         from . import video
 
-        async with AsyncClient(
+        response = await self.request(
+            url,
             headers=self.ios_headers,
-            timeout=COMMON_TIMEOUT,
             follow_redirects=False,
-            verify=False,
-        ) as client:
-            response = await client.get(url)
-            if response.status_code != 200:
-                raise ParseException(f"status: {response.status_code}")
-            text = response.text
+            raise_for_status=False,
+        )
+        if response.status_code != 200:
+            raise ParseException(f"status: {response.status_code}")
+        text = response.text
 
         pattern = re.compile(
             pattern=r"window\._ROUTER_DATA\s*=\s*(.*?)</script>",
@@ -117,9 +114,7 @@ class DouyinParser(BaseParser):
         detail_url = "https://www.douyin.com/aweme/v1/web/aweme/detail/"
         headers = {**self.headers, "Referer": "https://www.douyin.com/"}
         params = {"aweme_id": video_id, "aid": "6383"}
-        async with AsyncClient(headers=headers, verify=False, timeout=COMMON_TIMEOUT) as client:
-            response = await client.get(detail_url, params=params)
-            response.raise_for_status()
+        response = await self.request(detail_url, headers=headers, params=params)
 
         aweme_detail = slides.detail_decoder.decode(response.content).aweme_detail
         if aweme_detail is None:

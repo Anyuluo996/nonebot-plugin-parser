@@ -1,8 +1,6 @@
 import re
 from typing import ClassVar
 
-from httpx import AsyncClient
-
 from ..base import BaseParser, PlatformEnum, ParseException, handle
 from ..data import Platform
 
@@ -33,11 +31,8 @@ class KuaiShouParser(BaseParser):
         # /fw/long-video/ 返回结果不一样, 统一替换为 /fw/photo/ 请求
         real_url = real_url.replace("/fw/long-video/", "/fw/photo/")
 
-        async with AsyncClient(headers=self.ios_headers, timeout=self.timeout) as client:
-            response = await client.get(real_url)
-            response.raise_for_status()
-            response_text = response.text
-
+        response = await self.request(real_url, headers=self.ios_headers)
+        response_text = response.text
         pattern = r"window\.INIT_STATE\s*=\s*(.*?)</script>"
         matched = re.search(pattern, response_text)
 

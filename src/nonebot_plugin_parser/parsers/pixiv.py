@@ -2,7 +2,7 @@ import re
 import asyncio
 from typing import Any, ClassVar
 
-from httpx import Proxy, AsyncClient
+from httpx import Proxy
 from msgspec import Struct
 from msgspec.json import Decoder
 
@@ -87,36 +87,29 @@ class PixivParser(BaseParser):
         base_url = self._get_base_url()
         proxy = self._get_proxy()
 
-        async with AsyncClient(
-            headers=self.headers,
-            timeout=self.timeout,
-            proxy=proxy,
-        ) as client:
-            # 获取基本信息（包含 tags 和 xRestrict）
-            illust_resp = await client.get(f"{base_url}/ajax/illust/{illust_id}")
-            illust_resp.raise_for_status()
-            illust_data = illust_decoder.decode(illust_resp.content)
+        # 获取基本信息（包含 tags 和 xRestrict）
+        illust_resp = await self.request(f"{base_url}/ajax/illust/{illust_id}", proxy=proxy)
+        illust_data = illust_decoder.decode(illust_resp.content)
 
-            if illust_data.error:
-                raise ParseException(f"Pixiv 解析失败: {illust_id}")
+        if illust_data.error:
+            raise ParseException(f"Pixiv 解析失败: {illust_id}")
 
-            body = illust_data.body
+        body = illust_data.body
 
-            # 检查 R18/R-18G 限制
-            x_restrict = body.get("xRestrict", 0)
-            is_restricted = x_restrict >= 1
-            if is_restricted and not self._is_r18_allowed():
-                from ..exception import IgnoreException
+        # 检查 R18/R-18G 限制
+        x_restrict = body.get("xRestrict", 0)
+        is_restricted = x_restrict >= 1
+        if is_restricted and not self._is_r18_allowed():
+            from ..exception import IgnoreException
 
-                raise IgnoreException("R18/R-18G 内容已禁用，请开启 par_pixivR18")
+            raise IgnoreException("R18/R-18G 内容已禁用，请开启 par_pixivR18")
 
-            # 获取图片页面列表
-            pages_resp = await client.get(f"{base_url}/ajax/illust/{illust_id}/pages")
-            pages_resp.raise_for_status()
-            pages_data = pages_decoder.decode(pages_resp.content)
+        # 获取图片页面列表
+        pages_resp = await self.request(f"{base_url}/ajax/illust/{illust_id}/pages", proxy=proxy)
+        pages_data = pages_decoder.decode(pages_resp.content)
 
-            if pages_data.error:
-                raise ParseException(f"Pixiv 图片获取失败: {illust_id}")
+        if pages_data.error:
+            raise ParseException(f"Pixiv 图片获取失败: {illust_id}")
 
         # 判断是否为动图
         illust_type = body.get("illustType", 0)
@@ -137,22 +130,18 @@ class PixivParser(BaseParser):
         proxy = self._get_proxy()
 
         # 获取动图元数据（ZIP URL 和帧信息）
-        async with AsyncClient(
-            headers=self.headers,
-            timeout=self.timeout,
-            proxy=proxy,
-        ) as client:
-            ugoira_resp = await client.get(f"{base_url}/ajax/illust/{illust_id}/ugoira_meta")
-            ugoira_resp.raise_for_status()
-            ugoira_data = ugoira_decoder.decode(ugoira_resp.content)
+        ugoira_resp = await self.request(
+            f"{base_url}/ajax/illust/{illust_id}/ugoira_meta", proxy=proxy
+        )
+        ugoira_data = ugoira_decoder.decode(ugoira_resp.content)
 
-            if ugoira_data.error:
-                raise ParseException(f"Pixiv 动图元数据获取失败: {illust_id}")
+        if ugoira_data.error:
+            raise ParseException(f"Pixiv 动图元数据获取失败: {illust_id}")
 
-            ugoira_body = ugoira_data.body
-            # 优先使用原画 ZIP
-            zip_url = ugoira_body.get("originalSrc") or ugoira_body.get("src", "")
-            frames: list[dict[str, Any]] = ugoira_body.get("frames", [])
+        ugoira_body = ugoira_data.body
+        # 优先使用原画 ZIP
+        zip_url = ugoira_body.get("originalSrc") or ugoira_body.get("src", "")
+        frames: list[dict[str, Any]] = ugoira_body.get("frames", [])
 
         if not zip_url or not frames:
             raise ParseException(f"Pixiv 动图数据不完整: {illust_id}")
@@ -210,19 +199,15 @@ class PixivParser(BaseParser):
         avatar_url = None
         if user_id:
             proxy = self._get_proxy()
-            async with AsyncClient(
-                headers=self.headers,
-                timeout=self.timeout,
-                proxy=proxy,
-            ) as client:
-                try:
-                    user_resp = await client.get(f"{base_url}/ajax/user/{user_id}?full=1")
-                    user_resp.raise_for_status()
-                    user_data = user_decoder.decode(user_resp.content)
-                    if not user_data.error:
-                        avatar_url = user_data.body.get("image")
-                except Exception:
-                    pass
+            try:
+                user_resp = await self.request(
+                    f"{base_url}/ajax/user/{user_id}?full=1", proxy=proxy
+                )
+                user_data = user_decoder.decode(user_resp.content)
+                if not user_data.error:
+                    avatar_url = user_data.body.get("image")
+            except Exception:
+                pass
 
         return self.create_author(
             user_name or "未知作者",

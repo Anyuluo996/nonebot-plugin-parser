@@ -4,7 +4,7 @@ from re import Match
 from typing import ClassVar
 from collections.abc import AsyncGenerator
 
-from msgspec import convert
+from msgspec import MsgspecError, convert
 from nonebot import logger
 from bilibili_api import HEADERS, Credential, select_client, request_settings
 from bilibili_api.opus import Opus
@@ -23,6 +23,23 @@ from ..base import (
 from ..data import Platform, ParseResult, ImageContent, MediaContent
 from ..cookie import ck2dict
 from .dynamic import DynamicInfo
+
+# 转发链递归深度上限，防止循环引用/极深嵌套导致 RecursionError 崩溃
+MAX_REPOST_DEPTH = 5
+
+
+def _safe_convert(raw, target_type, *, context: str):
+    """安全 msgspec 转换：API 返回结构变化时抛 ParseException 而非 ValidationError 崩溃。
+
+    B 站 API 在风控/改版中字段经常变动，msgspec.convert 缺字段/类型不符会抛
+    ValidationError，未捕获会让整条解析直接失败。
+    """
+    try:
+        return convert(raw, target_type)
+    except MsgspecError as e:
+        logger.warning(f"B站接口数据结构异常（{context}）: {e}")
+        raise ParseException(f"B站接口数据解析失败（{context}）") from e
+
 
 # 选择客户端
 select_client("curl_cffi")
@@ -158,7 +175,7 @@ class BilibiliParser(BaseParser):
         from .video import VideoInfo, AIConclusion
 
         video = await self._get_video(bvid=bvid, avid=avid)
-        video_info = convert(await video.get_info(), VideoInfo)
+        video_info = _safe_convert(await video.get_info(), VideoInfo, context="视频信息")
         # UP
         author = self.create_author(video_info.owner.name, video_info.owner.face)
         # 处理分 p
@@ -168,7 +185,7 @@ class BilibiliParser(BaseParser):
         if self._credential:
             cid = await video.get_cid(page_info.index)
             ai_conclusion = await video.get_ai_conclusion(cid)
-            ai_conclusion = convert(ai_conclusion, AIConclusion)
+            ai_conclusion = _safe_convert(ai_conclusion, AIConclusion, context="AI总结")
             ai_summary = ai_conclusion.summary
         else:
             ai_summary: str = "哔哩哔哩 cookie 未配置或失效, 无法使用 AI 总结"
@@ -219,10 +236,10 @@ class BilibiliParser(BaseParser):
         if await dynamic.is_article():
             return await self._parse_bilibli_api_opus(dynamic.turn_to_opus())
 
-        dynamic_info = convert(await dynamic.get_info(), DynamicWrapper).item
+        dynamic_info = _safe_convert(await dynamic.get_info(), DynamicWrapper, context="动态信息").item
         return await self._parse_dynamic_info(dynamic_info)
 
-    async def _parse_dynamic_info(self, dynamic_info: DynamicInfo):
+    async def _parse_dynamic_info(self, dynamic_info: DynamicInfo, depth: int = 0):
         if dynamic_info.is_video():
             if (major := dynamic_info.modules.major) and (archive := major.archive):
                 result = await self.parse_video(bvid=archive.bvid)
@@ -236,8 +253,9 @@ class BilibiliParser(BaseParser):
         contents.extend(self.create_image_contents(dynamic_info.image_urls))
 
         repost = None
-        if dynamic_info.type == "DYNAMIC_TYPE_FORWARD" and dynamic_info.orig is not None:
-            repost = await self._parse_dynamic_info(dynamic_info.orig)
+        # 限制转发链递归深度，防止循环引用/极深嵌套导致 RecursionError 崩溃
+        if dynamic_info.type == "DYNAMIC_TYPE_FORWARD" and dynamic_info.orig is not None and depth < MAX_REPOST_DEPTH:
+            repost = await self._parse_dynamic_info(dynamic_info.orig, depth + 1)
 
         return self.result(
             title=dynamic_info.title,
@@ -263,7 +281,7 @@ class BilibiliParser(BaseParser):
         if not isinstance(opus_info, dict):
             raise ParseException("获取图文动态信息失败")
         # 转换为结构体
-        opus_data = convert(opus_info, OpusItem)
+        opus_data = _safe_convert(opus_info, OpusItem, context="图文动态")
         logger.debug(f"opus_data: {opus_data}")
         author = self.create_author(*opus_data.name_avatar)
 
@@ -291,7 +309,7 @@ class BilibiliParser(BaseParser):
         room = LiveRoom(room_display_id=room_id, credential=await self.credential)
         info_dict = await room.get_room_info()
 
-        room_data = convert(info_dict, RoomData)
+        room_data = _safe_convert(info_dict, RoomData, context="直播信息")
         contents: list[MediaContent] = []
         # 下载封面
         if cover := room_data.cover:
@@ -326,7 +344,7 @@ class BilibiliParser(BaseParser):
         if fav_dict["medias"] is None:
             raise ParseException("收藏夹内容为空, 或被风控")
 
-        favdata = convert(fav_dict, FavData)
+        favdata = _safe_convert(fav_dict, FavData, context="收藏夹")
 
         author = self.create_author(favdata.info.upper.name, favdata.info.upper.face)
 
@@ -382,12 +400,14 @@ class BilibiliParser(BaseParser):
             )
         except AttributeError:
             # bilibili_api detect_best_streams 排序时 codecs=None 的流会触发 AttributeError
-            # 降级: 用 detect() 获取全部流，手动过滤再选最佳
+            # 上游 issue #1035: hvc1/hev1 等编码无法匹配 VideoCodecs.value("hev")
+            # → video_codecs 残留 None → 排序崩溃
+            # 降级: 从原始 dash 数据重新解析(用自定义 codec 映射识别 hvc1)，手动过滤再选最佳
             logger.debug("detect_best_streams() failed (likely codecs=None), using fallback")
-            all_streams = detecter.detect()
             streams = self._fallback_select_streams(
-                all_streams,
+                download_url_data,
                 max_quality=pconfig.bili_video_quality,
+                allowed_codecs=pconfig.bili_video_codes,
             )
 
         video_stream = streams[0]
@@ -401,21 +421,98 @@ class BilibiliParser(BaseParser):
         logger.debug(f"音频流质量: {audio_stream.audio_quality.name}")
         return video_stream.url, audio_stream.url
 
+    # B站 dash 视频流 codecs 字符串 → VideoCodecs 映射
+    # 上游 issue #1035: VideoCodecs.HEV.value="hev" 无法匹配 "hvc1.x.x"，导致 codecs=None
+    # 这里用自定义前缀映射兜底识别 hvc1/hev1 等变体
+    _CODEC_PREFIX_MAP: ClassVar[dict[str, str]] = {
+        "hvc1": "HEV",
+        "hev1": "HEV",
+        "hvc": "HEV",
+        "avc1": "AVC",
+        "avc": "AVC",
+        "av01": "AV1",
+        "av1": "AV1",
+    }
+
+    @staticmethod
+    def _resolve_codecs(codecs_str: str):
+        """根据 dash 返回的 codecs 字符串识别 VideoCodecs，识别不了返回 None"""
+        from bilibili_api.video import VideoCodecs
+
+        if not codecs_str:
+            return None
+        lower = codecs_str.lower()
+        for prefix, name in BilibiliParser._CODEC_PREFIX_MAP.items():
+            if prefix in lower:
+                return getattr(VideoCodecs, name, None)
+        return None
+
     @staticmethod
     def _fallback_select_streams(
-        all_streams: list,
+        download_url_data: dict,
+        *,
         max_quality=120,
+        allowed_codecs: list | None = None,
     ) -> list:
-        """bilibili_api detect_best_streams 降级: 过滤 codecs=None 的视频流后选最佳"""
-        from bilibili_api.video import AudioStreamDownloadURL, VideoStreamDownloadURL
+        """bilibili_api detect_best_streams 降级: 直接从 dash 原始数据重新解析选最佳流
+
+        绕开上游 issue #1035 中 detect() 把 hvc1 流的 video_codecs 置为 None 的问题：
+        VideoStreamDownloadURL 构造后并未保留原始 codecs 字符串，所以这里从 dash dict
+        重新提取，用 _resolve_codecs 自行识别编码。
+
+        上游修复后(VideoCodecs.HEV.value 变成 tuple) detect_best_streams 不再抛异常，
+        本方法不会被调用，自动成为 no-op。
+        """
+        from bilibili_api.video import (
+            AudioQuality,
+            VideoQuality,
+            AudioStreamDownloadURL,
+            VideoStreamDownloadURL,
+        )
 
         max_qv = max_quality.value if hasattr(max_quality, "value") else max_quality
-        video_streams = [
-            s
-            for s in all_streams
-            if isinstance(s, VideoStreamDownloadURL) and s.video_codecs is not None and s.video_quality.value <= max_qv
-        ]
-        audio_streams = [s for s in all_streams if isinstance(s, AudioStreamDownloadURL)]
+        allowed = set(allowed_codecs) if allowed_codecs is not None else None
+
+        video_streams: list[VideoStreamDownloadURL] = []
+        audio_streams: list[AudioStreamDownloadURL] = []
+
+        dash = download_url_data.get("dash") or {}
+        # bangumi 数据可能多包一层 video_info
+        if not dash and download_url_data.get("video_info"):
+            dash = download_url_data["video_info"].get("dash") or {}
+
+        for vd in dash.get("video", []) or []:
+            try:
+                q = VideoQuality(vd["id"])
+            except (KeyError, ValueError):
+                continue
+            # 忽略 HDR/杜比/超 max 的清晰度
+            if q in (VideoQuality.HDR, VideoQuality.DOLBY):
+                continue
+            if q.value > max_qv:
+                continue
+            url = vd.get("baseUrl") or vd.get("base_url")
+            if not url:
+                continue
+            codecs_enum = BilibiliParser._resolve_codecs(vd.get("codecs", ""))
+            if codecs_enum is None:
+                # 识别不出编码的流直接丢弃，避免再次触发上游排序崩溃
+                continue
+            if allowed is not None and codecs_enum not in allowed:
+                continue
+            video_streams.append(VideoStreamDownloadURL(url=url, video_quality=q, video_codecs=codecs_enum))
+
+        for ad in dash.get("audio", []) or []:
+            try:
+                q = AudioQuality(ad["id"])
+            except (KeyError, ValueError):
+                continue
+            url = ad.get("baseUrl") or ad.get("base_url")
+            if not url:
+                continue
+            if q.value > AudioQuality._192K.value:
+                continue
+            audio_streams.append(AudioStreamDownloadURL(url=url, audio_quality=q))
 
         best_video = max(video_streams, key=lambda s: s.video_quality.value, default=None)
         best_audio = max(audio_streams, key=lambda s: s.audio_quality.value, default=None)

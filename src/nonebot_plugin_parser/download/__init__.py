@@ -80,31 +80,38 @@ class _FollowRedirect(Exception):
         self.location = location
 
 
-def _auto_referer(url: str) -> str | None:
-    """根据 URL 域名返回应使用的 Referer，不在白名单中返回 None"""
+def _extract_host(url: str) -> str | None:
+    """从 URL 中提取主机名（去掉端口），解析失败返回 None。"""
     try:
-        netloc = urlparse(url).netloc.rsplit(":", 1)[0]
-        return _REFERRER_MAP.get(netloc)
+        return urlparse(url).netloc.rsplit(":", 1)[0]
     except Exception:
         return None
 
 
+def _match_domain(url: str, domain_set: frozenset[str]) -> bool:
+    """判断 URL 的主机名是否命中域名集合（精确匹配或为其子域名）。"""
+    netloc = _extract_host(url)
+    if netloc is None:
+        return False
+    return any(netloc == d or netloc.endswith("." + d) for d in domain_set)
+
+
+def _auto_referer(url: str) -> str | None:
+    """根据 URL 域名返回应使用的 Referer，不在白名单中返回 None"""
+    netloc = _extract_host(url)
+    if netloc is None:
+        return None
+    return _REFERRER_MAP.get(netloc)
+
+
 def _use_curl(url: str) -> bool:
     """判断该 URL 是否走 curl 下载"""
-    try:
-        netloc = urlparse(url).netloc.rsplit(":", 1)[0]
-        return any(netloc == d or netloc.endswith("." + d) for d in _CURL_ONLY_DOMAINS)
-    except Exception:
-        return False
+    return _match_domain(url, _CURL_ONLY_DOMAINS)
 
 
 def _bypass_proxy(url: str) -> bool:
     """判断该 URL 是否应绕过代理（抖音等国内 CDN）"""
-    try:
-        netloc = urlparse(url).netloc.rsplit(":", 1)[0]
-        return any(netloc == d or netloc.endswith("." + d) for d in _NO_PROXY_DOMAINS)
-    except Exception:
-        return False
+    return _match_domain(url, _NO_PROXY_DOMAINS)
 
 
 async def _download_by_curl(
@@ -128,52 +135,74 @@ async def _download_by_curl(
 
     for attempt in range(max_retries + 1):
         try:
-            async with AsyncSession(impersonate=impersonate) as session:
-                resp = await session.get(url, headers=headers, allow_redirects=True, proxies=proxies)
-            status = resp.status_code
+            # curl_cffi 也加超时（DOWNLOAD_TIMEOUT 秒），避免连接挂起永久卡死下载
+            async with AsyncSession(impersonate=impersonate, timeout=DOWNLOAD_TIMEOUT) as session:
+                # 流式下载：边读边累计大小，超限立即中止，避免把整个大文件载入内存
+                resp = await session.get(
+                    url,
+                    headers=headers,
+                    allow_redirects=True,
+                    proxies=proxies,
+                    stream=True,
+                )
+                status = resp.status_code
 
-            if status == 567:
-                if attempt < max_retries:
-                    wait = 2**attempt
+                if status == 567:
+                    raise _RetryDownload("567 频率限制")
+
+                if status != 200:
+                    await safe_unlink(file_path)
+                    logger.error("curl_cffi 下载失败 HTTP {} | url: {}", status, url)
+                    raise DownloadException("媒体下载失败")
+
+                # 流式写盘 + 大小上限校验（修复：原先 len(resp.content) 已把整文件载入内存）
+                downloaded_size = 0
+                exceed_size_limit = False
+                async with aiofiles.open(file_path, "wb") as f:
+                    async for chunk in resp.aiter_content():
+                        if not chunk:
+                            continue
+                        downloaded_size += len(chunk)
+                        if downloaded_size > max_size_bytes:
+                            exceed_size_limit = True
+                            break
+                        await f.write(chunk)
+
+                if exceed_size_limit:
+                    await safe_unlink(file_path)
                     logger.warning(
-                        "媒体服务器返回 567 (疑似频率限制), {}s 后重试 ({}/{}) | url: {}",
-                        wait,
-                        attempt + 1,
-                        max_retries,
+                        "媒体 url: {} 大小 {:.2f} MB, 超过 {} MB, 取消下载",
                         url,
+                        downloaded_size / 1024 / 1024,
+                        pconfig.max_size,
                     )
-                    await asyncio.sleep(wait)
-                    continue
+                    raise IgnoreException
+
+                if downloaded_size == 0:
+                    await safe_unlink(file_path)
+                    logger.warning("媒体 url: {}, 大小为 0, 取消下载", url)
+                    raise IgnoreException
+
+                return file_path
+
+        except (IgnoreException, DownloadException):
+            # 语义明确的业务异常：不应被重试，直接上抛
+            raise
+        except _RetryDownload:
+            if attempt == max_retries:
                 await safe_unlink(file_path)
                 logger.error("567 重试耗尽 | url: {}", url)
                 raise DownloadException("媒体下载失败")
-
-            if status != 200:
-                await safe_unlink(file_path)
-                logger.error("curl_cffi 下载失败 HTTP {} | url: {}", status, url)
-                raise DownloadException("媒体下载失败")
-
-            content_len = len(resp.content)
-            if content_len == 0:
-                await safe_unlink(file_path)
-                logger.warning("媒体 url: {}, 大小为 0, 取消下载", url)
-                raise IgnoreException
-
-            if content_len > max_size_bytes:
-                await safe_unlink(file_path)
-                logger.warning(
-                    "媒体 url: {} 大小 {:.2f} MB, 超过 {} MB, 取消下载",
-                    url,
-                    content_len / 1024 / 1024,
-                    pconfig.max_size,
-                )
-                raise IgnoreException
-
-            async with aiofiles.open(file_path, "wb") as f:
-                await f.write(resp.content)
-
-            return file_path
-
+            wait = 2**attempt
+            logger.warning(
+                "媒体服务器返回 567 (疑似频率限制), {}s 后重试 ({}/{}) | url: {}",
+                wait,
+                attempt + 1,
+                max_retries,
+                url,
+            )
+            await asyncio.sleep(wait)
+            continue
         except Exception as e:
             if attempt == max_retries:
                 await safe_unlink(file_path)
@@ -477,22 +506,41 @@ class StreamDownloader:
             video_name = generate_file_name(m3u8_url, ".mp4")
 
         video_path = pconfig.cache_dir / video_name
+        max_size_bytes = pconfig.max_size * 1024 * 1024
+        slice_headers = ext_headers or {}
 
         try:
             async with aiofiles.open(video_path, "wb") as f:
                 total_size = 0
+                exceed_size_limit = False
                 with self.rich_progress(desc=video_name) as update_progress:
                     for url in await self._get_m3u8_slices(m3u8_url):
                         slice_client = self.direct_client if _bypass_proxy(url) else self.client
-                        async with slice_client.stream("GET", url, headers=ext_headers) as response:
+                        async with slice_client.stream("GET", url, headers=slice_headers) as response:
                             async for chunk in response.aiter_bytes(chunk_size=1024 * 1024):
-                                await f.write(chunk)
                                 total_size += len(chunk)
+                                # 大小上限校验：构造/被劫持的 m3u8 可让 bot 无限写盘到磁盘满
+                                if total_size > max_size_bytes:
+                                    exceed_size_limit = True
+                                    break
+                                await f.write(chunk)
                                 update_progress(advance=len(chunk), total=total_size)
+                        if exceed_size_limit:
+                            break
         except HTTPError:
             await safe_unlink(video_path)
             logger.exception("m3u8 视频下载失败")
             raise DownloadException("m3u8 视频下载失败")
+
+        if exceed_size_limit:
+            await safe_unlink(video_path)
+            logger.warning(
+                "m3u8 视频 url: {} 大小 {:.2f} MB, 超过 {} MB, 取消下载",
+                m3u8_url,
+                total_size / 1024 / 1024,
+                pconfig.max_size,
+            )
+            raise IgnoreException
 
         return video_path
 
@@ -500,10 +548,10 @@ class StreamDownloader:
         """获取 m3u8 分片"""
 
         m3u8_client = self.direct_client if _bypass_proxy(m3u8_url) else self.client
-        response = await m3u8_client.get(m3u8_url)
-        response.raise_for_status()
+        async with m3u8_client.stream("GET", m3u8_url) as response:
+            response.raise_for_status()
+            slices_text = response.text
 
-        slices_text = response.text
         slices: list[str] = []
 
         for line in slices_text.splitlines():

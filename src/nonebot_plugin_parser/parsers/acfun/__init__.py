@@ -1,11 +1,9 @@
 import re
 from typing import ClassVar
 
-from httpx import AsyncClient
 from nonebot import logger
 
 from ..base import (
-    COMMON_TIMEOUT,
     Platform,
     BaseParser,
     PlatformEnum,
@@ -57,10 +55,8 @@ class AcfunParser(BaseParser):
         # 拼接查询参数
         url = f"{url}?quickViewId=videoInfo_new&ajaxpipe=1"
 
-        async with AsyncClient(headers=self.headers, timeout=COMMON_TIMEOUT) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            raw = response.text
+        response = await self.request(url)
+        raw = response.text
 
         matched = re.search(r"window\.videoInfo =(.*?)</script>", raw)
         if not matched:

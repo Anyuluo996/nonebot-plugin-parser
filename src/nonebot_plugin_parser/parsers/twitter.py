@@ -2,7 +2,6 @@ import re
 from typing import Any, Literal, ClassVar
 from itertools import chain
 
-from httpx import AsyncClient
 from msgspec import Struct, field
 from msgspec.json import Decoder
 
@@ -45,6 +44,9 @@ class VxTwitterResponse(Struct):
 
 decoder = Decoder(VxTwitterResponse)
 
+# 转发链递归深度上限，防止循环引用/极深嵌套导致 RecursionError 崩溃
+MAX_REPOST_DEPTH = 5
+
 
 class TwitterParser(BaseParser):
     platform: ClassVar[Platform] = Platform(name=PlatformEnum.TWITTER, display_name="小蓝鸟")
@@ -58,14 +60,11 @@ class TwitterParser(BaseParser):
         """使用 vxtwitter API 解析 Twitter 链接"""
 
         api_url = url.replace("x.com", "api.vxtwitter.com")
-        async with AsyncClient(headers=self.headers, timeout=self.timeout) as client:
-            response = await client.get(api_url)
-            response.raise_for_status()
-
+        response = await self.request(api_url)
         data = decoder.decode(response.content)
         return self._collect_result(data)
 
-    def _collect_result(self, data: VxTwitterResponse) -> ParseResult:
+    def _collect_result(self, data: VxTwitterResponse, depth: int = 0) -> ParseResult:
         author = self.create_author(data.user_name, data.user_profile_image_url)
         title = data.article.title if isinstance(data.article, Article) else data.article
 
@@ -84,7 +83,8 @@ class TwitterParser(BaseParser):
             elif media.type == "image":
                 contents.append(self.create_image_content(media.url))
 
-        repost = self._collect_result(data.qrt) if data.qrt else None
+        # 限制转发链递归深度，防止循环引用/极深嵌套导致 RecursionError 崩溃
+        repost = self._collect_result(data.qrt, depth + 1) if data.qrt and depth < MAX_REPOST_DEPTH else None
 
         return self.result(
             author=author,
@@ -119,10 +119,9 @@ class TwitterParser(BaseParser):
             **self.headers,
         }
         data = {"q": url, "lang": "zh-cn"}
-        async with AsyncClient(headers=headers, timeout=self.timeout) as client:
-            url = "https://xdown.app/api/ajaxSearch"
-            response = await client.post(url, data=data)
-            return response.json()
+        url = "https://xdown.app/api/ajaxSearch"
+        response = await self.request(url, method="POST", headers=headers, data=data, raise_for_status=False)
+        return response.json()
 
     def _parse_twitter_html(self, html_content: str) -> ParseResult:
         """解析 Twitter HTML 内容"""

@@ -121,6 +121,69 @@ class BaseParser:
         """构建解析结果"""
         return ParseResult(platform=cls.platform, **kwargs)
 
+    async def request(
+        self,
+        url: str,
+        *,
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+        params: Any | None = None,
+        content: str | bytes | None = None,
+        data: Any | None = None,
+        json: Any | None = None,
+        cookies: Any | None = None,
+        follow_redirects: bool = False,
+        trust_env: bool = True,
+        raise_for_status: bool = True,
+        timeout: Any | None = None,
+        proxy: Any | None = None,
+    ):
+        """发起 HTTP 请求的统一封装，收敛各 parser 中重复的 ``AsyncClient`` 样板。
+
+        使用实例自身的 headers / timeout 作为默认值（可被 ``headers``/``timeout`` 覆盖）。
+
+        Args:
+            url: 请求地址。
+            method: HTTP 方法，默认 ``GET``。
+            headers: 覆盖默认 headers 的字典（整体覆盖，非合并）。
+            params/content/data/json: 透传给 httpx 的请求体/查询参数。
+            cookies: 透传给 httpx 的 cookies。
+            follow_redirects: 是否跟随重定向，默认 False。
+            trust_env: 是否读取环境变量代理等配置，默认 True。
+            raise_for_status: 是否对 >= 400 的响应抛错，默认 True。
+            timeout: 覆盖默认超时。
+            proxy: httpx 代理（Proxy 对象或 URL 字符串），默认 None。
+
+        Returns:
+            httpx.Response
+        """
+        from httpx import AsyncClient
+
+        client_headers = headers if headers is not None else self.headers
+        client_timeout = timeout if timeout is not None else self.timeout
+        client_kwargs: dict[str, Any] = {
+            "headers": client_headers,
+            "verify": False,
+            "cookies": cookies,
+            "follow_redirects": follow_redirects,
+            "trust_env": trust_env,
+            "timeout": client_timeout,
+        }
+        if proxy is not None:
+            client_kwargs["proxy"] = proxy
+        async with AsyncClient(**client_kwargs) as client:
+            response = await client.request(
+                method,
+                url,
+                params=params,
+                content=content,
+                data=data,
+                json=json,
+            )
+            if raise_for_status and response.status_code >= 400:
+                response.raise_for_status()
+            return response
+
     @staticmethod
     async def get_redirect_url(
         url: str,

@@ -4,11 +4,14 @@ from uuid import uuid4
 from typing import ClassVar
 
 from bs4 import Tag, BeautifulSoup
-from httpx import Cookies, AsyncClient
+from httpx import Cookies
 
 from . import common, article
 from ..base import Platform, BaseParser, PlatformEnum, ParseException, handle
 from ..data import ImageContent
+
+# 转发链递归深度上限，防止循环引用/极深嵌套导致 RecursionError 崩溃
+MAX_REPOST_DEPTH = 5
 
 
 class WeiBoParser(BaseParser):
@@ -65,20 +68,14 @@ class WeiBoParser(BaseParser):
         return await self.parse_article(_id)
 
     async def parse_article(self, _id: str):
-        url = "https://card.weibo.com/article/m/aj/detail"
+        detail_url = "https://card.weibo.com/article/m/aj/detail"
         params = {
             "_rid": str(uuid4()),
             "id": _id,
             "_t": int(time() * 1000),
         }
 
-        async with AsyncClient(
-            headers=self.headers,
-            timeout=self.timeout,
-        ) as client:
-            response = await client.get(url, params=params)
-            response.raise_for_status()
-
+        response = await self.request(detail_url, params=params)
         detail = article.decoder.decode(response.content)
 
         if detail.msg != "success":
@@ -128,10 +125,7 @@ class WeiBoParser(BaseParser):
         }
         post_content = 'data={"Component_Play_Playinfo":{"oid":"' + fid + '"}}'
 
-        async with AsyncClient(headers=headers, timeout=self.timeout) as client:
-            response = await client.post(req_url, content=post_content)
-            response.raise_for_status()
-
+        response = await self.request(req_url, headers=headers, method="POST", content=post_content)
         data = show.decoder.decode(response.content).data
         play_info = data.Component_Play_Playinfo
         author = self.create_author(
@@ -171,28 +165,28 @@ class WeiBoParser(BaseParser):
         url = f"https://m.weibo.cn/statuses/show?id={weibo_id}&_={ts}"
 
         # 关键：不带 cookie、不跟随重定向（避免二跳携 cookie）
-        async with AsyncClient(
+        response = await self.request(
+            url,
             headers=headers,
-            timeout=self.timeout,
             follow_redirects=False,
             cookies=Cookies(),
             trust_env=False,
-        ) as client:
-            response = await client.get(url)
-            if response.status_code != 200:
-                if response.status_code in (403, 418):
-                    raise ParseException(f"被风控拦截({response.status_code}), 可尝试更换 UA/Referer 或稍后重试")
-                raise ParseException(f"获取数据失败 {response.status_code} {response.reason_phrase}")
+            raise_for_status=False,
+        )
+        if response.status_code != 200:
+            if response.status_code in (403, 418):
+                raise ParseException(f"被风控拦截({response.status_code}), 可尝试更换 UA/Referer 或稍后重试")
+            raise ParseException(f"获取数据失败 {response.status_code} {response.reason_phrase}")
 
-            ctype = response.headers.get("content-type", "")
-            if "application/json" not in ctype:
-                raise ParseException(f"获取数据失败 content-type is not application/json (got: {ctype})")
+        ctype = response.headers.get("content-type", "")
+        if "application/json" not in ctype:
+            raise ParseException(f"获取数据失败 content-type is not application/json (got: {ctype})")
 
         weibo_data = common.decoder.decode(response.content).data
 
         return self._collect_result(weibo_data)
 
-    def _collect_result(self, data: common.WeiboData):
+    def _collect_result(self, data: common.WeiboData, depth: int = 0):
         contents = []
 
         # 添加视频内容
@@ -207,8 +201,9 @@ class WeiBoParser(BaseParser):
         # 构建作者
         author = self.create_author(data.display_name, data.user.profile_image_url)
         repost = None
-        if data.retweeted_status:
-            repost = self._collect_result(data.retweeted_status)
+        # 限制转发链递归深度，防止循环引用/极深嵌套导致 RecursionError 崩溃
+        if data.retweeted_status and depth < MAX_REPOST_DEPTH:
+            repost = self._collect_result(data.retweeted_status, depth + 1)
 
         return self.result(
             title=data.title,

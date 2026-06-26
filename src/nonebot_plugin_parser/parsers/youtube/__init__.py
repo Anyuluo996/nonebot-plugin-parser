@@ -1,8 +1,6 @@
 import re
 from typing import ClassVar
 
-from httpx import AsyncClient
-
 from ..base import Platform, BaseParser, PlatformEnum, handle, pconfig
 from ..cookie import save_cookies_with_netscape
 from ...download import YTDLP_DOWNLOADER
@@ -96,9 +94,7 @@ class YouTubeParser(BaseParser):
             "browseId": channel_id,
         }
 
-        async with AsyncClient(headers=self.headers, timeout=self.timeout) as client:
-            response = await client.post(url, json=payload)
-            response.raise_for_status()
+        response = await self.request(url, method="POST", json=payload)
 
         browse = meta.decoder.decode(response.content)
         return self.create_author(browse.name, browse.avatar_url, browse.description)

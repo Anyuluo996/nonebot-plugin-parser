@@ -2,7 +2,6 @@ import re
 from typing import Any, Literal, ClassVar
 from itertools import chain
 
-from httpx import AsyncClient
 from msgspec import Struct, field
 from msgspec.json import Decoder
 
@@ -61,10 +60,7 @@ class TwitterParser(BaseParser):
         """使用 vxtwitter API 解析 Twitter 链接"""
 
         api_url = url.replace("x.com", "api.vxtwitter.com")
-        async with AsyncClient(headers=self.headers, timeout=self.timeout) as client:
-            response = await client.get(api_url)
-            response.raise_for_status()
-
+        response = await self.request(api_url)
         data = decoder.decode(response.content)
         return self._collect_result(data)
 
@@ -123,10 +119,9 @@ class TwitterParser(BaseParser):
             **self.headers,
         }
         data = {"q": url, "lang": "zh-cn"}
-        async with AsyncClient(headers=headers, timeout=self.timeout) as client:
-            url = "https://xdown.app/api/ajaxSearch"
-            response = await client.post(url, data=data)
-            return response.json()
+        url = "https://xdown.app/api/ajaxSearch"
+        response = await self.request(url, method="POST", headers=headers, data=data, raise_for_status=False)
+        return response.json()
 
     def _parse_twitter_html(self, html_content: str) -> ParseResult:
         """解析 Twitter HTML 内容"""

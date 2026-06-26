@@ -80,31 +80,38 @@ class _FollowRedirect(Exception):
         self.location = location
 
 
-def _auto_referer(url: str) -> str | None:
-    """根据 URL 域名返回应使用的 Referer，不在白名单中返回 None"""
+def _extract_host(url: str) -> str | None:
+    """从 URL 中提取主机名（去掉端口），解析失败返回 None。"""
     try:
-        netloc = urlparse(url).netloc.rsplit(":", 1)[0]
-        return _REFERRER_MAP.get(netloc)
+        return urlparse(url).netloc.rsplit(":", 1)[0]
     except Exception:
         return None
 
 
+def _match_domain(url: str, domain_set: frozenset[str]) -> bool:
+    """判断 URL 的主机名是否命中域名集合（精确匹配或为其子域名）。"""
+    netloc = _extract_host(url)
+    if netloc is None:
+        return False
+    return any(netloc == d or netloc.endswith("." + d) for d in domain_set)
+
+
+def _auto_referer(url: str) -> str | None:
+    """根据 URL 域名返回应使用的 Referer，不在白名单中返回 None"""
+    netloc = _extract_host(url)
+    if netloc is None:
+        return None
+    return _REFERRER_MAP.get(netloc)
+
+
 def _use_curl(url: str) -> bool:
     """判断该 URL 是否走 curl 下载"""
-    try:
-        netloc = urlparse(url).netloc.rsplit(":", 1)[0]
-        return any(netloc == d or netloc.endswith("." + d) for d in _CURL_ONLY_DOMAINS)
-    except Exception:
-        return False
+    return _match_domain(url, _CURL_ONLY_DOMAINS)
 
 
 def _bypass_proxy(url: str) -> bool:
     """判断该 URL 是否应绕过代理（抖音等国内 CDN）"""
-    try:
-        netloc = urlparse(url).netloc.rsplit(":", 1)[0]
-        return any(netloc == d or netloc.endswith("." + d) for d in _NO_PROXY_DOMAINS)
-    except Exception:
-        return False
+    return _match_domain(url, _NO_PROXY_DOMAINS)
 
 
 async def _download_by_curl(

@@ -1,7 +1,7 @@
 import re
 from typing import ClassVar
 
-from httpx import Cookies, AsyncClient
+from httpx import Cookies
 from nonebot import logger
 
 from ..base import Platform, BaseParser, PlatformEnum, ParseException, handle, pconfig
@@ -55,11 +55,10 @@ class XiaoHongShuParser(BaseParser):
     async def parse_explore(self, url: str, xhs_id: str):
         from . import explore
 
-        async with AsyncClient(headers=self.headers, timeout=self.timeout) as client:
-            response = await client.get(url)
-            # may be 302
-            if response.status_code > 400:
-                response.raise_for_status()
+        response = await self.request(url, raise_for_status=False)
+        # may be 302
+        if response.status_code > 400:
+            response.raise_for_status()
 
         html = response.text
         raw = self._extract_initial_state_raw(html)
@@ -98,16 +97,14 @@ class XiaoHongShuParser(BaseParser):
     async def parse_discovery(self, url: str):
         from . import discovery
 
-        async with AsyncClient(
+        response = await self.request(
+            url,
             headers=self.ios_headers,
-            timeout=self.timeout,
             follow_redirects=True,
             cookies=Cookies(),
             trust_env=False,
-        ) as client:
-            response = await client.get(url)
-            response.raise_for_status()
-            html = response.text
+        )
+        html = response.text
 
         raw = self._extract_initial_state_raw(html)
         init_state = discovery.decoder.decode(raw)

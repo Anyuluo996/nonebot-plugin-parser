@@ -76,7 +76,8 @@ class MetingBaseParser(BaseParser):
     async def _parse_by_song_id(self, song_id: str, share_url: str, include_cover: bool = False):
         """统一的解析流程：song 详情 → 真实 url → 歌词。
 
-        include_cover=True 时将封面图加入 contents（网易云需要）。
+        include_cover=True 时将封面图作为 author 头像（渲染进卡片，
+        不作为独立图片消息发送）。
         """
         song = await self._fetch_song(song_id)
         title = song.get("title", "未知歌曲")
@@ -89,10 +90,11 @@ class MetingBaseParser(BaseParser):
 
         contents = [self.create_audio_content(audio_url)]
 
+        # 封面图作为 author 头像（渲染进卡片，不单独发送）
+        cover_url = None
         if include_cover:
             pic_proxy = song.get("pic", "")
-            if cover_url := await self._resolve_url(pic_proxy) if pic_proxy else None:
-                contents.append(self.create_image_content(cover_url))
+            cover_url = await self._resolve_url(pic_proxy) if pic_proxy else None
 
         lyric = ""
         if lrc_proxy := song.get("lrc", ""):
@@ -100,7 +102,7 @@ class MetingBaseParser(BaseParser):
 
         return self.result(
             title=title,
-            author=self.create_author(author_name),
+            author=self.create_author(author_name, avatar_url=cover_url),
             url=share_url,
             contents=contents,
             extra={"lyric": lyric},

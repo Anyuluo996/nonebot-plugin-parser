@@ -1,9 +1,7 @@
 """小黑盒解析器。
 
-适配自 parser-lite 的 heybox。使用 hkey 签名 API（encrypt.py）。
-小黑盒有严格反爬（show_captcha），需要浏览器原生指纹。
-优先用浏览器页面内 fetch（cookie/指纹/TLS 全原生，最可靠）；
-无浏览器时降级为 httpx（可能被风控）。
+适配自 parser-lite 的 heybox，参考 zhiyu1998/rconsole-plugin 的 nonce 算法。
+反爬策略：优先 token + httpx（快）；失败则浏览器页面内 fetch（原生指纹，慢但可靠）。
 """
 
 import re
@@ -12,17 +10,38 @@ from typing import ClassVar
 from msgspec import convert
 from nonebot import logger
 
-from .._format import format_num
-from ..base import BaseParser, ParseException, Platform, PlatformEnum, handle
-from .encrypt import build_url
+from ..base import Platform, BaseParser, PlatformEnum, ParseException, handle
 from .model import BaseResult
+from .encrypt import build_url
+from .._format import format_num
+
+
+async def _fetch_token_id() -> str | None:
+    """通过浏览器打开小黑盒首页，执行 JS 获取 x_xhh_tokenid。"""
+    try:
+        from nonebot_plugin_htmlrender import get_new_page
+    except ImportError:
+        return None
+    try:
+        async with get_new_page(viewport={"width": 1280, "height": 800}) as page:
+            await page.goto(
+                "https://www.xiaoheihe.cn/", wait_until="networkidle", timeout=20_000
+            )
+            await page.wait_for_timeout(1500)
+            token = await page.evaluate(
+                "window.SMSdk && window.SMSdk.getDeviceId"
+                " ? window.SMSdk.getDeviceId() : null"
+            )
+        return token
+    except Exception as e:
+        logger.warning(f"小黑盒 tokenid 获取失败: {e!r}")
+        return None
 
 
 async def _browser_fetch_link(link_id: str) -> dict | None:
     """用浏览器打开小黑盒首页后，在页面上下文内 fetch API。
 
-    浏览器原生的 TLS 指纹、JS 环境、cookie 全部带上，最接近真实用户，
-    是绕过 show_captcha 风控最可靠的方式。
+    浏览器原生 TLS 指纹/JS/cookie 全带上，绕过风控最可靠（作为兜底）。
     """
     try:
         from nonebot_plugin_htmlrender import get_new_page
@@ -45,7 +64,7 @@ async def _browser_fetch_link(link_id: str) -> dict | None:
                 url,
             )
         return data
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.warning(f"小黑盒浏览器请求失败: {e!r}")
         return None
 
@@ -54,6 +73,8 @@ class HeyBoxParser(BaseParser):
     platform: ClassVar[Platform] = Platform(
         name=PlatformEnum.HEYBOX, display_name="小黑盒"
     )
+
+    _token_id: ClassVar[str | None] = None
 
     def __init__(self):
         super().__init__()
@@ -65,20 +86,35 @@ class HeyBoxParser(BaseParser):
             }
         )
 
+    async def _httpx_request(self, link_id: str) -> dict:
+        cookies = (
+            {"x_xhh_tokenid": HeyBoxParser._token_id}
+            if HeyBoxParser._token_id
+            else None
+        )
+        response = await self.request(
+            build_url(link_id), headers=self.headers, cookies=cookies
+        )
+        response.raise_for_status()
+        return response.json()
+
     @handle("xiaoheihe.cn/app/bbs", r"link\/(?P<link_id>[A-Za-z0-9]+)")
     @handle("xiaoheihe.cn/bbs/post_share", r"link_id=(?P<link_id>[A-Za-z0-9]+)")
     async def _parse(self, searched: re.Match[str]):
         link_id = searched.group("link_id")
 
-        # 优先：浏览器页面内 fetch（原生指纹，绕过风控最可靠）
-        res = await _browser_fetch_link(link_id)
+        # 首次获取 token（反爬必需）
+        if not HeyBoxParser._token_id:
+            HeyBoxParser._token_id = await _fetch_token_id()
 
-        # 降级：httpx 请求（无浏览器或浏览器失败时）
-        if not res or res.get("status") != "ok":
-            logger.debug("小黑盒浏览器请求未成功，降级 httpx")
-            response = await self.request(build_url(link_id), headers=self.headers)
-            response.raise_for_status()
-            res = response.json()
+        # 路径1：token + httpx（快）
+        res = await self._httpx_request(link_id)
+
+        # 路径2：失败则浏览器页面内 fetch（慢，原生指纹兜底）
+        if res.get("status") != "ok":
+            logger.debug("小黑盒 httpx 失败，尝试浏览器 fetch 兜底")
+            HeyBoxParser._token_id = None  # token 可能失效，清空
+            res = await _browser_fetch_link(link_id) or {}
 
         if res.get("status") != "ok":
             raise ParseException(f"小黑盒解析失败: {res}")
@@ -108,3 +144,4 @@ class HeyBoxParser(BaseParser):
                 ),
             },
         )
+

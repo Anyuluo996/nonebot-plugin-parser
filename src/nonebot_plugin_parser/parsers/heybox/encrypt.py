@@ -1,18 +1,21 @@
-# 小黑盒请求签名（移植自 parser-lite，原作者感谢焦化葱葱等逆向贡献者）
+# 小黑盒请求签名（移植自 parser-lite，参考 zhiyu1998/rconsole-plugin 方案优化 nonce）
 # 严禁非法滥用或用于渗透测试
 
 import time as _time
+import random
 import hashlib
 import itertools
 from typing import Final
 
 BASE_URL: Final[str] = "api.xiaoheihe.cn"
 PATH: Final[str] = "/bbs/app/link/tree"
+SALT: Final[str] = "AB45STUVWZEFGJ6CH01D237IXYPQRKLMN89"
 
 
 def get_nonce(time: int) -> str:
-    t = str(time).encode("utf-8")
-    return hashlib.md5(t).hexdigest().upper()
+    """nonce 使用 timestamp + 随机数，避免确定性被风控（参考 zhiyu1998 方案）。"""
+    raw = f"{time}{random.random()}"
+    return hashlib.md5(raw.encode("utf-8")).hexdigest().upper()
 
 
 def _vm(e: int) -> int:

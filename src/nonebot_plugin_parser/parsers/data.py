@@ -316,6 +316,12 @@ class ParseResult:
             if isinstance(gra, ImageContent):
                 yield gra.get_path()
 
+        # extra["posts"] 中的图片（如 NGA 回复楼层内嵌图）
+        for post in self.extra.get("posts", []) if isinstance(self.extra.get("posts"), list) else ():
+            for img in post.get("images", []) if isinstance(post, dict) else ():
+                if isinstance(img, ImageContent):
+                    yield img.get_path()
+
         if self.repost is not None:
             yield from self.repost._iterate_download_coros(img_only)
 

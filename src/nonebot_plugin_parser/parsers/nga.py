@@ -3,7 +3,7 @@ import json
 import time
 import random
 import asyncio
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from bs4 import Tag, BeautifulSoup
 from httpx import HTTPError, AsyncClient
@@ -11,6 +11,9 @@ from nonebot import logger
 
 from .base import Platform, BaseParser, PlatformEnum, handle
 from ..exception import ParseException
+
+# 渲染前 4 楼回复（不含主楼 0 楼）
+MAX_REPLY_FLOORS = 4
 
 
 class NGAParser(BaseParser):
@@ -72,7 +75,8 @@ class NGAParser(BaseParser):
         if resp.status_code != 200:
             raise ParseException(f"无法获取页面, HTTP {resp.status_code}")
 
-        html = resp.text
+        # NGA 页面是 GBK 编码，httpx 自动探测可能误判，显式用 gb18030 解码避免乱码
+        html = resp.content.decode("gb18030", errors="replace")
 
         # 简单识别是否需要登录或被拦截
         if "需要" in html and ("登录" in html or "请登录" in html):
@@ -80,60 +84,25 @@ class NGAParser(BaseParser):
 
         soup = BeautifulSoup(html, "html.parser")
 
-        # 提取 title - 从 postsubject0 标签提取
-        title = None
-        title_tag = soup.find(id="postsubject0")
-        if title_tag and isinstance(title_tag, Tag):
-            title = title_tag.get_text(strip=True)
+        # 解析 userInfo.setAll()：楼内作者名靠 JS 注入，<a class="author"> 自身无文本，
+        # 需要从这段 JS 数据里按 uid 查 username。
+        user_info = self._parse_user_info(html)
 
-        # 提取作者信息 - 先从 postauthor0 标签提取 uid，再从 JavaScript 中查找用户名
-        author = None
-        author_tag = soup.find(id="postauthor0")
-        if author_tag and isinstance(author_tag, Tag):
-            # 从 href 属性中提取 uid: href="nuke.php?func=ucp&uid=24278093"
-            href = author_tag.get("href", "")
-            if matched := re.search(r"[?&]uid=(\d+)", str(href)):
-                uid = str(matched.group(1))
-                # 从 JavaScript 的 commonui.userInfo.setAll() 中查找对应用户名
-                script_pattern = r"commonui\.userInfo\.setAll\s*\(\s*(\{.*?\})\s*\)"
-                if matched := re.search(script_pattern, html, re.DOTALL):
-                    user_info = matched.group(1)
-                    try:
-                        user_info = json.loads(user_info)
-                        if uid in user_info:
-                            author = user_info[uid].get("username")
-                    except (json.JSONDecodeError, KeyError):
-                        pass
+        # ── 主楼（0 楼）──────────────────────────────────────────────
+        title = self._extract_title(soup)
+        main_uid, main_author_name = self._extract_author(soup, html, user_info, floor=0)
+        author = self.create_author(main_author_name) if main_author_name else None
+        timestamp = self._extract_timestamp(soup, floor=0)
+        main_content_tag = soup.find(id="postcontent0")
+        main_text_lines, main_image_urls = (
+            self._extract_floor_content(main_content_tag)
+            if main_content_tag and isinstance(main_content_tag, Tag)
+            else ([], [])
+        )
+        graphics = self._content_to_graphics(main_text_lines, main_image_urls)
 
-        author = self.create_author(author) if author else None
-
-        # 提取时间 - 从第一个帖子的 postdate0
-        timestamp = None
-        time_tag = soup.find(id="postdate0")
-        if time_tag and isinstance(time_tag, Tag):
-            timestr = time_tag.get_text(strip=True)
-            timestamp = int(time.mktime(time.strptime(timestr, "%Y-%m-%d %H:%M")))
-
-        # 提取文本 - postcontent0
-        graphics = self.create_empty_graphics()
-        content_tag = soup.find(id="postcontent0")
-        if content_tag and isinstance(content_tag, Tag):
-            text = content_tag.get_text("\n", strip=True)
-            lines = text.split("\n")
-
-            for line in lines:
-                if "[" in line:
-                    # [img]./mon_202602/10/-lmuf1Q1aw-hzwpZ2dT3cSl4-bs.webp[/img]
-                    if paths := re.findall(r"\[img\]\.(.*?)\[\/img\]", line):
-                        for path in paths:
-                            img_url = self.build_img_url(path)
-                            graphics.append(self.create_image_content(img_url))
-                    else:
-                        # 去除其他标签, 仅保留文本
-                        if clean_line := re.sub(r"\[[^\]]*?\]", "", line).strip():
-                            graphics.append(clean_line)
-                else:
-                    graphics.append(line)
+        # ── 回复楼层（前 MAX_REPLY_FLOORS 楼）───────────────────────────
+        posts = self._extract_reply_posts(soup, user_info, html)
 
         return self.result(
             title=title,
@@ -141,4 +110,156 @@ class NGAParser(BaseParser):
             author=author,
             graphics=graphics,
             timestamp=timestamp,
+            extra={"posts": posts, "main_uid": main_uid},
         )
+
+    @staticmethod
+    def _parse_user_info(html: str) -> dict[str, dict[str, Any]]:
+        """从 commonui.userInfo.setAll({...}) 提取用户信息表，key 为 uid。
+
+        楼内 author <a> 标签无文本（由 JS 注入），真实用户名需从此表按 uid 查询。
+        匿名浏览时 username 退化为 "UID:xxx"，avatar 为 null。
+        """
+        matched = re.search(r"commonui\.userInfo\.setAll\s*\(\s*(\{)", html, re.DOTALL)
+        if not matched:
+            return {}
+        blob = html[matched.start(1):]
+        # 匹配最外层平衡花括号
+        depth = 0
+        end = 0
+        for i, ch in enumerate(blob):
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+        else:
+            return {}
+        try:
+            # strict=False 容忍 JSON 中的控制字符
+            data = json.loads(blob[:end], strict=False)
+            return {str(k): v for k, v in data.items()}
+        except (json.JSONDecodeError, ValueError):
+            return {}
+
+    def _extract_title(self, soup: BeautifulSoup) -> str | None:
+        title_tag = soup.find(id="postsubject0")
+        if title_tag and isinstance(title_tag, Tag):
+            return title_tag.get_text(strip=True)
+        return None
+
+    def _extract_author(
+        self,
+        soup: BeautifulSoup,
+        html: str,
+        user_info: dict[str, dict[str, Any]],
+        floor: int,
+    ) -> tuple[str | None, str | None]:
+        """提取指定楼层作者 uid 与用户名。
+
+        author <a> 标签无文本，先从 href 取 uid，再从 user_info 表查 username，
+        拿不到真实名时退化为 "UID:xxx"。
+        """
+        author_tag = soup.find(id=f"postauthor{floor}")
+        if not author_tag or not isinstance(author_tag, Tag):
+            return None, None
+        href = str(author_tag.get("href", ""))
+        if not (matched := re.search(r"[?&]uid=(\d+)", href)):
+            return None, None
+        uid = matched.group(1)
+        # 先用 a 标签自身文本（部分页面有），否则查 user_info
+        name = author_tag.get_text(strip=True) or None
+        if not name and uid in user_info:
+            name = user_info[uid].get("username")
+        if not name:
+            name = f"UID:{uid}"
+        return uid, name
+
+    def _extract_timestamp(self, soup: BeautifulSoup, floor: int) -> int | None:
+        time_tag = soup.find(id=f"postdate{floor}")
+        if time_tag and isinstance(time_tag, Tag):
+            timestr = time_tag.get_text(strip=True)
+            try:
+                return int(time.mktime(time.strptime(timestr, "%Y-%m-%d %H:%M")))
+            except ValueError:
+                return None
+        return None
+
+    def _extract_floor_content(
+        self, content_tag: Tag
+    ) -> tuple[list[str], list[str]]:
+        """提取单个楼层正文，返回 (文字行列表, 图片URL列表)。
+
+        NGA 使用 BBCode：[img]./mon_xxx[/img] 为内嵌图片，[url]/[quote]/[s:表情]
+        等剥离为纯文本。
+        """
+        text_lines: list[str] = []
+        image_urls: list[str] = []
+        text = content_tag.get_text("\n", strip=True)
+        for line in text.split("\n"):
+            if "[" in line:
+                # [img]./mon_202602/...[/img] 内嵌图片
+                if paths := re.findall(r"\[img\]\.(.*?)\[\/img\]", line):
+                    for path in paths:
+                        image_urls.append(self.build_img_url(path))
+                else:
+                    # 剥离其他 BBCode 标签（[url][quote][s:ac:哭笑] 等），仅保留文本
+                    if clean_line := re.sub(r"\[[^\]]*?\]", "", line).strip():
+                        text_lines.append(clean_line)
+            else:
+                text_lines.append(line)
+        return text_lines, image_urls
+
+    def _content_to_graphics(self, text_lines: list[str], image_urls: list[str]) -> list[str | Any]:
+        """把楼层正文转为 graphics（文字行 + ImageContent 混排，供 common 渲染降级）。"""
+        graphics: list[str | Any] = self.create_empty_graphics()
+        for line in text_lines:
+            graphics.append(line)
+        for img_url in image_urls:
+            graphics.append(self.create_image_content(img_url))
+        return graphics
+
+    def _extract_reply_posts(
+        self,
+        soup: BeautifulSoup,
+        user_info: dict[str, dict[str, Any]],
+        html: str,
+    ) -> list[dict[str, Any]]:
+        """提取前 MAX_REPLY_FLOORS 楼回复，楼号从 2 开始递增（NGA 楼号 1 为分页占位）。
+
+        images 存放 ImageContent 对象（下载任务），由 ensure_downloads_complete 统一下载，
+        模板渲染时通过 .path_uri 取本地 file:// 路径。
+        """
+        posts: list[dict[str, Any]] = []
+        floor = 1
+        while len(posts) < MAX_REPLY_FLOORS:
+            floor += 1
+            content_tag = soup.find(id=f"postcontent{floor}")
+            if not content_tag or not isinstance(content_tag, Tag):
+                break
+            uid, name = self._extract_author(soup, html, user_info, floor)
+            timestamp = self._extract_timestamp(soup, floor)
+            text_lines, image_urls = self._extract_floor_content(content_tag)
+            images = [self.create_image_content(url) for url in image_urls]
+            posts.append(
+                {
+                    "floor": floor,
+                    "uid": uid,
+                    "name": name or (f"UID:{uid}" if uid else "匿名"),
+                    "timestamp": timestamp,
+                    "time_text": self._format_timestamp(timestamp),
+                    "text": "\n".join(text_lines).strip(),
+                    "images": images,
+                }
+            )
+        return posts
+
+    @staticmethod
+    def _format_timestamp(ts: int | None) -> str | None:
+        if ts is None:
+            return None
+        from datetime import datetime
+
+        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")

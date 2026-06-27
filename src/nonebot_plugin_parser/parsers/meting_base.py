@@ -76,8 +76,8 @@ class MetingBaseParser(BaseParser):
     async def _parse_by_song_id(self, song_id: str, share_url: str, include_cover: bool = False):
         """统一的解析流程：song 详情 → 真实 url → 歌词。
 
-        include_cover=True 时将封面图作为 author 头像（渲染进卡片，
-        不作为独立图片消息发送）。
+        include_cover=True 时用 video_content 承载封面（渲染器画封面，
+        但不作为独立图片消息发送）。其他平台默认用 audio_content。
         """
         song = await self._fetch_song(song_id)
         title = song.get("title", "未知歌曲")
@@ -88,13 +88,17 @@ class MetingBaseParser(BaseParser):
         if not audio_url:
             raise IgnoreException("无法获取音频下载地址（可能为 VIP/无版权）")
 
-        contents = [self.create_audio_content(audio_url)]
-
-        # 封面图作为 author 头像（渲染进卡片，不单独发送）
+        # 封面随 audio/video 内容走，不单独作为图片消息发送
         cover_url = None
         if include_cover:
             pic_proxy = song.get("pic", "")
             cover_url = await self._resolve_url(pic_proxy) if pic_proxy else None
+
+        if include_cover and cover_url:
+            # video_content 带 cover，渲染器会画封面但不单独发图
+            contents = [self.create_video_content(audio_url, cover_url=cover_url)]
+        else:
+            contents = [self.create_audio_content(audio_url)]
 
         lyric = ""
         if lrc_proxy := song.get("lrc", ""):
@@ -102,7 +106,7 @@ class MetingBaseParser(BaseParser):
 
         return self.result(
             title=title,
-            author=self.create_author(author_name, avatar_url=cover_url),
+            author=self.create_author(author_name),
             url=share_url,
             contents=contents,
             extra={"lyric": lyric},

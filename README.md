@@ -37,6 +37,17 @@
 | twitter | 链接                              | ✅​  | ✅​  | ❌️  |
 | Pixiv   | 链接(含 artworks)                 | ❌️  | ✅​  | ❌️  |
 | Telegram| 链接(t.me，需权限)               | ✅​  | ✅​  | ✅​  |
+| NGA     | 链接(帖子，主楼+前4楼回复)        | ❌️  | ✅​  | ❌️  |
+| 知乎    | 链接(专栏文章/回答/问题)          | ✅​  | ✅​  | ❌️  |
+| 网易云  | 链接(歌曲)                        | ❌️  | ❌️  | ✅​  |
+| 酷狗    | 链接(歌曲分享)                    | ❌️  | ❌️  | ✅​  |
+| 酷我    | 链接(歌曲)                        | ❌️  | ❌️  | ✅​  |
+| 汽水音乐| 链接(歌曲分享)                    | ❌️  | ❌️  | ✅​  |
+| 虎扑    | 链接(BBS 帖子)                    | ❌️  | ✅​  | ❌️  |
+| 酷安    | 链接(动态)                        | ❌️  | ✅​  | ❌️  |
+| LOFTER  | 链接(图文/音乐帖，含短链)         | ❌️  | ✅​  | ❌️  |
+| 堆糖    | 链接(图集/blog)                   | ❌️  | ✅​  | ❌️  |
+| BUFF    | 链接(资讯/玩家秀)                 | ❌️  | ✅​  | ❌️  |
 
 支持的链接，可参考 [测试链接](https://github.com/fllesser/nonebot-plugin-parser/blob/master/tests/others/test_urls.md)
 
@@ -520,3 +531,4 @@ real_url = await self.get_redirect_url(
 
 [nonebot-plugin-resolver](https://github.com/zhiyu1998/nonebot-plugin-resolver)
 [parse-video-py](https://github.com/wujunwei928/parse-video-py)
+[nonebot-plugin-parser-lite](https://github.com/sokoko-org/nonebot-plugin-parser-lite) — 本项目的知乎、网易云、酷狗、酷我、汽水音乐、虎扑、酷安、LOFTER、堆糖、BUFF 平台解析器移植自此项目，特此致谢。

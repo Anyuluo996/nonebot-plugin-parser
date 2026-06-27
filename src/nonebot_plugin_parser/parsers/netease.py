@@ -12,7 +12,7 @@ import re
 import contextlib
 from typing import ClassVar
 
-from ..base import (
+from .base import (
     Platform,
     BaseParser,
     PlatformEnum,

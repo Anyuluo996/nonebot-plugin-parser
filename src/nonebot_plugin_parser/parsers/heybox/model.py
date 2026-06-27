@@ -11,6 +11,13 @@ from msgspec import Struct, field
 from bs4.element import Tag, NavigableString
 
 
+def _optimize_image_url(url: str) -> str:
+    """小黑盒 CDN 特性：带查询参数(?)的 URL 末尾加 \\ 才能取到原图。
+    不带 ? 的直接返回（参考 zhiyu1998/rconsole-plugin optimizeImageUrl）。"""
+    url = url.rstrip("\\")
+    return url + "\\" if "?" in url else url
+
+
 class User(Struct):
     avatar: str
     username: str
@@ -18,8 +25,7 @@ class User(Struct):
 
     @property
     def avatar_url(self) -> str:
-        # heybox 部分老 URL 末尾带 "\"，清理掉避免拼出非法 URL（如 xxx.jpg?\）
-        return self.avatar.rstrip("\\")
+        return _optimize_image_url(self.avatar)
 
 
 class Link(Struct):
@@ -50,7 +56,7 @@ class Link(Struct):
                 if part["type"] == "text":
                     content.append(part["text"])
                 elif part["type"] == "img":
-                    content.append(create_image(part["url"].rstrip("\\")))
+                    content.append(create_image(_optimize_image_url(part["url"])))
         except (json.JSONDecodeError, TypeError):
             if self.text:
                 content.append(self.text)

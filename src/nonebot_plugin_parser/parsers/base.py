@@ -59,7 +59,9 @@ class BaseParser:
     def __init_subclass__(cls, **kwargs):
         """自动注册子类到 _registry"""
         super().__init_subclass__(**kwargs)
-        if ABC not in cls.__bases__:  # 跳过抽象类
+        # 跳过抽象类（显式继承 ABC）或标记为抽象的中间基类（如 MetingBaseParser）
+        is_abstract = ABC in cls.__bases__ or getattr(cls, "_abstract_parser", False)
+        if not is_abstract:
             BaseParser._registry.append(cls)
 
         cls._handlers = {}

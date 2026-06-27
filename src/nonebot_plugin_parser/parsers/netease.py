@@ -61,7 +61,6 @@ class NCMParser(BaseParser):
         artists = [a["name"] for a in song.get("ar", []) if a.get("name")]
         artist_name = "、".join(artists) if artists else "未知歌手"
         album = (song.get("al") or {}).get("name", "")
-        cover_url = (song.get("al") or {}).get("picUrl", "")
         duration = _parse_duration_to_seconds(song.get("dt"))
 
         # 2. 音乐 url：下载地址
@@ -80,8 +79,6 @@ class NCMParser(BaseParser):
         contents = [
             self.create_audio_content(audio_url, duration=duration)
         ]
-        if cover_url:
-            contents.append(self.create_image_content(cover_url))
 
         # 3. 歌词
         lyric = ""

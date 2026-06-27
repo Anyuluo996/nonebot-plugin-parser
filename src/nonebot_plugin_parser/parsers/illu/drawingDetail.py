@@ -1,7 +1,7 @@
 from msgspec import Struct
 from msgspec.json import Decoder
 
-from .models import Time, User
+from .models import File, Time, User
 
 
 class DrawingDetail(Struct):
@@ -10,7 +10,7 @@ class DrawingDetail(Struct):
     commentCount: int
     title: str
     content: str
-    images: list  # list[File]
+    images: list[File]
     likeCount: int
     readCount: int
     rewardCoin: int

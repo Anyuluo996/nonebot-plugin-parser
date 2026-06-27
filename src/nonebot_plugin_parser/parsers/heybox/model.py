@@ -18,7 +18,8 @@ class User(Struct):
 
     @property
     def avatar_url(self) -> str:
-        return self.avatar + "\\" if "?" in self.avatar else self.avatar
+        # heybox 部分老 URL 末尾带 "\"，清理掉避免拼出非法 URL（如 xxx.jpg?\）
+        return self.avatar.rstrip("\\")
 
 
 class Link(Struct):
@@ -49,7 +50,7 @@ class Link(Struct):
                 if part["type"] == "text":
                     content.append(part["text"])
                 elif part["type"] == "img":
-                    content.append(create_image(part["url"] + "\\"))
+                    content.append(create_image(part["url"].rstrip("\\")))
         except (json.JSONDecodeError, TypeError):
             if self.text:
                 content.append(self.text)

@@ -34,9 +34,7 @@ class NCMParser(MetingBaseParser):
     async def _parse_netease(self, searched: re.Match[str]):
         song_id = self._extract_song_id(searched)
         return await self._parse_by_song_id(
-            song_id,
-            share_url=f"https://music.163.com/song/{song_id}",
-            include_cover=True,
+            song_id, share_url=f"https://music.163.com/song/{song_id}", include_cover=True
         )
 
     @handle("163cn.tv", r"https?://[^\s]*?163cn\.tv/(?P<code>[a-zA-Z0-9]+)")
@@ -48,7 +46,5 @@ class NCMParser(MetingBaseParser):
             raise ValueError(f"无法从短链解析歌曲 id: {final_url}")
         song_id = m.group("song_id")
         return await self._parse_by_song_id(
-            song_id,
-            share_url=f"https://music.163.com/song/{song_id}",
-            include_cover=True,
+            song_id, share_url=f"https://music.163.com/song/{song_id}", include_cover=True
         )

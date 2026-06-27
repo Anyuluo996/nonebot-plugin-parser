@@ -233,6 +233,26 @@ class ParseResult:
     """转发的内容"""
     render_image: Path | None = None
     """渲染图片"""
+    cover_image: Path | Task[Path] | None = None
+    """渲染专用封面（如音乐歌曲封面）。
+
+    仅供渲染器画卡片使用，发送流程（render_contents）不读取它，
+    因此不会被当作独立图片消息发出。优先级高于 video/dynamic 的 cover。
+    """
+
+    async def get_cover_image_path(self) -> Path | None:
+        """获取渲染专用封面路径"""
+        if self.cover_image is None:
+            return None
+        if isinstance(self.cover_image, Path):
+            return self.cover_image
+        self.cover_image = await self.cover_image
+        return self.cover_image
+
+    @property
+    def cover_image_uri(self):
+        if isinstance(self.cover_image, Path):
+            return self.cover_image.as_uri()
 
     @property
     def header(self) -> str | None:
@@ -279,6 +299,10 @@ class ParseResult:
 
     async def cover_path(self) -> Path | None:
         """获取封面路径"""
+        # 优先使用渲染专用封面（音乐歌曲封面等，不随消息发送）
+        if self.cover_image is not None:
+            if path := await self.get_cover_image_path():
+                return path
         for cont in self.contents:
             if isinstance(cont, VideoContent):
                 return await cont.get_cover_path()
@@ -290,6 +314,10 @@ class ParseResult:
         if author := self.author:
             if author.avatar:
                 yield author.get_avatar_path()
+
+        # 渲染专用封面（音乐歌曲封面），无论 img_only 与否都要下载
+        if self.cover_image is not None:
+            yield self.get_cover_image_path()
 
         for cont in self.contents:
             if isinstance(cont, DynamicContent):
@@ -340,6 +368,9 @@ class ParseResult:
         """检查是否有待下载的资源"""
         # 检查作者头像
         if self.author and is_pending_path_task(self.author.avatar):
+            return True
+        # 检查渲染专用封面
+        if is_pending_path_task(self.cover_image):
             return True
         # 检查内容
         for cont in self.contents:
@@ -416,3 +447,4 @@ class ParseResultKwargs(TypedDict, total=False):
     author: Author | None
     extra: dict[str, Any]
     repost: ParseResult | None
+    cover_image: Path | Task[Path] | None

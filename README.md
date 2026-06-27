@@ -48,6 +48,9 @@
 | LOFTER  | 链接(图文/音乐帖，含短链)         | ❌️  | ✅​  | ❌️  |
 | 堆糖    | 链接(图集/blog)                   | ❌️  | ✅​  | ❌️  |
 | BUFF    | 链接(资讯/玩家秀)                 | ❌️  | ✅​  | ❌️  |
+| 小黑盒  | 链接(社区帖子)                    | ✅​  | ✅​  | ❌️  |
+| ILLU    | 链接(文章/图集)                   | ❌️  | ✅​  | ❌️  |
+| 贴吧    | 链接(帖子主楼+回复)               | ✅​  | ✅​  | ❌️  |
 
 支持的链接，可参考 [测试链接](https://github.com/fllesser/nonebot-plugin-parser/blob/master/tests/others/test_urls.md)
 

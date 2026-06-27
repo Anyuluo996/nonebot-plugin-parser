@@ -1,6 +1,8 @@
 # 导出所有 Parser 类
-from .nga import NGAParser as NGAParser
+# 注意：base 必须最先导入，其他平台解析器都依赖它（ruff isort 会打乱顺序，故禁用排序）
+# ruff: noqa: I001
 from .base import BaseParser as BaseParser
+from .nga import NGAParser as NGAParser
 from .buff import BuffParser as BuffParser
 from .hupu import HupuParser as HupuParser
 from .illu import IlluParser as IlluParser
@@ -22,8 +24,8 @@ from .twitter import TwitterParser as TwitterParser
 from .bilibili import BilibiliParser as BilibiliParser
 from .kuaishou import KuaiShouParser as KuaiShouParser
 from .telegram import TelegramParser as TelegramParser
-from ..download import YTDLP_DOWNLOADER
 from .xiaohongshu import XiaoHongShuParser as XiaoHongShuParser
+from ..download import YTDLP_DOWNLOADER
 
 # Parser 注册表
 PARSERS: dict[str, type[BaseParser]] = {

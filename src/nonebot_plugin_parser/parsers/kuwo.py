@@ -7,7 +7,7 @@
 import re
 from typing import ClassVar
 
-from ..base import Platform, BaseParser, PlatformEnum, ParseException, handle
+from .base import Platform, BaseParser, PlatformEnum, ParseException, handle
 
 
 def _display_duration(duration: int) -> str:

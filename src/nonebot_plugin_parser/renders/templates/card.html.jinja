@@ -507,8 +507,13 @@
         <div class="text">{{ result.text }}</div>
         {% endif %}
 
+        {# ── 渲染专用封面（音乐歌曲封面等，仅画进卡片，不随消息发送） ── #}
+        {% if result.cover_image_uri %}
+        <div class="cover-wrapper">
+          <img src="{{ result.cover_image_uri | safe }}" class="cover-img" alt="封面" />
+        </div>
         {# ── 视频封面 / GIF 缩略图 ── #}
-        {% if result.video_contents %}
+        {% elif result.video_contents %}
         {% set vc = result.video_contents[0] %}
         {% if vc.cover_path_uri %}
         <div class="cover-wrapper">

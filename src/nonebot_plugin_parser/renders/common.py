@@ -386,11 +386,13 @@ class CommonRenderer(ImageRenderer):
             if cover := self._load_cover(cover_path, ctx.content_width):
                 x_pos = self.PADDING
                 ctx.image.paste(cover, (x_pos, ctx.y_pos))
-                # 视频按钮
-                btn_size = 100
-                btn_x = x_pos + (cover.width - btn_size) // 2
-                btn_y = ctx.y_pos + (cover.height - btn_size) // 2
-                ctx.image.paste(self.video_button_image, (btn_x, btn_y), self.video_button_image)
+                # 视频按钮：仅当存在真正的 VideoContent 时才画
+                # （音乐等只有 cover_image 的情况不画，避免误导成视频）
+                if ctx.result.video_contents:
+                    btn_size = 100
+                    btn_x = x_pos + (cover.width - btn_size) // 2
+                    btn_y = ctx.y_pos + (cover.height - btn_size) // 2
+                    ctx.image.paste(self.video_button_image, (btn_x, btn_y), self.video_button_image)
                 ctx.y_pos += cover.height + self.SECTION_SPACING
                 return
 

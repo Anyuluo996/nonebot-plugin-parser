@@ -282,6 +282,14 @@ class BaseParser:
 
         return ImageContent(url_or_task, alt=alt)
 
+    def create_cover_image_task(self, url: str):
+        """创建渲染专用封面下载任务（Task[Path]）。
+
+        返回的 task 供 ParseResult.cover_image 使用：仅渲染卡片时下载、绘制，
+        不进入 contents，发送流程不会把它当作图片消息发出。
+        """
+        return DOWNLOADER.download_img(url, ext_headers=self.headers)
+
     def create_dynamic_contents(
         self,
         dynamic_urls: list[str],

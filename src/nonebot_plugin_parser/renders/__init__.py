@@ -31,16 +31,33 @@ match pconfig.render_type:
 
 
 def get_renderer(platform: str) -> BaseRenderer:
-    """根据平台名称获取对应的 Renderer 类"""
+    """根据平台名称获取对应的 Renderer 类。
+
+    平台覆盖：若 renders/<platform>.py 存在且能导入，优先用平台专用渲染器，
+    不受 render_type 影响（例如 NGA 的多楼层模板需要专用渲染器，即便全局是
+    htmlrender/common 模式也要走它）。导入失败（如缺依赖、无专用渲染器）时
+    回退到全局 RENDERER，避免影响其他平台。
+    """
+    try:
+        module = importlib.import_module("." + platform, package=__name__)
+        renderer_class: type[BaseRenderer] = getattr(module, "Renderer")
+        return renderer_class()
+    except ModuleNotFoundError:
+        # 该平台无 renders/<platform>.py（多数平台走这里，正常路径）
+        pass
+    except Exception as e:
+        # 有专用渲染器但导入失败（如依赖 htmlkit 未安装），回退全局，避免影响该平台
+        from nonebot import logger
+
+        logger.debug(f"平台 {platform} 专用渲染器加载失败，回退全局渲染器: {e!r}")
+
     if RENDERER:
         return RENDERER
 
     if not _HTMLKIT_AVAILABLE:
         return _COMMON_RENDERER
     else:
-        module = importlib.import_module("." + platform, package=__name__)
-        renderer_class: type[BaseRenderer] = getattr(module, "Renderer")
-        return renderer_class()
+        return _DEFAULT_RENDERER
 
 
 @get_driver().on_startup

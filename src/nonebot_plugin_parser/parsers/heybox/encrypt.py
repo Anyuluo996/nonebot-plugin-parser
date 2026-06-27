@@ -75,10 +75,10 @@ def _interleave_js(arr: list[str]) -> str:
     return "".join(out)
 
 
-def get_hkey(time: int) -> str:
+def get_hkey(time: int, nonce: str | None = None) -> str:
     e = PATH
     t = time + 1
-    n = get_nonce(time)
+    n = nonce if nonce is not None else get_nonce(time)
 
     parts = [seg for seg in e.split("/") if seg]
     e_norm = "/" + "/".join(parts) + "/"
@@ -107,12 +107,16 @@ def get_hkey(time: int) -> str:
 
 
 def build_url(link_id: str) -> str:
-    """构造带签名的请求 URL。"""
+    """构造带签名的请求 URL。
+
+    关键：nonce 只算一次，复用给 URL 参数和 hkey 签名，否则签名校验失败（非法请求）。
+    """
     time = int(_time.time())
+    nonce = get_nonce(time)
     return (
         f"https://{BASE_URL}{PATH}"
         "?os_type=web&app=heybox&client_type=web&version=999.0.4"
-        f"&_time={time}&nonce={get_nonce(time)}&hkey={get_hkey(time)}&link_id={link_id}"
+        f"&_time={time}&nonce={nonce}&hkey={get_hkey(time, nonce)}&link_id={link_id}"
         "&page=1&index=1&limit=5&x_client_type=weboutapp&x_app=heybox_website&x_os_type=Windows"
         "&web_version=2.5"
     )

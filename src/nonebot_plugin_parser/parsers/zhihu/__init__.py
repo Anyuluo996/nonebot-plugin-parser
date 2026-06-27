@@ -85,12 +85,21 @@ class ZhiHuParser(BaseParser):
 
     @handle(
         "www.zhihu.com",
-        r"zhihu\.com/question/\d+/answer/(?P<answer_id>\d+)",
+        # 单个正则同时匹配回答(/question/X/answer/Y)与问题(/question/X)，
+        # 用可选的 answer 捕获组区分，避免同 keyword 下两个 handler 互相覆盖。
+        r"zhihu\.com/question/(?P<question_id>\d+)(?:/answer/(?P<answer_id>\d+))?",
     )
-    async def parse_answer(self, searched: re.Match[str]):
+    async def parse_question_or_answer(self, searched: re.Match[str]):
+        question_id = searched.group("question_id")
+        answer_id = searched.group("answer_id")
+
+        if answer_id is not None:
+            return await self._parse_answer(question_id, answer_id)
+        return await self._parse_question(question_id)
+
+    async def _parse_answer(self, question_id: str, answer_id: str):
         from .answer import decoder as answerDecoder
 
-        answer_id = searched.group("answer_id")
         answer_data = await self.fetch(
             "https://www.zhihu.com/api/v4/answers/"
             f"{answer_id}?include=content,paid_info,can_comment,excerpt,thanks_count,"
@@ -122,11 +131,8 @@ class ZhiHuParser(BaseParser):
             },
         )
 
-    @handle("www.zhihu.com", r"zhihu\.com/question/(?P<question_id>\d+)(?!/answer)(?![\d/])")
-    async def parse_question(self, searched: re.Match[str]):
+    async def _parse_question(self, question_id: str):
         from .question import decoder as questionDecoder
-
-        question_id = searched.group("question_id")
         question_data = await self.fetch(
             "https://www.zhihu.com/api/v4/questions/"
             f"{question_id}?include=read_count,visit_count,answer_count,voteup_count,"

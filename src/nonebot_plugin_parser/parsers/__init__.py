@@ -3,13 +3,16 @@ from .nga import NGAParser as NGAParser
 from .base import BaseParser as BaseParser
 from .buff import BuffParser as BuffParser
 from .hupu import HupuParser as HupuParser
+from .illu import IlluParser as IlluParser
 from .kuwo import KuWoParser as KuWoParser
 from .acfun import AcfunParser as AcfunParser
 from .kugou import KuGouParser as KuGouParser
 from .pixiv import PixivParser as PixivParser
+from .tieba import TiebaParser as TiebaParser
 from .weibo import WeiBoParser as WeiBoParser
 from .zhihu import ZhiHuParser as ZhiHuParser
 from .douyin import DouyinParser as DouyinParser
+from .heybox import HeyBoxParser as HeyBoxParser
 from .lofter import LofterParser as LofterParser
 from .coolapk import CoolapkParser as CoolapkParser
 from .duitang import DuiTangParser as DuiTangParser
@@ -43,6 +46,9 @@ PARSERS: dict[str, type[BaseParser]] = {
     "lofter": LofterParser,
     "duitang": DuiTangParser,
     "buff": BuffParser,
+    "heybox": HeyBoxParser,
+    "illu": IlluParser,
+    "tieba": TiebaParser,
     "pixiv": PixivParser,
 }
 

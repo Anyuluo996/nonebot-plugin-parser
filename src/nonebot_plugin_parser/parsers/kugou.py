@@ -13,7 +13,7 @@ from typing import ClassVar
 from msgspec import Struct, field
 from msgspec.json import Decoder
 
-from ..base import Platform, BaseParser, PlatformEnum, ParseException, handle
+from .base import Platform, BaseParser, PlatformEnum, ParseException, handle
 
 
 class _PlayInfo(Struct):

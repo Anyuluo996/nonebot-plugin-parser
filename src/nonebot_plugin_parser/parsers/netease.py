@@ -13,7 +13,7 @@ from typing import ClassVar
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from ..base import Platform, BaseParser, PlatformEnum, ParseException, handle
+from .base import Platform, BaseParser, PlatformEnum, ParseException, handle
 
 
 def _parse_duration_to_seconds(duration: str) -> int:

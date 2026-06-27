@@ -2,7 +2,7 @@ from typing_extensions import override
 
 from nonebot import logger, require
 
-from .base import ParseResult, ImageRenderer
+from .base import UniMessage, ParseResult, ImageRenderer
 
 # 优先用 htmlrender（容器/默认渲染栈已安装），回退到 htmlkit
 try:
@@ -63,3 +63,16 @@ class Renderer(ImageRenderer):
                     "default_avatar": default_avatar,
                 },
             )
+
+    @override
+    async def render_messages(self, result: ParseResult):
+        """NGA 的文字与图片已全部渲染进长图（主楼 graphics + 回复楼 images），
+        不再调用 render_contents 重复发送，避免主楼内容以文字消息二次发出。"""
+        image_seg = await self.cache_or_render_image(result)
+
+        msg = UniMessage(image_seg)
+        if self.append_url:
+            urls = (result.display_url, result.repost_display_url)
+            msg += "\n".join(url for url in urls if url)
+        yield msg
+

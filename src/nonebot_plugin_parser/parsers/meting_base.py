@@ -12,17 +12,22 @@ Meting-API（metowolf/Meting-API）提供统一的多平台音乐接口：
 """
 
 import contextlib
-from abc import ABC
 from typing import ClassVar
 
-from .base import BaseParser, IgnoreException
+from .base import BaseParser, IgnoreException, Platform
+from ..constants import PlatformEnum
 
 
-class MetingBaseParser(BaseParser, ABC):
+class MetingBaseParser(BaseParser):
     """Meting-API 统一音乐解析基类。
 
-    继承 ABC 避免被 __init_subclass__ 当作具体平台注册（基类无 platform 属性）。
+    提供占位 platform（不注册任何 @handle，因此不匹配 URL，等于不工作），
+    避免被注册逻辑选中。子类覆盖 platform、_meting_server、_extract_song_id。
     """
+
+    platform: ClassVar[Platform] = Platform(
+        name=PlatformEnum.NETEASE, display_name="Meting"
+    )
     """Meting-API 统一音乐解析基类。子类需覆盖 _meting_server 和 _extract_song_id。"""
 
     _meting_server: ClassVar[str] = ""

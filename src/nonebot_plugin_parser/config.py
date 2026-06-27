@@ -36,7 +36,6 @@ class Config(BaseModel):
     parser_proxy: str | None = None
     """代理"""
     parser_need_upload: bool = False
-    parser_need_upload: bool = False
     """是否需要上传音频文件"""
     parser_use_base64: bool = False
     """是否使用 base64 编码发送图片，音频，视频"""

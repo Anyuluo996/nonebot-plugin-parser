@@ -1,13 +1,11 @@
 import re
-from typing import Any, Literal, ClassVar
-from itertools import chain
+from typing import Literal, ClassVar
 
 from msgspec import Struct, field
 from msgspec.json import Decoder
 
 from .base import BaseParser, PlatformEnum, handle
 from .data import Platform, ParseResult, MediaContent
-from ..exception import ParseException
 
 
 class MediaElement(Struct):
@@ -93,97 +91,4 @@ class TwitterParser(BaseParser):
             timestamp=data.date_epoch,
             contents=contents,
             repost=repost,
-        )
-
-    async def _parse_old(self, searched: re.Match[str]) -> ParseResult:
-        # 从匹配对象中获取原始URL
-        url = f"https://{searched.group(0)}"
-
-        resp = await self._req_xdown_api(url)
-        if resp.get("status") != "ok":
-            raise ParseException("解析失败")
-
-        html_content = resp.get("data")
-
-        if html_content is None:
-            raise ParseException("解析失败, 数据为空")
-
-        return self._parse_twitter_html(html_content)
-
-    async def _req_xdown_api(self, url: str) -> dict[str, Any]:
-        headers = {
-            "Accept": "application/json, text/plain, */*",
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Origin": "https://xdown.app",
-            "Referer": "https://xdown.app/",
-            **self.headers,
-        }
-        data = {"q": url, "lang": "zh-cn"}
-        url = "https://xdown.app/api/ajaxSearch"
-        response = await self.request(url, method="POST", headers=headers, data=data, raise_for_status=False)
-        return response.json()
-
-    def _parse_twitter_html(self, html_content: str) -> ParseResult:
-        """解析 Twitter HTML 内容"""
-        from bs4 import Tag, BeautifulSoup
-
-        soup = BeautifulSoup(html_content, "html.parser")
-
-        # 初始化数据
-        title = None
-        cover_url = None
-        video_url = None
-        images_urls = []
-        dynamic_urls = []
-
-        # 1. 提取缩略图链接
-        thumb_tag = soup.find("img")
-        if isinstance(thumb_tag, Tag):
-            if cover := thumb_tag.get("src"):
-                cover_url = str(cover)
-
-        # 2. 提取下载链接
-        tw_button_tags = soup.find_all("a", class_="tw-button-dl")
-        abutton_tags = soup.find_all("a", class_="abutton")
-        for tag in chain(tw_button_tags, abutton_tags):
-            if not isinstance(tag, Tag):
-                continue
-            href = tag.get("href")
-            if href is None:
-                continue
-
-            href = str(href)
-            text = tag.get_text(strip=True)
-            if "下载 MP4" in text:
-                video_url = href
-                break
-            elif "下载图片" in text:
-                images_urls.append(href)
-            elif "下载 gif" in text:
-                dynamic_urls.append(href)
-
-        # 3. 提取标题
-        title_tag = soup.find("h3")
-        if title_tag:
-            title = title_tag.get_text(strip=True)
-
-        # 简洁的构建方式
-        contents = []
-
-        # 添加视频内容
-        if video_url:
-            contents.append(self.create_video_content(video_url, cover_url))
-
-        # 添加图片内容
-        if images_urls:
-            contents.extend(self.create_image_contents(images_urls))
-
-        # 添加动态内容
-        if dynamic_urls:
-            contents.extend(self.create_dynamic_contents(dynamic_urls))
-
-        return self.result(
-            title=title,
-            author=self.create_author("无用户名"),
-            contents=contents,
         )

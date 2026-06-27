@@ -102,7 +102,7 @@ class PixivParser(BaseParser):
         if is_restricted and not self._is_r18_allowed():
             from ..exception import IgnoreException
 
-            raise IgnoreException("R18/R-18G 内容已禁用，请开启 par_pixivR18")
+            raise IgnoreException("R18/R-18G 内容已禁用，请开启 parser_pixivR18")
 
         # 获取图片页面列表
         pages_resp = await self.request(f"{base_url}/ajax/illust/{illust_id}/pages", proxy=proxy)

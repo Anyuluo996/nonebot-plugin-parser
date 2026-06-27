@@ -122,7 +122,7 @@ class ZhiHuParser(BaseParser):
             },
         )
 
-    @handle("www.zhihu.com", r"zhihu\.com/question/(?P<question_id>\d+)(?!/answer)")
+    @handle("www.zhihu.com", r"zhihu\.com/question/(?P<question_id>\d+)(?!/answer)(?![\d/])")
     async def parse_question(self, searched: re.Match[str]):
         from .question import decoder as questionDecoder
 

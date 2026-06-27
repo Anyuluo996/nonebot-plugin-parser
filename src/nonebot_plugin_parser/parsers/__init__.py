@@ -22,7 +22,6 @@ from .netease import NCMParser as NCMParser
 from .qsmusic import QSMusicParser as QSMusicParser
 from .qqmusic import QQMusicParser as QQMusicParser
 from .baidu_music import BaiduMusicParser as BaiduMusicParser
-from .meting_base import MetingBaseParser as MetingBaseParser
 from .twitter import TwitterParser as TwitterParser
 from .bilibili import BilibiliParser as BilibiliParser
 from .kuaishou import KuaiShouParser as KuaiShouParser

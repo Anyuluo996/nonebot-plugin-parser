@@ -34,7 +34,9 @@ class Config(BaseModel):
     parser_pixivR18: bool = False
     """是否解析 R18 内容"""
     parser_ncm_api: str | None = None
-    """网易云音乐 API 地址（NeteaseCloudMusicApi），如 http://10.0.0.1:3000；不配置则网易云不可用"""
+    """[已弃用] 网易云音乐 API 地址，改用 parser_meting_api"""
+    parser_meting_api: str | None = None
+    """Meting-API 地址（统一音乐接口，支持网易云/QQ/酷狗/百度/酷我），如 http://10.0.0.1:4600；不配置则音乐平台不可用"""
     parser_proxy: str | None = None
     """代理"""
     parser_need_upload: bool = False
@@ -163,6 +165,13 @@ class Config(BaseModel):
         if self.parser_ncm_api is None:
             return None
         return self.parser_ncm_api.rstrip("/")
+
+    @property
+    def meting_api(self) -> str | None:
+        """Meting-API 地址，无尾斜杠"""
+        if self.parser_meting_api is None:
+            return None
+        return self.parser_meting_api.rstrip("/")
 
     @property
     def proxy(self) -> str | None:

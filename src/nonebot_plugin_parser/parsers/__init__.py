@@ -1,6 +1,7 @@
 # 导出所有 Parser 类
 from .nga import NGAParser as NGAParser
 from .base import BaseParser as BaseParser
+from .buff import BuffParser as BuffParser
 from .hupu import HupuParser as HupuParser
 from .kuwo import KuWoParser as KuWoParser
 from .acfun import AcfunParser as AcfunParser
@@ -9,7 +10,9 @@ from .pixiv import PixivParser as PixivParser
 from .weibo import WeiBoParser as WeiBoParser
 from .zhihu import ZhiHuParser as ZhiHuParser
 from .douyin import DouyinParser as DouyinParser
+from .lofter import LofterParser as LofterParser
 from .coolapk import CoolapkParser as CoolapkParser
+from .duitang import DuiTangParser as DuiTangParser
 from .netease import NCMParser as NCMParser
 from .qsmusic import QSMusicParser as QSMusicParser
 from .twitter import TwitterParser as TwitterParser
@@ -37,6 +40,9 @@ PARSERS: dict[str, type[BaseParser]] = {
     "qsmusic": QSMusicParser,
     "hupu": HupuParser,
     "coolapk": CoolapkParser,
+    "lofter": LofterParser,
+    "duitang": DuiTangParser,
+    "buff": BuffParser,
     "pixiv": PixivParser,
 }
 

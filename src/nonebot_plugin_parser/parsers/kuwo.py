@@ -1,63 +1,27 @@
-"""酷我音乐解析器。
+"""酷我音乐解析器（基于 Meting-API）。
 
-适配自 parser-lite 的 kuwo.py，使用第三方 API kw-api.cenguigui.cn。
-依赖第三方服务可用性。
+支持 play_detail 链接，需配置 parser_meting_api。
 """
 
 import re
 from typing import ClassVar
 
-from .base import Platform, BaseParser, PlatformEnum, ParseException, handle
+from .base import Platform, PlatformEnum, handle
+from .meting_base import MetingBaseParser
 
 
-def _display_duration(duration: int) -> str:
-    try:
-        if duration <= 0:
-            return "0:00"
-        minutes, seconds = divmod(duration, 60)
-        if minutes < 60:
-            return f"{minutes}:{seconds:02d}"
-        hours, minutes = divmod(minutes, 60)
-        return f"{hours}:{minutes:02d}:{seconds:02d}"
-    except (TypeError, ValueError):
-        return "NaN"
-
-
-class KuWoParser(BaseParser):
-    # 平台信息
+class KuWoParser(MetingBaseParser):
     platform: ClassVar[Platform] = Platform(
         name=PlatformEnum.KUWO, display_name="酷我音乐"
     )
+    _meting_server: ClassVar[str] = "kuwo"
+
+    def _extract_song_id(self, searched) -> str:
+        return searched.group("rid")
 
     @handle("kuwo.cn", r"kuwo\.cn/play_detail/(?P<rid>\d+)")
     async def _parse_kuwo(self, searched: re.Match[str]):
         rid = searched.group("rid")
-
-        resp = await self.request(
-            "https://kw-api.cenguigui.cn/",
-            params={"id": rid, "type": "song", "level": "exhigh", "format": "json"},
-        )
-        data = resp.json()
-        if data["code"] != 200:
-            raise ParseException(
-                f"酷我音乐接口返回错误: {data.get('msg', '未知错误')}"
-            )
-        music_data = data["data"]
-        audio_url = music_data["url"]
-        if not audio_url.startswith("http"):
-            raise ParseException("无效音乐URL")
-        duration = music_data["duration"]
-
-        contents = [self.create_audio_content(audio_url, duration)]
-
-        return self.result(
-            title=music_data["name"],
-            author=self.create_author(music_data["artist"]),
-            url=f"https://www.kuwo.cn/play_detail/{rid}",
-            contents=contents,
-            extra={
-                "album": music_data.get("album"),
-                "info": f"时长: {_display_duration(duration)}",
-                "lyric": music_data.get("lyric"),
-            },
+        return await self._parse_by_song_id(
+            rid, share_url=f"https://www.kuwo.cn/play_detail/{rid}"
         )

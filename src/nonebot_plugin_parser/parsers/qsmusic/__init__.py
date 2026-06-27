@@ -40,11 +40,7 @@ class QSMusicParser(BaseParser):
         ).loaderData.track_page.audioWithLyricsOption
 
         contents = [
-            self.create_audio_content(
-                music_data.url,
-                duration=music_data.duration,
-                audio_name=f"{music_data.trackName}.mp3",
-            )
+            self.create_audio_content(music_data.url, duration=music_data.duration)
         ]
         if cover_url := music_data.coverURL:
             contents.append(self.create_image_content(cover_url))

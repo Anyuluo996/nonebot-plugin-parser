@@ -102,13 +102,8 @@ class KuGouParser(BaseParser):
         if not audio_url:
             raise ParseException("未找到音频资源")
 
-        audio_name = f"{playinfo.fileName}.{playinfo.extName}"
         contents = [
-            self.create_audio_content(
-                audio_url,
-                duration=playinfo.timeLength,
-                audio_name=audio_name,
-            )
+            self.create_audio_content(audio_url, duration=playinfo.timeLength)
         ]
 
         lyric = ""

@@ -76,12 +76,9 @@ class NCMParser(BaseParser):
             raise ParseException("无法获取音频下载地址（可能为 VIP/无版权）")
         audio_url = url_list[0]["url"]
         audio_type = url_list[0].get("type", "mp3") or "mp3"
-        audio_name = f"{title}-{artist_name}.{audio_type}"
 
         contents = [
-            self.create_audio_content(
-                audio_url, duration=duration, audio_name=audio_name
-            )
+            self.create_audio_content(audio_url, duration=duration)
         ]
         if cover_url:
             contents.append(self.create_image_content(cover_url))

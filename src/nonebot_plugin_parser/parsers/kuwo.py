@@ -49,8 +49,6 @@ class KuWoParser(BaseParser):
         duration = music_data["duration"]
 
         contents = [self.create_audio_content(audio_url, duration)]
-        if cover_url := music_data.get("pic"):
-            contents.append(self.create_image_content(cover_url))
 
         return self.result(
             title=music_data["name"],

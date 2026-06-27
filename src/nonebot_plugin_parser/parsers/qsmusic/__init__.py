@@ -42,8 +42,6 @@ class QSMusicParser(BaseParser):
         contents = [
             self.create_audio_content(music_data.url, duration=music_data.duration)
         ]
-        if cover_url := music_data.coverURL:
-            contents.append(self.create_image_content(cover_url))
 
         return self.result(
             title=music_data.trackName,

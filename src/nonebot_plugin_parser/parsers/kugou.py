@@ -122,9 +122,6 @@ class KuGouParser(BaseParser):
                 if lyrics.error_code == 0:
                     lyric = base64.b64decode(lyrics.content).decode(lyrics.charset)
 
-        if cover_url := playinfo.album_img.format(size=480):
-            contents.append(self.create_image_content(cover_url))
-
         return self.result(
             title=playinfo.songName,
             author=self.create_author(playinfo.singerName),

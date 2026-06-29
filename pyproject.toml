@@ -49,6 +49,8 @@ dependencies = [
   "beautifulsoup4>=4.12.0,<5.0.0",
   "curl_cffi>=0.13.0,<1.0.0,!=0.14.0",
   "protobuf>=5.0.0,<7.0.0",
+  # gmssl: 抖音 a_bogus 签名算法内部的国密 SM3 哈希
+  "gmssl>=3.2.2,<4.0.0",
   "bilibili-api-python>=17.4.1,<18.0.0",
   "qqmusic-api-python>=0.6.7,<1.0.0",
   "nonebot-plugin-alconna>=0.60.4,<1.0.0",
@@ -223,3 +225,9 @@ extra-standard-library = ["typing_extensions"]
 
 [tool.ruff.lint.pyupgrade]
 keep-runtime-typing = true
+
+[tool.ruff.lint.per-file-ignores]
+# _abogus.py 是 vendored 第三方签名算法 (Evil0ctal/JoeanAmier), 保持原始实现原貌:
+# - RUF012 可变类属性: 算法用 list/dict 作类级常量查找表, 改 ClassVar 会偏离原实现
+# - E741 模糊变量名 l: 算法原始循环索引, 改名无收益且偏离原实现
+"src/nonebot_plugin_parser/parsers/douyin/_abogus.py" = ["RUF012", "E741"]

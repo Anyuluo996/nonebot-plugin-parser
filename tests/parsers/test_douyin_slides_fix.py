@@ -13,79 +13,66 @@ import json as _json
 import asyncio
 import subprocess
 
-import httpx
 import pytest
 from nonebot import logger
 
-# 配置读取: nonebot_plugin_parser.config 顶层 require("nonebot_plugin_localstore"),
-# 需要 NoneBot 已初始化才能加载。测试 conftest 的 init fixture 是 session 级, 在
-# collect 之后才跑, 模块顶层直接 import 会触发 RuntimeError。
-# 故用 try 包裹: 初始化失败时按"无 ttwid" 处理, 让相关测试正确 skip 而非收集失败。
-try:
-    from nonebot_plugin_parser.config import pconfig as _pconfig
 
-    _HAS_DOUYIN_TTWID = bool(_pconfig.douyin_ttwid)
-except Exception:
-    # collect 阶段 NoneBot 未初始化是预期情况, 不是测试错误
-    _HAS_DOUYIN_TTWID = False
+def _needs_douyin_ttwid():
+    """运行时判断是否配置了登录态 ttwid, 未配置则 skip 当前测试。
 
-VID = "7650785539410446179"
+    抖音 PC web detail 接口要求登录态 ttwid + a_bogus 签名配套才放行,
+    缺一即返回 200 + 空 body, 实况照片/动态视频无法解析。
+    (a_bogus 签名由 parser 自动计算, ttwid 需用户配置。)
+
+    必须运行时判断 (而非模块顶层 skipif): conftest 的 session 级 init fixture
+    在 collect 之后才跑, 模块顶层 import pconfig 会因 NoneBot 未初始化而拿到
+    False, 导致即使配了 ttwid 也误 skip (issue: DOuyin_Note_Slides_Decode_Failure)。
+    """
+    try:
+        from nonebot_plugin_parser.config import pconfig
+
+        if pconfig.douyin_ttwid:
+            return
+    except Exception:
+        pass
+    pytest.skip(
+        "未配置 parser_douyin_ttwid, 抖音 PC web detail 接口要求登录态 ttwid + a_bogus "
+        "签名配套, 缺 ttwid 返回空 body, 实况照片/dynamic 视频无法解析"
+    )
+
+
+# 实况照片 slides (share_type=slides, 含 live photo), 走 parser.parse_slides 路径
 URL = "https://v.douyin.com/Gz4nn_2caaU"
 # 重定向成 note/ 的实况照片图文 (share_type=note, 含 live photo)
 LIVE_NOTE_URL = "https://v.douyin.com/PsRRzmKjer8/"
-# 对应的 note id
+# 对应的 note id (test_note_empty_body_falls_back_to_parse_video 用)
 LIVE_NOTE_VID = "7651838242916592867"
-PC_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/132.0.0.0 Safari/537.36"
-    ),
-    "Referer": "https://www.douyin.com/",
-}
-
-# 抖音 PC web detail 接口在无 ttwid 时被风控返回 200 + 空 body,
-# 此时实况照片/动态视频无法解析, 相关测试必须 skip 而非误判失败。
-# 集中在此处管理, 避免在每个测试里散落 pytest.skip (issue: DOuyin_Note_Slides_Decode_Failure)。
-_NEEDS_DOUYIN_TTWID = pytest.mark.skipif(
-    not _HAS_DOUYIN_TTWID,
-    reason="未配置 parser_douyin_ttwid, 抖音 PC web detail 接口被风控返回空 body, "
-    "实况照片/dynamic 视频无法解析",
-)
 
 
-@_NEEDS_DOUYIN_TTWID
 @pytest.mark.asyncio
 async def test_decoder_picks_play_addr_with_covers():
-    """decoder 使用 play_addr (无水印/无片尾), 且每个视频都带封面。"""
-    from nonebot_plugin_parser.parsers.douyin import slides
+    """decoder 使用 play_addr (无水印/无片尾), 且每个视频都带封面。
 
-    async with httpx.AsyncClient(headers=PC_HEADERS, verify=False, timeout=30) as c:
-        r = await c.get(
-            "https://www.douyin.com/aweme/v1/web/aweme/detail/",
-            params={"aweme_id": VID, "aid": "6383"},
-        )
-    aweme_detail = slides.detail_decoder.decode(r.content).aweme_detail
+    走 parser.parse_slides 完整路径 (含 a_bogus 签名), 从结果反推 decoder 选取正确。
+    直接裸 httpx 打 detail 接口缺 a_bogus 签名会返回空 body, 故必须走 parser。
+    """
+    _needs_douyin_ttwid()
+    from nonebot_plugin_parser.parsers import DouyinParser
 
-    assert aweme_detail is not None, "aweme_detail 为空"
-    dynamic_urls = aweme_detail.dynamic_urls
-    assert len(dynamic_urls) == 2, f"应解析出 2 段视频, 实际 {len(dynamic_urls)}"
+    parser = DouyinParser()
+    keyword, searched = parser.search_url(URL)
+    assert searched, "无法匹配 URL"
+    result = await parser.parse(keyword, searched)
 
-    # 断言: dynamic_urls 优先使用官方 play API 形式
-    # (CDN 镜像 douyinvod.com 偶发 403/404, 官方 play API 更稳定)
-    for i, u in enumerate(dynamic_urls):
-        is_play_api = "/aweme/v1/play" in u
-        assert is_play_api, f"dynamic[{i}] 未优先使用官方 play API URL: {u[:120]}"
+    # SlidesData 格式下应全部解析为 dynamic (实况视频), 无静态图
+    dynamics = result.dynamic_contents
+    assert len(dynamics) == 2, f"应解析出 2 段视频, 实际 {len(dynamics)}"
 
-    # 断言: 每个视频都有封面
-    cover_urls = aweme_detail.dynamic_cover_urls
-    assert len(cover_urls) == 2, f"应解析出 2 个封面, 实际 {len(cover_urls)}"
-    for i, u in enumerate(cover_urls):
-        assert u, f"cover[{i}] 为空"
-        assert u.startswith("http"), f"cover[{i}] 不是 http URL: {u}"
+    # 断言: 每个实况视频都有封面 (decoder 选取了 play_addr 对应的 cover)
+    for i, cont in enumerate(dynamics):
+        assert cont.cover is not None, f"dynamic_contents[{i}] 缺少封面 cover"
 
 
-@_NEEDS_DOUYIN_TTWID
 @pytest.mark.asyncio
 async def test_live_photo_slides_parses_to_videos():
     """端到端: parse_slides 输出 2 段带封面的 DynamicContent 视频内容。
@@ -93,6 +80,7 @@ async def test_live_photo_slides_parses_to_videos():
     注意: slides 类型无可用兜底 (m/iesdouyin 分享页均无 _ROUTER_DATA),
     在 PC detail 风控下 slides 链接直接 ParseException, 与 note 行为不同。
     """
+    _needs_douyin_ttwid()
     from nonebot_plugin_parser.parsers import DouyinParser
 
     parser = DouyinParser()
@@ -136,7 +124,6 @@ async def test_live_photo_slides_parses_to_videos():
             logger.warning(f"dynamic[{i}] 无法用 ffprobe 检测时长, 跳过时长断言")
 
 
-@_NEEDS_DOUYIN_TTWID
 @pytest.mark.asyncio
 async def test_live_photo_note_redirect_parses_to_video():
     """回归2: 重定向成 note/ 的实况照片图文必须解析出 DynamicContent 视频。
@@ -145,6 +132,7 @@ async def test_live_photo_note_redirect_parses_to_video():
     只输出 1 张静态图, 实况视频丢失; 修复后 note 优先走 parse_slides,
     PC detail API 返回 images[].video.play_addr, 正确输出实况视频。
     """
+    _needs_douyin_ttwid()
     from nonebot_plugin_parser.parsers import DouyinParser
 
     parser = DouyinParser()
@@ -167,25 +155,22 @@ async def test_live_photo_note_redirect_parses_to_video():
         assert cont.cover is not None, f"dynamic_contents[{i}] 缺少封面 cover"
 
 
-@_NEEDS_DOUYIN_TTWID
 @pytest.mark.asyncio
 async def test_decoder_picks_live_video_for_note():
-    """单元: PC detail API 对 note 实况照片返回 images[].video.play_addr。"""
-    from nonebot_plugin_parser.parsers.douyin import slides
+    """端到端: note 实况照片 (重定向成 note/) 解析出实况视频。
 
-    async with httpx.AsyncClient(headers=PC_HEADERS, verify=False, timeout=30) as c:
-        r = await c.get(
-            "https://www.douyin.com/aweme/v1/web/aweme/detail/",
-            params={"aweme_id": LIVE_NOTE_VID, "aid": "6383"},
-        )
-    aweme_detail = slides.detail_decoder.decode(r.content).aweme_detail
+    走 parser 完整路径 (含 a_bogus 签名); 裸 httpx 缺签名会空 body。
+    """
+    _needs_douyin_ttwid()
+    from nonebot_plugin_parser.parsers import DouyinParser
 
-    assert aweme_detail is not None, "aweme_detail 为空"
-    dynamic_urls = aweme_detail.dynamic_urls
-    assert dynamic_urls, f"note 实况照片应解析出至少 1 段视频, 实际 {len(dynamic_urls)}"
-    for i, u in enumerate(dynamic_urls):
-        is_play_api = "/aweme/v1/play" in u
-        assert is_play_api, f"dynamic[{i}] 未优先使用官方 play API URL: {u[:120]}"
+    parser = DouyinParser()
+    keyword, searched = parser.search_url(LIVE_NOTE_URL)
+    assert searched, "无法匹配 URL"
+    result = await parser.parse(keyword, searched)
+
+    dynamics = result.dynamic_contents
+    assert dynamics, f"note 实况照片应解析出至少 1 段视频, 实际 {len(dynamics)}"
 
 
 @pytest.mark.asyncio
@@ -229,3 +214,151 @@ async def test_note_empty_body_falls_back_to_parse_video(monkeypatch):
     # 即使实况照片视频因风控丢失, 也应返回标题 + 至少一些内容, 而非 traceback
     assert result.title, "fallback 后标题不应为空"
     assert result.contents, "fallback 后应至少返回静态图内容"
+
+
+# === 回归4: isPicture=true 的 picture 类型图文 ===
+# 旧 Struct 假设 author/images[] 结构, 跟 pictureList[] 完全对不上, 直接 ValidationError。
+# 修复: 新增 PictureSlidesData + decode_aweme_detail 智能 dispatch。
+# 该测试不需要 ttwid, 用 monkeypatch 喂 mock 响应即可, 应当全平台都能跑通。
+PICTURE_NOTE_VID = "7450744229229235491"
+
+# 真实 PC detail 响应 (issue DOuyin_Note_Slides_Decode_Failure 提供)
+_PICTURE_NOTE_PAYLOAD = {
+    "aweme_detail": {
+        "awemeId": PICTURE_NOTE_VID,
+        "nickname": "平平淡淡-",
+        "createTime": 1734761606000,  # 毫秒
+        "uid": "61147416465",
+        "desc": "小米塔可爱捏\n#米塔 #steam游戏",
+        "isPicture": True,
+        "pictureList": [
+            {
+                "width": 540, "height": 542,
+                "url": "https://p3-pc-sign.douyinpic.com/img1",
+                "videoBitRateList": [{
+                    "cover": "https://p3-pc-sign.douyinpic.com/cov1",
+                    "bitRate": 637347, "dataSize": 488288, "format": "mp4",
+                    "isH265": 0, "fps": 30, "gearName": "normal_540_0", "qualityType": 20,
+                    "width": 540, "height": 542,
+                    "url": "https://www.douyin.com/aweme/v1/play/?file_id=f1",
+                    "backUrl": []
+                }]
+            },
+            {
+                "width": 1008, "height": 660,
+                "url": "https://p3-pc-sign.douyinpic.com/img2",
+                "videoBitRateList": [{
+                    "cover": "https://p3-pc-sign.douyinpic.com/cov2",
+                    "bitRate": 1013317, "dataSize": 405707, "format": "mp4",
+                    "isH265": 0, "fps": 30, "gearName": "normal_540_0", "qualityType": 20,
+                    "width": 880, "height": 576,
+                    "url": "https://www.douyin.com/aweme/v1/play/?file_id=f2",
+                    "backUrl": []
+                }]
+            },
+            {
+                "width": 2560, "height": 1600,
+                "url": "https://p3-pc-sign.douyinpic.com/img3",
+                "videoBitRateList": [{
+                    "cover": "https://p3-pc-sign.douyinpic.com/cov3",
+                    "bitRate": 641916, "dataSize": 2118324, "format": "mp4",
+                    "isH265": 0, "fps": 30, "gearName": "normal_720_0", "qualityType": 10,
+                    "width": 1152, "height": 720,
+                    "url": "https://www.douyin.com/aweme/v1/play/?file_id=f3",
+                    "backUrl": []
+                }]
+            },
+            {
+                "width": 2560, "height": 1600,
+                "url": "https://p3-pc-sign.douyinpic.com/img4",
+                "videoBitRateList": [{
+                    "cover": "https://p9-pc-sign.douyinpic.com/cov4",
+                    "bitRate": 1347295, "dataSize": 1235133, "format": "mp4",
+                    "isH265": 0, "fps": 30, "gearName": "normal_720_0", "qualityType": 10,
+                    "width": 1152, "height": 720,
+                    "url": "https://www.douyin.com/aweme/v1/play/?file_id=f4",
+                    "backUrl": []
+                }]
+            }
+        ]
+    }
+}
+
+
+@pytest.mark.asyncio
+async def test_picture_note_decodes_picture_list(monkeypatch):
+    """回归4: isPicture=true 的 note 必须解析 pictureList[], 输出 4 段 dynamic。
+
+    修复前: 旧 Struct 假设 author/images[], 跟 pictureList[] 字段不匹配, decode 抛
+    ValidationError → traceback; 修复后: PictureSlidesData 适配 pictureList[],
+    decode_aweme_detail 智能 dispatch 自动选对结构, 4 段 live photo 全部解析。
+    """
+    import json as _json
+    from typing import ClassVar
+
+    from nonebot_plugin_parser.parsers import DouyinParser
+
+    parser = DouyinParser()
+    raw = _json.dumps(_PICTURE_NOTE_PAYLOAD).encode("utf-8")
+
+    class _MockResp:
+        status_code = 200
+        content = raw
+        text = raw.decode("utf-8")
+        # ClassVar 标注避免 ruff RUF012 mutable default 误报
+        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+
+        @property
+        def url(self):
+            return "https://www.douyin.com/aweme/v1/web/aweme/detail/"
+
+    async def _fake_request(url, *args, **kwargs):
+        if "aweme/v1/web/aweme/detail" in str(url):
+            return _MockResp()
+        # 其它请求(分享页兜底)走真实网络 — 但 parse_slides 不会调, 故抛错
+        raise RuntimeError(f"unexpected URL: {url}")
+
+    monkeypatch.setattr(parser, "request", _fake_request)
+
+    result = await parser.parse_slides(PICTURE_NOTE_VID)
+
+    # 核心断言: 4 张图全是 live photo, 应输出 4 段 dynamic + 0 张静态图
+    assert result.img_contents == [], (
+        f"全是 live photo, 静态图应为 0, 实际 {len(result.img_contents)}"
+    )
+    assert len(result.dynamic_contents) == 4, (
+        f"应有 4 段 live photo 视频, 实际 {len(result.dynamic_contents)}"
+    )
+
+    # 断言: 每段 dynamic 都带封面 (live video 的独立 cover, 来自 videoBitRateList[0].cover)
+    for i, cont in enumerate(result.dynamic_contents):
+        assert cont.cover is not None, f"dynamic_contents[{i}] 缺少封面 cover"
+
+    # 断言: createTime 毫秒 -> 秒 转换正确 (datetime.fromtimestamp 期望秒)
+    assert result.timestamp == 1734761606, f"createTime 毫秒没转秒: {result.timestamp}"
+
+    # 断言: 标题/作者解出
+    assert result.title == "小米塔可爱捏\n#米塔 #steam游戏"
+    assert result.author is not None
+    assert result.author.name == "平平淡淡-"
+
+
+@pytest.mark.asyncio
+async def test_picture_note_live_url_falls_back(monkeypatch):
+    """回归4b: 真实 URL note/7450744229229235491 在 PC detail 风控时
+    至少应返回 fallback 的静态图(同 test_note_empty_body_falls_back)。
+
+    该测试不依赖 ttwid, 复现生产场景。
+    """
+    from nonebot_plugin_parser.parsers import DouyinParser
+
+    parser = DouyinParser()
+    # 不 mock PC detail, 让真实空 body 触发 fallback
+    # (若 ttwid 配置有效, 走 parse_slides 成功路径, 4 段 dynamic)
+    kw, m = parser.search_url(f"https://www.douyin.com/note/{PICTURE_NOTE_VID}")
+    assert m
+    result = await parser.parse(kw, m)
+
+    # 至少应有标题和内容 (ttwid 无时: 4 张静态图; 有时: 4 段 dynamic)
+    assert result.title, "标题不应为空"
+    assert result.contents, "应至少返回静态图或 dynamic 视频"

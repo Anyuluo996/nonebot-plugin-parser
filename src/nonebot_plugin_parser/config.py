@@ -44,11 +44,12 @@ class Config(BaseModel):
     parser_proxy: str | None = None
     """代理"""
     parser_douyin_ttwid: str | None = None
-    """抖音 PC web 详情接口用 ttwid Cookie（图文/实况照片解析）。
+    """抖音 PC web 详情接口用的登录态 ttwid Cookie（图文/实况照片解析）。
 
-    抖音对 PC detail 接口有风控，无有效 ttwid 时返回空 body，导致实况照片视频
-    无法解析（会降级到静态图片）。从浏览器登录抖音后复制 ``ttwid`` Cookie 填入即可
-    恢复实况照片解析；留空则纯图文仍可正常解析（走分享页兜底）。
+    抖音 PC detail 接口要求登录态凭据 + a_bogus 签名两者配套才放行: 仅 a_bogus
+    或仅游客态 ttwid 都会返回 200 + 空 body。配置登录态 ttwid 后, 解析器会自动
+    计算 a_bogus 签名, 即可恢复实况照片 (live photo) 视频解析。从浏览器登录抖音
+    后复制 ``ttwid`` Cookie 填入即可; 留空则纯图文仍可正常解析 (走分享页兜底)。
     """
     parser_need_upload: bool = False
     """是否需要上传音频文件"""

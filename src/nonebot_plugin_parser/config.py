@@ -43,6 +43,13 @@ class Config(BaseModel):
     """
     parser_proxy: str | None = None
     """代理"""
+    parser_douyin_ttwid: str | None = None
+    """抖音 PC web 详情接口用 ttwid Cookie（图文/实况照片解析）。
+
+    抖音对 PC detail 接口有风控，无有效 ttwid 时返回空 body，导致实况照片视频
+    无法解析（会降级到静态图片）。从浏览器登录抖音后复制 ``ttwid`` Cookie 填入即可
+    恢复实况照片解析；留空则纯图文仍可正常解析（走分享页兜底）。
+    """
     parser_need_upload: bool = False
     """是否需要上传音频文件"""
     parser_use_base64: bool = False
@@ -181,6 +188,13 @@ class Config(BaseModel):
     def proxy(self) -> str | None:
         """代理"""
         return self.parser_proxy
+
+    @property
+    def douyin_ttwid(self) -> str | None:
+        """抖音 PC web 详情接口 ttwid Cookie，无首尾空白"""
+        if self.parser_douyin_ttwid is None:
+            return None
+        return self.parser_douyin_ttwid.strip() or None
 
     @property
     def need_upload(self) -> bool:

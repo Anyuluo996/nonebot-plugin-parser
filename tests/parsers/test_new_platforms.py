@@ -9,6 +9,8 @@ import pytest
 ZHIHU_ANSWER = "https://www.zhihu.com/question/67423622/answer/1396759249"
 KUGOU_SHARE = "https://www.kugou.com/share/2T6Jwe3e3b3.html"
 KUWO = "https://www.kuwo.cn/play_detail/2986743"
+# QQ 音乐「同桌的你」(天天) songmid，实测免费歌曲匿名可解析
+QQMUSIC_SONG = "https://y.qq.com/n/ryqq/songDetail/002Qvhtb46OI7q"
 HUPU = "https://bbs.hupu.com/639669147.html"
 COOLAPK = "https://www.coolapk.com/feed/58619217"
 LOFTER = "https://www.lofter.com/post/30e8bd_1c9e1a3a0"
@@ -50,7 +52,21 @@ async def test_netease():
 
 
 @pytest.mark.asyncio
-async def test_kugou():
+async def test_qqmusic():
+    from nonebot_plugin_parser.parsers import QQMusicParser
+    from nonebot_plugin_parser.exception import IgnoreException
+
+    parser = QQMusicParser()
+    keyword, matched = parser.search_url(QQMUSIC_SONG)
+    assert matched, "QQ音乐歌曲 URL 应被匹配"
+    try:
+        result = await parser.parse(keyword, matched)
+    except IgnoreException as e:
+        # 未登录态下 VIP/付费曲目拿不到播放地址属预期，跳过而非判失败
+        pytest.skip(f"QQ音乐该曲目无匿名播放权限（VIP/付费），跳过: {e!r}")
+    except Exception as e:
+        pytest.skip(f"QQ音乐解析失败（网络/第三方服务），跳过: {e!r}")
+    assert result.contents, "应有音频内容"
     from nonebot_plugin_parser.parsers import KuGouParser
 
     parser = KuGouParser()

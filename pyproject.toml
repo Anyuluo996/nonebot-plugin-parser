@@ -50,6 +50,7 @@ dependencies = [
   "curl_cffi>=0.13.0,<1.0.0,!=0.14.0",
   "protobuf>=5.0.0,<7.0.0",
   "bilibili-api-python>=17.4.1,<18.0.0",
+  "qqmusic-api-python>=0.6.7,<1.0.0",
   "nonebot-plugin-alconna>=0.60.4,<1.0.0",
   "nonebot-plugin-apscheduler>=0.5.0,<1.0.0",
   "nonebot-plugin-localstore>=0.7.4,<1.0.0",
@@ -97,7 +98,6 @@ test = [
   "pytest-xdist>=3.8.0,<4.0.0",
   "respx>=0.22.0",
 ]
-pydantic-v1 = ["pydantic<2.0.0"]
 pydantic-v2 = ["pydantic>=2.0.0"]
 telegram = ["nonebot-adapter-telegram>=0.1.0b20"]
 
@@ -106,9 +106,10 @@ requires = ["uv_build>=0.10.0,<0.11.0"]
 build-backend = "uv_build"
 
 [tool.uv]
+# pydantic-v1 兼容组已移除：qqmusic-api-python 硬依赖 pydantic>=2.13.3，
+# 项目代码也仅使用 pydantic v2 API，故不再支持下游 pydantic v1 环境。
 conflicts = [
   [
-    { group = "pydantic-v1" },
     { group = "pydantic-v2" },
     { group = "telegram" },
   ],

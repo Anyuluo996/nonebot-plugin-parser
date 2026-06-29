@@ -239,6 +239,47 @@ async def _():
         await UniMessage(msg).send()
 
 
+# ==================== QQ 音乐扫码登录 ====================
+# QQ 音乐解析免费歌曲开箱即用；VIP/付费歌曲需登录态（凭证持久化到本地）。
+@on_command("qqmusic登录", block=True, permission=SUPERUSER).handle()
+async def _qqmusic_login(matcher: Matcher):
+    """SUPERUSER: 触发 QQ 音乐扫码登录，登录态持久化后 VIP 歌曲可解析。"""
+    from qqmusic_api import Client
+    from qqmusic_api.models.login import QRLoginType
+    from qqmusic_api.modules.login_utils import QRCodeLoginSession
+
+    from ..parsers.qqmusic import credential as qq_cred
+
+    await matcher.send("正在生成 QQ 音乐登录二维码…")
+    try:
+        async with Client() as client:
+            session = QRCodeLoginSession(
+                client.login,
+                QRLoginType.QQ,
+                interval=1.5,
+                timeout_seconds=180.0,
+            )
+            qr = await session.get_qrcode()
+            await UniMessage(UniHelper.img_seg(qr.data)).send()
+            await UniMessage("请用手机 QQ 扫描上图授权登录（请尽快扫，二维码 180 秒内有效）").send()
+            cred = await session.wait_qrcode_login()
+            qq_cred.save_credential(cred)
+    except Exception as e:
+        await matcher.finish(f"登录未完成: {e}")
+        return
+    await matcher.finish(f"✅ QQ 音乐登录成功 (musicid={cred.musicid})，VIP 歌曲现可解析")
+
+
+@on_command("qqmusic登出", block=True, permission=SUPERUSER).handle()
+async def _qqmusic_logout(matcher: Matcher):
+    """SUPERUSER: 清除已保存的 QQ 音乐登录态。"""
+    from ..parsers.qqmusic import credential as qq_cred
+
+    if qq_cred.clear_credential():
+        await matcher.finish("已清除 QQ 音乐登录态，后续仅能解析免费歌曲")
+    await matcher.finish("当前未保存 QQ 音乐登录态")
+
+
 # ==================== Telegram 解析授权管理 ====================
 # Telegram 解析需消耗本机 tdl 会话，仅 SUPERUSER 可用，
 # SUPERUSER 可通过以下命令授权/取消授权其他用户

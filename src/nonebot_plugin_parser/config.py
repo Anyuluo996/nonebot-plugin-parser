@@ -36,9 +36,10 @@ class Config(BaseModel):
     parser_ncm_api: str | None = None
     """[已弃用] 网易云音乐 API 地址，网易云现已直连官方接口，无需配置"""
     parser_meting_api: str | None = None
-    """Meting-API 地址（QQ音乐/酷狗/百度/酷我解析需要，如 http://10.0.0.1:4600）。
+    """Meting-API 地址（酷狗/百度/酷我解析需要，如 http://10.0.0.1:4600）。
 
-    注：网易云音乐已改为直连官方公开接口，开箱即用，无需配置此项。
+    注：网易云音乐与 QQ 音乐均已直连官方公开接口（开箱即用），无需配置此项；
+    QQ 音乐 VIP/付费歌曲可用「qqmusic登录」扫码授权。
     """
     parser_proxy: str | None = None
     """代理"""

@@ -40,7 +40,7 @@
 | NGA     | 链接(帖子，主楼+前4楼回复)        | ❌️  | ✅​  | ❌️  | ✅   |
 | 知乎    | 链接(专栏文章/回答/问题)          | ✅​  | ✅​  | ❌️  | ✅   |
 | 网易云  | 链接(歌曲)                        | ❌️  | ❌️  | ✅​  | ✅   |
-| QQ音乐  | 链接(歌曲)                        | ❌️  | ❌️  | ✅​  | 🧪   |
+| QQ音乐  | 链接(歌曲)                        | ❌️  | ❌️  | ✅​  | ✅   |
 | 酷狗    | 链接(歌曲分享)                    | ❌️  | ❌️  | ✅​  | 🧪   |
 | 酷我    | 链接(歌曲)                        | ❌️  | ❌️  | ✅​  | 🧪   |
 | 汽水音乐| 链接(歌曲分享)                    | ❌️  | ❌️  | ✅​  | 🧪   |
@@ -56,7 +56,7 @@
 
 > [!Note]
 > 状态列说明：✅ 表示已实测稳定；🧪 表示**实验性**，受上游接口/风控影响，可能不稳定：
-> - **音乐类**：**网易云**已实测稳定，直连官方公开接口，**开箱即用无需配置**；**QQ 音乐**需要登录 cookie、**酷我**上游接口失效、**酷狗/汽水**未实测成功；QQ音乐/酷狗/酷我/百度音乐依赖 Meting-API 容器（需配置 `parser_meting_api`）；
+> - **音乐类**：**网易云**已实测稳定，直连官方公开接口，**开箱即用无需配置**；**QQ 音乐**已基于 `qqmusic-api-python` 自建直连，免费歌曲**开箱即用**，VIP/付费歌曲用「qqmusic登录」扫码授权（凭证持久化）；**酷我**上游接口失效、**酷狗/汽水**未实测成功；酷狗/酷我/百度音乐依赖 Meting-API 容器（需配置 `parser_meting_api`）；
 > - **小黑盒**：签名算法已实现，但存在 **IP 级风控**（`show_captcha`），需配合代理或更换出口 IP。
 
 支持的链接，可参考 [测试链接](https://github.com/fllesser/nonebot-plugin-parser/blob/master/tests/others/test_urls.md)
@@ -299,8 +299,9 @@ parser_pixiv=""
 # 默认为 false（不解析），设为 true 允许解析
 parser_pixivR18=false
 
-# [可选] Meting-API 地址，QQ音乐/酷狗/百度/酷我解析需要（如 http://10.0.0.1:4600）
-# 注：网易云音乐已直连官方公开接口，开箱即用，无需配置此项
+# [可选] Meting-API 地址，酷狗/百度/酷我解析需要（如 http://10.0.0.1:4600）
+# 注：网易云音乐与 QQ 音乐均已直连官方公开接口，开箱即用，无需配置此项；
+#     QQ 音乐 VIP/付费歌曲可用「qqmusic登录」扫码授权
 # 部署参考 https://github.com/metowolf/Meting-API
 parser_meting_api=""
 
@@ -396,10 +397,14 @@ parser_screenshot_full_page=False
 |  tg白名单|       SUPERUSER       |  否   | 任意 | 查看 TG 授权列表  |
 |  tg登录  |       SUPERUSER       |  否   | 任意 | TG 扫码登录(生成二维码) |
 |  blogin  |       SUPERUSER       |  否   | 私聊 | 扫码获取 B 站凭证 |
+| qqmusic登录 |       SUPERUSER       |  否   | 任意 | QQ 音乐扫码登录(获取 VIP 凭证) |
+| qqmusic登出 |       SUPERUSER       |  否   | 任意 | 清除 QQ 音乐登录态 |
 
 > Telegram 解析需消耗本机 tdl 会话，仅 SUPERUSER 或被 SUPERUSER 授权（`tg授权 <用户ID/@用户名>`）的用户可触发。
 > 首次使用需登录：SUPERUSER 执行 `tg登录`，bot 会把二维码渲染成图片发回，用 Telegram App 扫码即可（会话写入 `~/.tdl`）。
 > ⚠ `tg登录`（bot 全自动登录）仅支持 **Linux / macOS / Docker / WSL**，Windows 原生环境不可用。Windows 用户请使用容器/WSL 部署，或在终端执行 `tdl login` 手动登录（详见上方「Telegram 登录方式」）。
+
+> QQ 音乐解析免费歌曲**开箱即用**；VIP/付费歌曲需 SUPERUSER 执行 `qqmusic登录`，bot 发回二维码后用手机 QQ 扫码授权，登录态会持久化保存（存于 nonebot-plugin-localstore 数据目录）。需重新登录时执行 `qqmusic登出` 后再次 `qqmusic登录`。
 
 ## 🧩 扩展
 

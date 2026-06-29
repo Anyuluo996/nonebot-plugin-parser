@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>知乎问题</title>
+    <style>
+      :root {
+        --primary: #1772f6;
+        --bg: #f6f6f6;
+        --card-bg: #ffffff;
+        --answer-bg: #ffffff;
+        --border: #ebebeb;
+        --text-primary: #1a1a1a;
+        --text-secondary: #646464;
+        --text-muted: #999999;
+        --vote-bg: #f6f6f6;
+        --vote-text: #ff9607;
+        --radius: 10px;
+        --radius-sm: 6px;
+      }
+
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+
+      body {
+        font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+        width: 720px;
+        padding: 20px;
+        background: var(--bg);
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .thread-header {
+        font-size: 13px;
+        color: var(--primary);
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        padding: 2px 4px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .thread-header::before { content: "▎"; }
+
+      /* ──────── 主楼（问题描述）卡片 ──────── */
+      .post-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-left: 4px solid var(--primary);
+        border-radius: var(--radius);
+        padding: 18px 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+      }
+
+      .post-title {
+        font-size: 22px;
+        font-weight: 800;
+        color: var(--text-primary);
+        line-height: 1.4;
+      }
+
+      .post-info {
+        font-size: 12px;
+        color: var(--text-muted);
+        line-height: 1.6;
+      }
+
+      .post-meta {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        object-fit: cover;
+        flex-shrink: 0;
+        background: var(--vote-bg);
+        border: 1px solid var(--border);
+      }
+
+      .meta-info {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+      }
+
+      .username {
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--text-primary);
+      }
+
+      .headline {
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+
+      .time {
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+
+      .post-body {
+        font-size: 16px;
+        color: var(--text-primary);
+        line-height: 1.8;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+      }
+
+      .post-images {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .post-images img {
+        width: 100%;
+        height: auto;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--border);
+        display: block;
+      }
+
+      /* ──────── 回答楼层 ──────── */
+      .answer-card {
+        background: var(--answer-bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 16px 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+      }
+
+      .answer-meta {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .answer-avatar {
+        width: 34px;
+        height: 34px;
+      }
+
+      .vote-badge {
+        background: var(--vote-bg);
+        color: var(--vote-text);
+        font-size: 12px;
+        font-weight: 700;
+        padding: 3px 9px;
+        border-radius: 12px;
+        flex-shrink: 0;
+        margin-left: auto;
+      }
+
+      .answer-body {
+        font-size: 15px;
+        color: var(--text-primary);
+        line-height: 1.75;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+      }
+
+      .answer-images {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .answer-images img {
+        width: 100%;
+        max-width: 540px;
+        height: auto;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--border);
+        display: block;
+      }
+
+      .answer-empty {
+        color: var(--text-muted);
+        font-style: italic;
+        font-size: 14px;
+      }
+
+      .thread-footer {
+        font-size: 12px;
+        color: var(--text-muted);
+        text-align: right;
+        padding: 2px 4px;
+      }
+      .thread-footer a {
+        color: var(--primary);
+        text-decoration: none;
+      }
+    </style>
+  </head>
+  <body>
+    {% autoescape true %}
+    <div class="thread-header">知乎</div>
+
+    {# ── 主楼（问题描述） ── #}
+    <div class="post-card">
+      {% if result.title %}
+      <div class="post-title">{{ result.title }}</div>
+      {% endif %}
+
+      {% set info = result.extra.get('info') %}
+      {% if info %}
+      <div class="post-info">{{ info }}</div>
+      {% endif %}
+
+      {% if result.author %}
+      <div class="post-meta">
+        {% if result.author.avatar_path_uri %}
+        <img src="{{ result.author.avatar_path_uri | safe }}" class="avatar" alt="avatar" />
+        {% else %}
+        <img src="{{ default_avatar | safe }}" class="avatar" alt="avatar" />
+        {% endif %}
+        <div class="meta-info">
+          <div class="username">{{ result.author.name }}</div>
+          {% if result.author.description %}
+          <div class="headline">{{ result.author.description }}</div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      {% if result.graphics %}
+      <div class="post-body">
+        {% for item in result.graphics %}
+        {% if item is string %}{{ item }}
+        {% endif %}
+        {% endfor %}
+      </div>
+      <div class="post-images">
+        {% for item in result.graphics %}
+        {% if item.path_uri is defined %}
+        <img src="{{ item.path_uri | safe }}" alt="image" />
+        {% endif %}
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+
+    {# ── 高赞回答楼层 ── #}
+    {% for answer in result.extra.get('answers', []) %}
+    <div class="answer-card">
+      <div class="answer-meta">
+        {% if answer.avatar and answer.avatar.path_uri %}
+        <img src="{{ answer.avatar.path_uri | safe }}" class="avatar answer-avatar" alt="avatar" />
+        {% else %}
+        <img src="{{ default_avatar | safe }}" class="avatar answer-avatar" alt="avatar" />
+        {% endif %}
+        <div class="meta-info">
+          <div class="username">{{ answer.name }}</div>
+          {% if answer.headline %}
+          <div class="headline">{{ answer.headline }}</div>
+          {% endif %}
+        </div>
+        <span class="vote-badge">▲ {{ answer.voteup }}</span>
+      </div>
+
+      {% set content = answer.content %}
+      {% set has_text = false %}
+      {% for item in content %}
+      {% if item is string %}{% set has_text = true %}{% endif %}
+      {% endfor %}
+
+      {% if has_text %}
+      <div class="answer-body">
+        {% for item in content %}
+        {% if item is string %}{{ item }}
+        {% endif %}
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="answer-empty">（仅图片或无文字内容）</div>
+      {% endif %}
+
+      <div class="answer-images">
+        {% for item in content %}
+        {% if item.path_uri is defined %}
+        <img src="{{ item.path_uri | safe }}" alt="image" />
+        {% endif %}
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+
+    <div class="thread-footer">
+      <a href="{{ result.url }}">{{ result.url }}</a>
+    </div>
+    {% endautoescape %}
+  </body>
+</html>

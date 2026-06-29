@@ -1,7 +1,9 @@
 """QQ音乐解析器（基于 Meting-API）。
 
+> ⚠️ 实验性：Meting 的 tencent 服务器获取播放地址需登录态 cookie，未配置时可能拿不到音频。
+
 支持链接格式：
-- 长链 y.qq.com/n/ryqq/songDetail/数字、y.qq.com/n/ryqq_v2/songDetail/数字
+- 长链 y.qq.com/n/ryqq/songDetail/数字、y.qq.com/n/ryqq/v2/songDetail/数字
 - 短链 c*.y.qq.com/base/fcgi-bin/u?__=xxx（需重定向解析）
 
 需配置 parser_meting_api。

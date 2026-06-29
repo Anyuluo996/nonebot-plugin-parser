@@ -1,5 +1,7 @@
 """百度音乐解析器（基于 Meting-API）。
 
+> ⚠️ 实验性：未实测成功，可能受百度接口限制。
+
 支持 music.baidu.com 链接，需配置 parser_meting_api。
 """
 

@@ -1,14 +1,14 @@
 """百度贴吧解析器。
 
 适配自 parser-lite 的 tieba。通过 protobuf 协议获取帖子主楼 + 回复。
-评论数据放入 extra（本项目暂不渲染评论）。
+主楼 + 前几楼回复一起渲染为长图（extra['posts']，专用渲染器）。
 """
 
 import re
 from typing import ClassVar
 
 from ..base import Platform, BaseParser, PlatformEnum, handle
-from .utils import get_post, build_content
+from .utils import get_post, build_content, build_reply_floors
 from .._format import format_num
 
 
@@ -32,6 +32,11 @@ class TiebaParser(BaseParser):
 
         contents = build_content(posts, self.create_image_content, self.create_video_content)
 
+        # 前几楼回复，渲染进长图（与 NGA/知乎对齐的多楼层模式）
+        reply_floors = build_reply_floors(
+            posts, self.create_image_content, self.create_video_content
+        )
+
         return self.result(
             title=thread.title,
             graphics=contents,
@@ -46,5 +51,6 @@ class TiebaParser(BaseParser):
                 ),
                 "forum": forum.fname,
                 "reply_count": len(posts.objs) - 1 if len(posts.objs) > 1 else 0,
+                "posts": reply_floors,
             },
         )

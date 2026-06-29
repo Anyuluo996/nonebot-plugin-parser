@@ -1,5 +1,8 @@
 """小黑盒解析器。
 
+> ⚠️ 实验性：签名算法已实现，但存在 IP 级风控（show_captcha），
+> 同一出口 IP 频繁请求会触发验证码，需配合代理或更换出口 IP。
+
 适配自 parser-lite 的 heybox，参考 zhiyu1998/rconsole-plugin 的 nonce 算法。
 反爬策略：优先 token + httpx（快）；失败则浏览器页面内 fetch（原生指纹，慢但可靠）。
 """

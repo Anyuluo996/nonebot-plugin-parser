@@ -1,5 +1,7 @@
 """酷我音乐解析器（基于 Meting-API）。
 
+> ⚠️ 实验性：Meting 的 kuwo 上游接口已失效，解析大概率失败。
+
 支持 play_detail 链接，需配置 parser_meting_api。
 """
 

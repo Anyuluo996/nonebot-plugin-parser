@@ -34,9 +34,12 @@ class Config(BaseModel):
     parser_pixivR18: bool = False
     """是否解析 R18 内容"""
     parser_ncm_api: str | None = None
-    """[已弃用] 网易云音乐 API 地址，改用 parser_meting_api"""
+    """[已弃用] 网易云音乐 API 地址，网易云现已直连官方接口，无需配置"""
     parser_meting_api: str | None = None
-    """Meting-API 地址（统一音乐接口，支持网易云/QQ/酷狗/百度/酷我），如 http://10.0.0.1:4600；不配置则音乐平台不可用"""
+    """Meting-API 地址（QQ音乐/酷狗/百度/酷我解析需要，如 http://10.0.0.1:4600）。
+
+    注：网易云音乐已改为直连官方公开接口，开箱即用，无需配置此项。
+    """
     parser_proxy: str | None = None
     """代理"""
     parser_need_upload: bool = False

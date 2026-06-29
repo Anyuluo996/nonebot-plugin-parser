@@ -344,11 +344,14 @@ class ParseResult:
             if isinstance(gra, ImageContent):
                 yield gra.get_path()
 
-        # extra["posts"] 中的图片（如 NGA 回复楼层内嵌图）
+        # extra["posts"] 中的图片（NGA/贴吧回复楼层内嵌图 + 贴吧作者头像）
         for post in self.extra.get("posts", []) if isinstance(self.extra.get("posts"), list) else ():
-            for img in post.get("images", []) if isinstance(post, dict) else ():
-                if isinstance(img, ImageContent):
-                    yield img.get_path()
+            if isinstance(post, dict):
+                for img in post.get("images", []):
+                    if isinstance(img, ImageContent):
+                        yield img.get_path()
+                if isinstance(post.get("avatar"), ImageContent):
+                    yield post["avatar"].get_path()
 
         # extra["answers"] 中的图片（如知乎问题页高赞回答内嵌图 + 作者头像）
         for ans in self.extra.get("answers", []) if isinstance(self.extra.get("answers"), list) else ():

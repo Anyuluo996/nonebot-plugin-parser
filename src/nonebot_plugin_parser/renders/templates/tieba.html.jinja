@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>百度贴吧</title>
+    <style>
+      :root {
+        --primary: #4e6ef2;
+        --bg: #f5f5f5;
+        --card-bg: #ffffff;
+        --reply-bg: #ffffff;
+        --border: #ececec;
+        --text-primary: #222222;
+        --text-secondary: #666666;
+        --text-muted: #999999;
+        --floor-badge: #4e6ef2;
+        --agree-text: #ff6022;
+        --radius: 10px;
+        --radius-sm: 6px;
+      }
+
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+
+      body {
+        font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+        width: 720px;
+        padding: 20px;
+        background: var(--bg);
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .thread-header {
+        font-size: 13px;
+        color: var(--primary);
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        padding: 2px 4px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .thread-header::before { content: "▎"; }
+
+      /* ──────── 主楼卡片 ──────── */
+      .post-card {
+        background: var(--card-bg);
+        border: 1px solid var(--border);
+        border-left: 4px solid var(--primary);
+        border-radius: var(--radius);
+        padding: 18px 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+      }
+
+      .post-title {
+        font-size: 22px;
+        font-weight: 800;
+        color: var(--text-primary);
+        line-height: 1.4;
+      }
+
+      .post-info {
+        font-size: 12px;
+        color: var(--text-muted);
+        line-height: 1.6;
+      }
+
+      .post-meta {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .avatar {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        object-fit: cover;
+        flex-shrink: 0;
+        background: var(--bg);
+        border: 1px solid var(--border);
+      }
+
+      .meta-info {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 0;
+      }
+
+      .username {
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--text-primary);
+      }
+
+      .time {
+        font-size: 12px;
+        color: var(--text-muted);
+      }
+
+      .post-body {
+        font-size: 16px;
+        color: var(--text-primary);
+        line-height: 1.8;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+      }
+
+      .post-images {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .post-images img {
+        width: 100%;
+        height: auto;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--border);
+        display: block;
+      }
+
+      /* ──────── 回复楼层 ──────── */
+      .reply-card {
+        background: var(--reply-bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 14px 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+      }
+
+      .reply-meta {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .floor-badge {
+        background: var(--floor-badge);
+        color: #fff;
+        font-size: 11px;
+        font-weight: 700;
+        padding: 2px 7px;
+        border-radius: 4px;
+        flex-shrink: 0;
+      }
+
+      .reply-avatar {
+        width: 32px;
+        height: 32px;
+      }
+
+      .agree {
+        font-size: 12px;
+        color: var(--agree-text);
+        font-weight: 700;
+        margin-left: auto;
+        flex-shrink: 0;
+      }
+
+      .reply-body {
+        font-size: 15px;
+        color: var(--text-primary);
+        line-height: 1.75;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+      }
+
+      .reply-images {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .reply-images img {
+        width: 100%;
+        max-width: 520px;
+        height: auto;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--border);
+        display: block;
+      }
+
+      .reply-empty {
+        color: var(--text-muted);
+        font-style: italic;
+        font-size: 14px;
+      }
+
+      .thread-footer {
+        font-size: 12px;
+        color: var(--text-muted);
+        text-align: right;
+        padding: 2px 4px;
+      }
+      .thread-footer a {
+        color: var(--primary);
+        text-decoration: none;
+      }
+    </style>
+  </head>
+  <body>
+    {% autoescape true %}
+    <div class="thread-header">{{ result.extra.get('forum', '百度贴吧') }}</div>
+
+    {# ── 主楼 ── #}
+    <div class="post-card">
+      {% if result.title %}
+      <div class="post-title">{{ result.title }}</div>
+      {% endif %}
+
+      {% set info = result.extra.get('info') %}
+      {% if info %}
+      <div class="post-info">{{ info }}</div>
+      {% endif %}
+
+      {% if result.author %}
+      <div class="post-meta">
+        {% if result.author.avatar_path_uri %}
+        <img src="{{ result.author.avatar_path_uri | safe }}" class="avatar" alt="avatar" />
+        {% else %}
+        <img src="{{ default_avatar | safe }}" class="avatar" alt="avatar" />
+        {% endif %}
+        <div class="meta-info">
+          <div class="username">{{ result.author.name }}</div>
+          {% if result.formartted_datetime %}
+          <div class="time">{{ result.formartted_datetime }}</div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+
+      {% if result.graphics %}
+      <div class="post-body">
+        {% for item in result.graphics %}
+        {% if item is string %}{{ item }}
+        {% endif %}
+        {% endfor %}
+      </div>
+      <div class="post-images">
+        {% for item in result.graphics %}
+        {% if item.path_uri is defined %}
+        <img src="{{ item.path_uri | safe }}" alt="image" />
+        {% endif %}
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+
+    {# ── 回复楼层 ── #}
+    {% for post in result.extra.get('posts', []) %}
+    <div class="reply-card">
+      <div class="reply-meta">
+        <span class="floor-badge">{{ post.floor }}F</span>
+        {% if post.avatar and post.avatar.path_uri %}
+        <img src="{{ post.avatar.path_uri | safe }}" class="avatar reply-avatar" alt="avatar" />
+        {% else %}
+        <img src="{{ default_avatar | safe }}" class="avatar reply-avatar" alt="avatar" />
+        {% endif %}
+        <div class="meta-info">
+          <div class="username">{{ post.name }}</div>
+        </div>
+        {% if post.agree %}
+        <span class="agree">▲ {{ post.agree }}</span>
+        {% endif %}
+      </div>
+
+      {% if post.text %}
+      <div class="reply-body">{{ post.text }}</div>
+      {% else %}
+      <div class="reply-empty">（仅图片或无文字内容）</div>
+      {% endif %}
+
+      {% set imgs = post.images %}
+      {% if imgs %}
+      <div class="reply-images">
+        {% for img in imgs %}
+        {% if img.path_uri %}
+        <img src="{{ img.path_uri | safe }}" alt="image" />
+        {% endif %}
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+
+    <div class="thread-footer">
+      <a href="{{ result.url }}">{{ result.url }}</a>
+    </div>
+    {% endautoescape %}
+  </body>
+</html>

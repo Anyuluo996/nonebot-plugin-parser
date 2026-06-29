@@ -90,6 +90,36 @@ async def get_post(parser, tid: int) -> Posts:
     return parse_res(data)
 
 
+def _frags_to_graphics(contents_objs, create_image, create_video=None) -> list:
+    """把一个楼层的 Contents.objs 碎片列表转为 graphics（文本 + 图片 + 视频）。
+
+    相邻文本碎片合并，@/链接拼到当前文本末尾，图片/视频独立成项。
+    build_content（主楼）与 build_reply_floors（回复楼层）共用本逻辑。
+    """
+    out: list = []
+    for part in contents_objs:
+        if isinstance(part, FragText):
+            out.append(part.text)
+        elif isinstance(part, FragImage) and create_image:
+            out.append(create_image(part.origin_src or part.src))
+        elif isinstance(part, FragAt):
+            if out and isinstance(out[-1], str):
+                out[-1] += f"@{part.text} "
+            else:
+                out.append(f"@{part.text} ")
+        elif isinstance(part, FragLink):
+            url_str = str(part.text)
+            if out and isinstance(out[-1], str):
+                out[-1] += url_str
+            else:
+                out.append(url_str)
+        elif isinstance(part, FragVideo) and create_video:
+            out.append(
+                create_video(part.src, cover_url=part.cover_src, duration=part.duration)
+            )
+    return out
+
+
 def build_content(posts: Posts, create_image, create_video=None) -> list:
     """构建主楼正文为 graphics（文本 + 图片 + 视频）。"""
     contents: list = []
@@ -99,24 +129,43 @@ def build_content(posts: Posts, create_image, create_video=None) -> list:
     if not posts.objs:
         return contents
 
-    for part in posts.objs[0].contents.objs:
-        if isinstance(part, FragText):
-            contents.append(part.text)
-        elif isinstance(part, FragImage) and create_image:
-            contents.append(create_image(part.origin_src or part.src))
-        elif isinstance(part, FragAt):
-            if contents and isinstance(contents[-1], str):
-                contents[-1] += f"@{part.text} "
-            else:
-                contents.append(f"@{part.text} ")
-        elif isinstance(part, FragLink):
-            url_str = str(part.text)
-            if contents and isinstance(contents[-1], str):
-                contents[-1] += url_str
-            else:
-                contents.append(url_str)
-        elif isinstance(part, FragVideo) and create_video:
-            contents.append(
-                create_video(part.src, cover_url=part.cover_src, duration=part.duration)
-            )
+    contents.extend(_frags_to_graphics(posts.objs[0].contents.objs, create_image, create_video))
     return contents
+
+
+# 前几楼回复渲染数（与 NGA 的 MAX_REPLY_FLOORS、知乎 TOP_ANSWERS_LIMIT 对齐）
+MAX_REPLY_FLOORS = 4
+
+
+def build_reply_floors(posts: Posts, create_image, create_video=None, limit: int = MAX_REPLY_FLOORS) -> list:
+    """从 posts.objs[1:] 构造前 ``limit`` 个回复楼层，供专用渲染器画长图。
+
+    每个 floor dict 字段对齐 NGA 的 posts 结构：
+    - floor: 楼层号
+    - name: 用户显示名
+    - avatar: ImageContent（头像下载任务）或 None
+    - agree: 点赞数
+    - text: 文本内容（碎片拼接）
+    - images: ImageContent 列表（楼层内嵌图）
+    """
+    floors: list[dict] = []
+    for post in posts.objs[1:]:  # objs[0] 是主楼
+        if len(floors) >= limit:
+            break
+
+        graphics = _frags_to_graphics(post.contents.objs, create_image, create_video)
+        text_parts = [g for g in graphics if isinstance(g, str)]
+        images = [g for g in graphics if not isinstance(g, str)]
+
+        portrait = post.user.portrait
+        floors.append(
+            {
+                "floor": post.floor,
+                "name": post.user.show_name or "匿名",
+                "avatar": create_image(f"http://tb.himg.baidu.com/sys/portraith/item/{portrait}") if portrait else None,
+                "agree": post.agree,
+                "text": "".join(text_parts).strip(),
+                "images": images,
+            }
+        )
+    return floors

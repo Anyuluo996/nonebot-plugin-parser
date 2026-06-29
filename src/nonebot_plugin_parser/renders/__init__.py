@@ -51,13 +51,21 @@ def get_renderer(platform: str) -> BaseRenderer:
 
         logger.debug(f"平台 {platform} 专用渲染器加载失败，回退全局渲染器: {e!r}")
 
+    return get_global_renderer()
+
+
+def get_global_renderer() -> BaseRenderer:
+    """获取全局渲染器（受 render_type 配置控制）。
+
+    供平台专用渲染器在「某些结果不需要专用模板」时回退使用，例如知乎的文章/单条回答
+    走通用 card 模板，只有问题页（多回答）走专用 zhihu 模板。
+    """
     if RENDERER:
         return RENDERER
 
     if not _HTMLKIT_AVAILABLE:
         return _COMMON_RENDERER
-    else:
-        return _DEFAULT_RENDERER
+    return _DEFAULT_RENDERER
 
 
 @get_driver().on_startup

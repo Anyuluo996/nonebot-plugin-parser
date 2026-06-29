@@ -350,6 +350,15 @@ class ParseResult:
                 if isinstance(img, ImageContent):
                     yield img.get_path()
 
+        # extra["answers"] 中的图片（如知乎问题页高赞回答内嵌图 + 作者头像）
+        for ans in self.extra.get("answers", []) if isinstance(self.extra.get("answers"), list) else ():
+            if isinstance(ans, dict):
+                for img in ans.get("content", []) if isinstance(ans.get("content"), list) else ():
+                    if isinstance(img, ImageContent):
+                        yield img.get_path()
+                if isinstance(ans.get("avatar"), ImageContent):
+                    yield ans["avatar"].get_path()
+
         if self.repost is not None:
             yield from self.repost._iterate_download_coros(img_only)
 

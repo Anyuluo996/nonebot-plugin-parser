@@ -56,7 +56,7 @@
 
 > [!Note]
 > 状态列说明：✅ 表示已实测稳定；🧪 表示**实验性**，受上游接口/风控影响，可能不稳定：
-> - **音乐类**：仅**网易云**已实测稳定；**QQ 音乐**需要登录 cookie、**酷我**上游接口失效、**酷狗/汽水**未实测成功；
+> - **音乐类**：**网易云**已实测稳定，直连官方公开接口，**开箱即用无需配置**；**QQ 音乐**需要登录 cookie、**酷我**上游接口失效、**酷狗/汽水**未实测成功；QQ音乐/酷狗/酷我/百度音乐依赖 Meting-API 容器（需配置 `parser_meting_api`）；
 > - **小黑盒**：签名算法已实现，但存在 **IP 级风控**（`show_captcha`），需配合代理或更换出口 IP。
 
 支持的链接，可参考 [测试链接](https://github.com/fllesser/nonebot-plugin-parser/blob/master/tests/others/test_urls.md)
@@ -298,6 +298,11 @@ parser_pixiv=""
 # [可选] 是否允许解析 R18 / R-18G 内容
 # 默认为 false（不解析），设为 true 允许解析
 parser_pixivR18=false
+
+# [可选] Meting-API 地址，QQ音乐/酷狗/百度/酷我解析需要（如 http://10.0.0.1:4600）
+# 注：网易云音乐已直连官方公开接口，开箱即用，无需配置此项
+# 部署参考 https://github.com/metowolf/Meting-API
+parser_meting_api=""
 
 # [可选] 代理, 仅作用于 youtube, tiktok, Pixiv 解析
 # 推特解析会自动读取环境变量中的 http_proxy / https_proxy(代理软件通常会自动设置)

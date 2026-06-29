@@ -45,6 +45,9 @@ _CURL_ONLY_DOMAINS: frozenset[str] = frozenset(
         "amemv.com",
         "bytecdn.cn",
         "douyinstatic.com",
+        # 抖音伪装域名 CDN：真实 CDN 标识编码进子域/路径，主域固定为 qrstuvwxyzab.com
+        # (例: 24098c3c3f....qrstuvwxyzab.com/v5-se-qn-daily-cm.douyinvod.com/...)
+        "qrstuvwxyzab.com",
     }
 )
 
@@ -64,6 +67,7 @@ _NO_PROXY_DOMAINS: frozenset[str] = frozenset(
         "amemv.com",
         "bytecdn.cn",
         "douyinstatic.com",
+        "qrstuvwxyzab.com",
     }
 )
 _REDIRECT_STATUSES: frozenset[int] = frozenset({301, 302, 303, 307, 308})

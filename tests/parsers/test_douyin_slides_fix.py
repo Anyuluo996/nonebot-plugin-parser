@@ -17,6 +17,18 @@ import httpx
 import pytest
 from nonebot import logger
 
+# 配置读取: nonebot_plugin_parser.config 顶层 require("nonebot_plugin_localstore"),
+# 需要 NoneBot 已初始化才能加载。测试 conftest 的 init fixture 是 session 级, 在
+# collect 之后才跑, 模块顶层直接 import 会触发 RuntimeError。
+# 故用 try 包裹: 初始化失败时按"无 ttwid" 处理, 让相关测试正确 skip 而非收集失败。
+try:
+    from nonebot_plugin_parser.config import pconfig as _pconfig
+
+    _HAS_DOUYIN_TTWID = bool(_pconfig.douyin_ttwid)
+except Exception:
+    # collect 阶段 NoneBot 未初始化是预期情况, 不是测试错误
+    _HAS_DOUYIN_TTWID = False
+
 VID = "7650785539410446179"
 URL = "https://v.douyin.com/Gz4nn_2caaU"
 # 重定向成 note/ 的实况照片图文 (share_type=note, 含 live photo)
@@ -32,7 +44,17 @@ PC_HEADERS = {
     "Referer": "https://www.douyin.com/",
 }
 
+# 抖音 PC web detail 接口在无 ttwid 时被风控返回 200 + 空 body,
+# 此时实况照片/动态视频无法解析, 相关测试必须 skip 而非误判失败。
+# 集中在此处管理, 避免在每个测试里散落 pytest.skip (issue: DOuyin_Note_Slides_Decode_Failure)。
+_NEEDS_DOUYIN_TTWID = pytest.mark.skipif(
+    not _HAS_DOUYIN_TTWID,
+    reason="未配置 parser_douyin_ttwid, 抖音 PC web detail 接口被风控返回空 body, "
+    "实况照片/dynamic 视频无法解析",
+)
 
+
+@_NEEDS_DOUYIN_TTWID
 @pytest.mark.asyncio
 async def test_decoder_picks_play_addr_with_covers():
     """decoder 使用 play_addr (无水印/无片尾), 且每个视频都带封面。"""
@@ -43,10 +65,6 @@ async def test_decoder_picks_play_addr_with_covers():
             "https://www.douyin.com/aweme/v1/web/aweme/detail/",
             params={"aweme_id": VID, "aid": "6383"},
         )
-    # 抖音风控: 无有效 ttwid 时 detail 接口返回 200 + 空 body, 无法验证实况照片,
-    # 跳过而非判失败 (需配置 parser_douyin_ttwid 才能稳定通过)。
-    if not r.content:
-        pytest.skip("douyin detail API 返回空 body (风控/无 ttwid), 跳过实况照片断言")
     aweme_detail = slides.detail_decoder.decode(r.content).aweme_detail
 
     assert aweme_detail is not None, "aweme_detail 为空"
@@ -67,20 +85,20 @@ async def test_decoder_picks_play_addr_with_covers():
         assert u.startswith("http"), f"cover[{i}] 不是 http URL: {u}"
 
 
+@_NEEDS_DOUYIN_TTWID
 @pytest.mark.asyncio
 async def test_live_photo_slides_parses_to_videos():
-    """端到端: parse_slides 输出 2 段带封面的 DynamicContent 视频内容。"""
+    """端到端: parse_slides 输出 2 段带封面的 DynamicContent 视频内容。
+
+    注意: slides 类型无可用兜底 (m/iesdouyin 分享页均无 _ROUTER_DATA),
+    在 PC detail 风控下 slides 链接直接 ParseException, 与 note 行为不同。
+    """
     from nonebot_plugin_parser.parsers import DouyinParser
 
     parser = DouyinParser()
     keyword, searched = parser.search_url(URL)
     assert searched, "无法匹配 URL"
-    try:
-        result = await parser.parse(keyword, searched)
-    except Exception as e:
-        # slides/ 类型在 PC detail 风控下, 分享页也拿不到 _ROUTER_DATA,
-        # 无可用兜底。需配置 parser_douyin_ttwid 才能稳定通过。
-        pytest.skip(f"slides 类型解析失败 (PC detail 风控/无 ttwid, 无兜底), 跳过: {e!r}")
+    result = await parser.parse(keyword, searched)
 
     content_types = [type(c).__name__ for c in result.contents]
     logger.info(
@@ -88,11 +106,6 @@ async def test_live_photo_slides_parses_to_videos():
         f"dynamic_contents={len(result.dynamic_contents)}, "
         f"img_contents={len(result.img_contents)}"
     )
-
-    # 抖音风控下 PC detail 接口返回空, parse_slides 会降级到 parse_video 拿静态图,
-    # 此时实况照片视频(dynamic_contents)会丢失。这是风控导致的降级而非 bug, 跳过断言。
-    if not result.dynamic_contents:
-        pytest.skip("实况照片视频未解析 (PC detail 接口风控/无 ttwid, 已降级静态图), 跳过")
 
     # 核心断言: 必须解析出 2 段实况照片视频
     assert len(result.dynamic_contents) == 2, f"实况照片应解析出 2 段视频, 实际 contents={content_types}"
@@ -123,6 +136,7 @@ async def test_live_photo_slides_parses_to_videos():
             logger.warning(f"dynamic[{i}] 无法用 ffprobe 检测时长, 跳过时长断言")
 
 
+@_NEEDS_DOUYIN_TTWID
 @pytest.mark.asyncio
 async def test_live_photo_note_redirect_parses_to_video():
     """回归2: 重定向成 note/ 的实况照片图文必须解析出 DynamicContent 视频。
@@ -147,17 +161,13 @@ async def test_live_photo_note_redirect_parses_to_video():
 
     assert result.title, "标题为空"
 
-    # 抖音风控下 PC detail 接口返回空, parse_slides 降级到 parse_video 拿静态图,
-    # 实况照片视频(dynamic_contents)会丢失。风控导致的降级而非 bug, 跳过。
-    if not result.dynamic_contents:
-        pytest.skip("note 实况照片视频未解析 (PC detail 接口风控/无 ttwid, 已降级静态图), 跳过")
-
     # 核心断言: note 实况照片必须解析出 DynamicContent 视频 (修复前是 0)
     assert result.dynamic_contents, f"note 实况照片应解析出视频, 实际 dynamic=0 (contents={content_types})"
     for i, cont in enumerate(result.dynamic_contents):
         assert cont.cover is not None, f"dynamic_contents[{i}] 缺少封面 cover"
 
 
+@_NEEDS_DOUYIN_TTWID
 @pytest.mark.asyncio
 async def test_decoder_picks_live_video_for_note():
     """单元: PC detail API 对 note 实况照片返回 images[].video.play_addr。"""
@@ -168,8 +178,6 @@ async def test_decoder_picks_live_video_for_note():
             "https://www.douyin.com/aweme/v1/web/aweme/detail/",
             params={"aweme_id": LIVE_NOTE_VID, "aid": "6383"},
         )
-    if not r.content:
-        pytest.skip("douyin detail API 返回空 body (风控/无 ttwid), 跳过实况照片断言")
     aweme_detail = slides.detail_decoder.decode(r.content).aweme_detail
 
     assert aweme_detail is not None, "aweme_detail 为空"

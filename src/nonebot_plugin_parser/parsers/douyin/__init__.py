@@ -39,18 +39,29 @@ class DouyinParser(BaseParser):
     async def _parse_douyin(self, searched: re.Match[str]):
         ty, vid = searched.group("ty"), searched.group("vid")
 
-        # slides / note 可能是纯图文, 也可能是含实况照片(live photo)的图文:
-        # 后者重定向成 note/ 或 slides/, 而 parse_video 依赖的 _ROUTER_DATA
+        # slides 类型无可用兜底 (m/iesdouyin 分享页均无 _ROUTER_DATA),
+        # 保持原行为: 走 parse_slides, 失败直接 ParseException, 不做无效兜底。
+        if ty == "slides":
+            return await self.parse_slides(vid)
+
+        # note 可能是纯图文, 也可能是含实况照片(live photo)的图文:
+        # 后者重定向成 note/ 而非 slides/, 而 parse_video 依赖的 _ROUTER_DATA
         # 不返回 images[].video, 会丢失实况视频; PC detail API 才返回。
-        # 因此 slides / note 优先走 parse_slides, 失败再回退 parse_video (兼容纯视频/旧结构)。
-        if ty in ("slides", "note"):
+        # 因此 note 优先走 parse_slides, 失败再回退 parse_video (兼容纯视频/旧结构)。
+        # 捕获范围: ParseException + msgspec.DecodeError (继承 ValueError) +
+        # ValueError (兜住 msgspec 结构变更) + httpx/timeout 错误。
+        if ty == "note":
             try:
                 return await self.parse_slides(vid)
-            except Exception as e:
-                # 注意: msgspec.DecodeError 不是 ParseException (它继承 ValueError),
-                # 故这里用 Exception 兜住所有异常 —— PC detail 接口被风控返回空 body 时
-                # decode 会抛 DecodeError, 必须落到 parse_video 兜底, 否则直接 traceback。
-                logger.warning(f"parse_slides failed for {ty} {vid}, fallback to parse_video: {e!r}")
+            except (ParseException, ValueError) as e:
+                # ParseException: parse_slides 内部主动 raise 的业务错误 (含空 body 防御)
+                # ValueError: 兜住 msgspec.DecodeError (风控下空 body 解码失败)
+                # 不再用 bare Exception, 避免吞掉 AttributeError / TypeError 等代码 bug
+                # exc_info=True 保留 traceback, 便于事后排查非预期异常
+                logger.warning(
+                    f"parse_slides failed for note {vid}, fallback to parse_video: {e!r}",
+                    exc_info=True,
+                )
 
         # 兜底: 走 m站 / iesdouyin 分享页的 _ROUTER_DATA
         # 注意 parse_video 对 live photo 只能拿到静态图(images[].video 丢失),

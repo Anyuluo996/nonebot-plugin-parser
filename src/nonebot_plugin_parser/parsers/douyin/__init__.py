@@ -1,5 +1,7 @@
 import re
+import secrets
 from typing import ClassVar
+from urllib.parse import quote
 
 from nonebot import logger
 
@@ -10,6 +12,7 @@ from ..base import (
     ParseException,
     handle,
 )
+from ._abogus import ABogus
 
 # PC web 详情接口用的新版 UA，避免 COMMON_HEADER 里 2016 年的 Chrome/55 UBrowser
 # 直接被抖音风控识别为异常客户端。仅作用于 parse_slides，不改全局 COMMON_HEADER
@@ -17,6 +20,40 @@ from ..base import (
 _PC_WEB_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
+
+# ABogus 签名器实例。内部状态在 get_value 调用时会 reset，实例可安全复用，
+# 避免每次 parse_slides 都重建对象（SM3 表/浏览器信息等初始化开销）。
+_ABOGUS = ABogus()
+
+# PC web 详情接口的通用请求参数（仿抖音 web 端 getCommonData）。
+# 这些字段会被 a_bogus 签名纳入计算，缺失会导致签名失效被风控返回空 body。
+# 取值用常量而非动态读取 navigator.*，服务端仅做存在性 + 格式校验。
+_PC_WEB_COMMON_PARAMS: dict[str, str] = {
+    "aid": "6383",
+    "channel": "channel_pc_web",
+    "device_platform": "webapp",
+    "pc_client_type": "1",
+    "pc_libra_divert": "Windows",
+    "version_code": "170400",
+    "version_name": "17.4.0",
+    "cookie_enabled": "true",
+    "browser_language": "zh-CN",
+    "browser_platform": "Win32",
+    "browser_name": "Edge",
+    "browser_version": "132.0.0.0",
+    "browser_online": "true",
+    "engine_name": "Blink",
+    "engine_version": "132.0.0.0",
+    "os_name": "Windows",
+    "os_version": "10",
+    "cpu_core_num": "16",
+    "device_memory": "8",
+    "platform": "PC",
+    "effective_type": "4g",
+    "round_trip_time": "100",
+    "screen_width": "2195",
+    "screen_height": "1235",
+}
 
 
 class DouyinParser(BaseParser):
@@ -143,13 +180,24 @@ class DouyinParser(BaseParser):
             "X-Requested-With": "XMLHttpRequest",
         }
         # 注入 ttwid Cookie (从 .env 的 parser_douyin_ttwid 读取):
-        # 抖音对 detail 接口有强风控, 无 ttwid 时返回空 body, 实况照片视频无法解析。
-        # 配置有效 ttwid 后可恢复实况照片解析; 留空则纯图文仍可走 parse_video 兜底。
+        # 抖音 detail 接口要求登录态凭据, 仅 a_bogus 签名 + 游客态 ttwid 仍会被
+        # 风控拦截返回空 body。配置登录态 ttwid + a_bogus 签名两者配套才生效。
         from ...config import pconfig
 
         if ttwid := pconfig.douyin_ttwid:
             headers["Cookie"] = f"ttwid={ttwid}"
-        params = {"aweme_id": video_id, "aid": "6383"}
+        # 组装请求参数: 通用参数 + aweme_id + msToken + a_bogus 签名。
+        # - msToken: 128 位随机 hex, 仿浏览器随机生成 (真实 msToken 由服务端下发,
+        #   这里伪造占位, 抖音仅校验存在性与长度)。
+        # - a_bogus: 由 ABogus 算法对所有参数计算得出的签名, 缺失则必被风控。
+        #   必须最后追加, 且需 url 编码 (签名串含 = 等特殊字符)。
+        params = {
+            **_PC_WEB_COMMON_PARAMS,
+            "aweme_id": video_id,
+            "msToken": secrets.token_hex(64),
+        }
+        a_bogus = quote(_ABOGUS.get_value(params), safe="")
+        params["a_bogus"] = a_bogus
         response = await self.request(detail_url, headers=headers, params=params)
 
         # 空 body 防御: 抖音风控下 detail 接口常返回 200 + content-length: 0,
@@ -159,7 +207,7 @@ class DouyinParser(BaseParser):
             raise ParseException(f"douyin detail API returned empty body for {video_id} (likely risk-controlled)")
 
         try:
-            aweme_detail = slides.detail_decoder.decode(response.content).aweme_detail
+            aweme_detail = slides.decode_aweme_detail(response.content)
         except Exception as e:
             # decode 失败可能是字段结构变更或返回了非 JSON 错误页
             preview = response.content[:200]
@@ -192,5 +240,6 @@ class DouyinParser(BaseParser):
             title=aweme_detail.desc,
             author=author,
             contents=contents,
-            timestamp=aweme_detail.create_time,
+            # SlidesData 是秒, PictureSlidesData 是毫秒, 用统一 property 兜齐
+            timestamp=aweme_detail.create_time_seconds,
         )

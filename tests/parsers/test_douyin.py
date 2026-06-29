@@ -1,26 +1,29 @@
 import pytest
 from nonebot import logger
 
-# 配置读取: nonebot_plugin_parser.config 顶层 require("nonebot_plugin_localstore"),
-# 需要 NoneBot 已初始化才能加载。测试 conftest 的 init fixture 是 session 级, 在
-# collect 之后才跑, 模块顶层直接 import 会触发 RuntimeError。
-# 故用 try 包裹: 初始化失败时按"无 ttwid" 处理, 让相关测试正确 skip 而非收集失败。
-try:
-    from nonebot_plugin_parser.config import pconfig as _pconfig
 
-    _HAS_DOUYIN_TTWID = bool(_pconfig.douyin_ttwid)
-except Exception:
-    # collect 阶段 NoneBot 未初始化是预期情况, 不是测试错误
-    _HAS_DOUYIN_TTWID = False
+def _needs_douyin_ttwid():
+    """运行时判断是否配置了登录态 ttwid, 未配置则 skip 当前测试。
 
-# 抖音 PC web detail 接口在无 ttwid 时被风控返回 200 + 空 body,
-# 此时实况照片/动态视频无法解析, 相关测试必须 skip 而非误判失败。
-# 集中在此处管理, 避免在每个测试里散落 pytest.skip (issue: DOuyin_Note_Slides_Decode_Failure)。
-_NEEDS_DOUYIN_TTWID = pytest.mark.skipif(
-    not _HAS_DOUYIN_TTWID,
-    reason="未配置 parser_douyin_ttwid, 抖音 PC web detail 接口被风控返回空 body, "
-    "实况照片/dynamic 视频无法解析",
-)
+    抖音 PC web detail 接口要求登录态 ttwid + a_bogus 签名配套才放行,
+    缺一即返回 200 + 空 body, 实况照片/动态视频无法解析。
+    (a_bogus 签名由 parser 自动计算, ttwid 需用户配置。)
+
+    必须运行时判断 (而非模块顶层 skipif): conftest 的 session 级 init fixture
+    在 collect 之后才跑, 模块顶层 import pconfig 会因 NoneBot 未初始化而拿到
+    False, 导致即使配了 ttwid 也误 skip (issue: DOuyin_Note_Slides_Decode_Failure)。
+    """
+    try:
+        from nonebot_plugin_parser.config import pconfig
+
+        if pconfig.douyin_ttwid:
+            return
+    except Exception:
+        pass
+    pytest.skip(
+        "未配置 parser_douyin_ttwid, 抖音 PC web detail 接口要求登录态 ttwid + a_bogus "
+        "签名配套, 缺 ttwid 返回空 body, 实况照片/dynamic 视频无法解析"
+    )
 
 
 @pytest.mark.asyncio
@@ -118,7 +121,6 @@ async def test_note():
             pytest.skip("抖音 note 下载失败")
 
 
-@_NEEDS_DOUYIN_TTWID
 @pytest.mark.asyncio
 async def test_slides():
     """
@@ -130,6 +132,7 @@ async def test_slides():
     note 类型 fallback 到 parse_video 时实况视频也会丢失, 因此整个 test_slides
     都依赖 PC web detail 接口能拿到完整数据, 必须配置 parser_douyin_ttwid。
     """
+    _needs_douyin_ttwid()
     from nonebot_plugin_parser.parsers import DouyinParser
     from nonebot_plugin_parser.exception import DownloadException
 

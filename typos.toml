@@ -3,6 +3,9 @@ detecter = "detecter"
 Detecter = "Detecter"
 mapp = "mapp"
 streamd = "streamd"
+# 第三方 API 字段名（贴吧页码 pn、lofter 图片字段 orign），保持原样不改
+pn = "pn"
+orign = "orign"
 
 # 历史 API 抓取数据 / 渲染输出，含中文用户名、原始字段，非人工撰写文本
 [files]

@@ -196,7 +196,7 @@
 2. 发版使用 `bump-my-version`，通过 poe 任务：
    - `uv run poe bump patch`（默认）/ `minor` / `major`
    - `uv run poe show-bump` 查看可用的 bump 配置
-3. `bump` 会自动：修改 `pyproject.toml` 与 `uv.lock` 中的版本 → 提交（`commit=true`）→ 打 tag（`tag=true`）。提交信息格式为 `release: bump vesion from {current_version} to {new_version}`（沿用现有模板）。
+3. `bump` 会自动：修改 `pyproject.toml` 与 `uv.lock` 中的版本 → 提交（`commit=true`）→ 打 tag（`tag=true`）。提交信息格式为 `release: bump version from {current_version} to {new_version}`（沿用现有模板）。
 4. 发版动作只在 `master` 上执行；发版 tag 推送后由 `release.yml` / `release-draft.yml` workflow 负责构建与草稿 Release。
 
 ## 推荐执行顺序

@@ -38,6 +38,9 @@ pip-delete-this-directory.txt
 
 # Unit test / coverage reports
 htmlcov/
+# 测试期生成的媒体资源 (由 conftest.py fixture 幂等生成, 不入库)
+tests/_t_*.png
+tests/_t_*.mp4
 .tox/
 .nox/
 .coverage

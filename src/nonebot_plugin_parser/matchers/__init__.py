@@ -91,15 +91,15 @@ def clear_result_cache():
 async def parser_handler(
     sr: SearchResult = Searched(),
     session: Session = UniSession(),
-    state: T_State | None = None,
+    state: T_State = {},
 ):
     """统一的解析处理器"""
     # 1. 获取对应平台 parser
     parser = get_parser(sr.keyword)
 
     # 2. 检查是否使用前缀强制触发
-    force_parse = state.get(PSR_FORCE_PARSE_KEY, False) if state else False
-    logger.debug(f"强制解析标记: {force_parse}, state keys: {list(state.keys()) if state else 'None'}")
+    force_parse = state.get(PSR_FORCE_PARSE_KEY, False)
+    logger.debug(f"强制解析标记: {force_parse}, state keys: {list(state.keys())}")
 
     # 3. 检查平台是否在当前群组被禁用（强制解析时跳过此检查）
     platform_enabled = is_platform_enabled(session, parser.platform.name)

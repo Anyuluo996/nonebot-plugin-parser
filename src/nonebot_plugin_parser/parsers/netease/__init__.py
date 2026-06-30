@@ -10,8 +10,8 @@
 import re
 from typing import ClassVar
 
-from ..base import Platform, BaseParser, PlatformEnum, IgnoreException, handle
 from . import api as netease_api
+from ..base import Platform, BaseParser, PlatformEnum, IgnoreException, handle
 
 _NETEASE_SONG_RE = re.compile(
     r"music\.163\.com.*?(?:/song(?:\?|/)|[?&]id=)(?P<song_id>\d+)"

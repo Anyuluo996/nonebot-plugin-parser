@@ -561,6 +561,9 @@ class StreamDownloader:
         m3u8_client = self.direct_client if _bypass_proxy(m3u8_url) else self.client
         async with m3u8_client.stream("GET", m3u8_url) as response:
             response.raise_for_status()
+            # stream 模式下访问 .text 必须先 aread() 读取响应体, 否则抛
+            # ResponseNotRead (m3u8 文本很小, aread 安全)。
+            await response.aread()
             slices_text = response.text
 
         slices: list[str] = []

@@ -53,23 +53,18 @@ jobs:
       id-token: write
       contents: read
     concurrency:
-      group: test-others-${{ github.ref }}-${{ matrix.python-version }}-${{ matrix.pydantic }}
+      group: test-others-${{ github.ref }}-${{ matrix.python-version }}
       cancel-in-progress: true
 
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
-        pydantic: ["pydantic-v1", "pydantic-v2"]
-        exclude:
-          - python-version: "3.14"
-            pydantic: "pydantic-v1"
 
     env:
       OS: ubuntu-latest
       TASK: test-other
       PYTHON: ${{ matrix.python-version }}
-      PYDANTIC: ${{ matrix.pydantic }}
       UV_NO_SYNC: 1
 
     steps:
@@ -83,7 +78,7 @@ jobs:
           version: "latest"
 
       - name: Install Dependencies
-        run: uv sync --locked --group ${{ env.PYDANTIC }}
+        run: uv sync --locked --group pydantic-v2
 
       - name: Run Pytest Others
         run: uv run poe ${{ env.TASK }}
@@ -92,14 +87,14 @@ jobs:
         if: ${{ !cancelled() }}
         uses: codecov/codecov-action@v7
         with:
-          env_vars: PYTHON,PYDANTIC
+          env_vars: PYTHON
           use_oidc: true
           report_type: "test_results"
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
         with:
-          env_vars: PYTHON,PYDANTIC
+          env_vars: PYTHON
           use_oidc: true
 
   test-parsers:

@@ -68,7 +68,7 @@ class UniHelper:
         flattened: list[UniMessage[Any]] = []
         for seg in message:
             if isinstance(seg, Reference):
-                nodes = getattr(seg, "_children", None) or seg.nodes or []
+                nodes = getattr(seg, "_children", None) or getattr(seg, "nodes", None) or []
                 for node in nodes:
                     content = getattr(node, "content", None)
                     if content:

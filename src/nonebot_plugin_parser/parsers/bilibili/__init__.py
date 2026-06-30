@@ -480,6 +480,15 @@ class BilibiliParser(BaseParser):
         if not dash and download_url_data.get("video_info"):
             dash = download_url_data["video_info"].get("dash") or {}
 
+        # bilibili-api 17.4.2 给 VideoStreamDownloadURL / AudioStreamDownloadURL
+        # 增补了 backup_url / bandwidth / codecs / frame_rate / scale / sar /
+        # mime_type / segment_base_* 等必填字段; 旧版仅需 url+quality+codecs。
+        # 通过 dataclass 字段名探测, 同时兼容两版构造签名, 避免任一版本下 TypeError。
+        import dataclasses as _dc
+
+        _video_fields = {f.name for f in _dc.fields(VideoStreamDownloadURL)}
+        _audio_fields = {f.name for f in _dc.fields(AudioStreamDownloadURL)}
+
         for vd in dash.get("video", []) or []:
             try:
                 q = VideoQuality(vd["id"])
@@ -499,7 +508,31 @@ class BilibiliParser(BaseParser):
                 continue
             if allowed is not None and codecs_enum not in allowed:
                 continue
-            video_streams.append(VideoStreamDownloadURL(url=url, video_quality=q, video_codecs=codecs_enum))
+            kw: dict = {"url": url, "video_quality": q, "video_codecs": codecs_enum}
+            if "codecs" in _video_fields:
+                # 17.4.2+: 补齐新增必填字段, 缺失键给安全默认值兼容老/裁剪 dash 数据
+                seg = vd.get("segment_base") or {}
+                sar_raw = vd.get("sar", "1:1")
+                try:
+                    sar = tuple(int(x) for x in str(sar_raw).split(":")) if ":" in str(sar_raw) else (1, 1)
+                except (TypeError, ValueError):
+                    sar = (1, 1)
+                try:
+                    frame_rate = float(vd.get("frame_rate", 0.0))
+                except (TypeError, ValueError):
+                    frame_rate = 0.0
+                kw.update(
+                    backup_url=list(vd.get("backup_url", [])),
+                    bandwidth=int(vd.get("bandwidth", 0) or 0),
+                    codecs=str(vd.get("codecs", "")),
+                    frame_rate=frame_rate,
+                    scale=(vd.get("width", 0), vd.get("height", 0)),
+                    sar=sar,
+                    mime_type=str(vd.get("mime_type", "")),
+                    segment_base_initialization=str(seg.get("initialization", "")),
+                    segment_base_index_range=str(seg.get("index_range", "")),
+                )
+            video_streams.append(VideoStreamDownloadURL(**kw))
 
         for ad in dash.get("audio", []) or []:
             try:
@@ -511,7 +544,18 @@ class BilibiliParser(BaseParser):
                 continue
             if q.value > AudioQuality._192K.value:
                 continue
-            audio_streams.append(AudioStreamDownloadURL(url=url, audio_quality=q))
+            kw = {"url": url, "audio_quality": q}
+            if "codecs" in _audio_fields:
+                seg = ad.get("segment_base") or {}
+                kw.update(
+                    backup_url=list(ad.get("backup_url", [])),
+                    bandwidth=int(ad.get("bandwidth", 0) or 0),
+                    codecs=str(ad.get("codecs", "")),
+                    mime_type=str(ad.get("mime_type", "")),
+                    segment_base_initialization=str(seg.get("initialization", "")),
+                    segment_base_index_range=str(seg.get("index_range", "")),
+                )
+            audio_streams.append(AudioStreamDownloadURL(**kw))
 
         best_video = max(video_streams, key=lambda s: s.video_quality.value, default=None)
         best_audio = max(audio_streams, key=lambda s: s.audio_quality.value, default=None)

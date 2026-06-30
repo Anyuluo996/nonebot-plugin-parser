@@ -330,6 +330,9 @@ class StreamDownloader:
                                     raise _FollowRedirect(urljoin(current_url, redirect_url))
 
                             if status != 200:
+                                # 排空错误响应体, 避免连接池复用未读完的 keepalive 连接,
+                                # 在下一个并发下载时触发 ResponseNotRead。
+                                await response.aread()
                                 response.raise_for_status()
 
                             content_length_header = response.headers.get("Content-Length")

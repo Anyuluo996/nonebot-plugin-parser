@@ -37,6 +37,15 @@ class Author(Struct):
     avatar_thumb: Avatar
 
 
+class Music(Struct):
+    """背景音乐 (BGM), 实况照片视频轨本身不含 BGM, 需单独提取后合并。
+
+    music.play_url.url_list 与 Video.play_addr 同构, 复用 PlayAddr。
+    """
+
+    play_addr: PlayAddr | None = None
+
+
 class SlidesData(Struct):
     """抖音图文/实况照片(slides)单条数据 (旧 isPicture=false 格式)"""
 
@@ -44,6 +53,8 @@ class SlidesData(Struct):
     desc: str
     create_time: int
     images: list[Image]
+    music: Music | None = None
+    """背景音乐; 实况照片视频轨本身静音, 需取 BGM 后用 ffmpeg 合并"""
 
     @property
     def name(self) -> str:
@@ -52,6 +63,13 @@ class SlidesData(Struct):
     @property
     def avatar_url(self) -> str:
         return choice(self.author.avatar_thumb.url_list)
+
+    @property
+    def bgm_url(self) -> str | None:
+        """实况照片对应的 BGM URL, 无则 None"""
+        if self.music and self.music.play_addr:
+            return choice(self.music.play_addr.url_list)
+        return None
 
     @property
     def image_urls(self) -> list[str]:
@@ -161,6 +179,8 @@ class PictureSlidesData(Struct):
     uid: str | int = ""
     aweme_id: str | int = field(default="", name="awemeId")
     is_picture: bool = field(default=True, name="isPicture")
+    music: Music | None = None
+    """背景音乐; 实况照片视频轨本身静音, 需取 BGM 后用 ffmpeg 合并"""
 
     @property
     def name(self) -> str:
@@ -170,6 +190,13 @@ class PictureSlidesData(Struct):
     def avatar_url(self) -> str:
         # 新格式 aweme_detail 顶层不返回 author.avatar_thumb, 渲染层降级显示空头像
         return ""
+
+    @property
+    def bgm_url(self) -> str | None:
+        """实况照片对应的 BGM URL, 无则 None"""
+        if self.music and self.music.play_addr:
+            return choice(self.music.play_addr.url_list)
+        return None
 
     @property
     def create_time_seconds(self) -> int:

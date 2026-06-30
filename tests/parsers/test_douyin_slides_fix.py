@@ -231,6 +231,13 @@ _PICTURE_NOTE_PAYLOAD = {
         "uid": "61147416465",
         "desc": "小米塔可爱捏\n#米塔 #steam游戏",
         "isPicture": True,
+        "music": {
+            "play_addr": {
+                "url_list": [
+                    "https://www.douyin.com/aweme/v1/play/?music_id=tgm_bgm_001",
+                ]
+            }
+        },
         "pictureList": [
             {
                 "width": 540, "height": 542,
@@ -318,7 +325,25 @@ async def test_picture_note_decodes_picture_list(monkeypatch):
         # 其它请求(分享页兜底)走真实网络 — 但 parse_slides 不会调, 故抛错
         raise RuntimeError(f"unexpected URL: {url}")
 
+    # mock 下载层: 本测试只验证 decode 结构, 不实际下载视频/音频。
+    # 因 music.play_url 存在会触发 download_audio + _merge_bgm 调度,
+    # 不 mock 会产生真实网络请求 + ffmpeg 调用。
+    async def _coro(*args, **kwargs):
+        return __import__("pathlib").Path("/fake/media")
+
+    def _stub_dl(*args, **kwargs):
+        return asyncio.create_task(_coro(*args, **kwargs))
+
+    async def _noop_merge(video_task, audio_task):
+        await video_task
+        await audio_task
+        return __import__("pathlib").Path("/fake/merged.mp4")
+
     monkeypatch.setattr(parser, "request", _fake_request)
+    monkeypatch.setattr(parser.downloader, "download_video", _stub_dl)
+    monkeypatch.setattr(parser.downloader, "download_audio", _stub_dl)
+    monkeypatch.setattr(parser.downloader, "download_img", _stub_dl)
+    monkeypatch.setattr(parser, "_merge_bgm", _noop_merge)
 
     result = await parser.parse_slides(PICTURE_NOTE_VID)
 
@@ -344,6 +369,28 @@ async def test_picture_note_decodes_picture_list(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_picture_note_decodes_bgm_url(monkeypatch):
+    """回归: music.play_url 必须被 decode, bgm_url 返回非 None。
+
+    实况照片视频轨静音, BGM 在 aweme_detail.music.play_url;
+    修复前 slides.py 未解析 music 字段, bgm_url 恒为 None, 合并逻辑无法触发。
+    """
+    import json as _json
+    from typing import ClassVar
+
+    from nonebot_plugin_parser.parsers import DouyinParser
+    from nonebot_plugin_parser.parsers.douyin import slides
+
+    parser = DouyinParser()
+    raw = _json.dumps(_PICTURE_NOTE_PAYLOAD).encode("utf-8")
+
+    aweme_detail = slides.decode_aweme_detail(raw)
+    assert aweme_detail is not None, "decode 失败"
+    assert aweme_detail.bgm_url is not None, "music 字段未解析, bgm_url 应非 None"
+    assert "music_id=tgm_bgm_001" in aweme_detail.bgm_url
+
+
+@pytest.mark.asyncio
 async def test_picture_note_live_url_falls_back(monkeypatch):
     """回归4b: 真实 URL note/7450744229229235491 在 PC detail 风控时
     至少应返回 fallback 的静态图(同 test_note_empty_body_falls_back)。
@@ -362,3 +409,73 @@ async def test_picture_note_live_url_falls_back(monkeypatch):
     # 至少应有标题和内容 (ttwid 无时: 4 张静态图; 有时: 4 段 dynamic)
     assert result.title, "标题不应为空"
     assert result.contents, "应至少返回静态图或 dynamic 视频"
+
+
+@pytest.mark.asyncio
+async def test_create_dynamic_contents_merges_bgm(monkeypatch):
+    """回归: 传 bgm_url 时, create_dynamic_contents 应下载 BGM 并调度 _merge_bgm。
+
+    实况照片视频轨静音, BGM 需合并; 此测试验证接线正确:
+    - bgm_url 触发 download_audio
+    - _merge_bgm 被调度 (path_task 被替换为 merge task)
+    - bgm_url=None 时不触发合并 (其它平台不受影响)
+    """
+    from pathlib import Path
+
+    from nonebot_plugin_parser.parsers.base import BaseParser
+
+    # 用最小桩继承 BaseParser (其 __init__ 需要 COMMON_HEADER 等常量)
+    class _StubParser(BaseParser):
+        pass
+
+    parser = _StubParser()
+
+    # 桩: download_video / download_img / download_audio 返回已完成的假 Task。
+    # 真实方法被 @auto_task 装饰 (同步调用返回 Task), mock 需对齐此行为。
+    async def _coro_video(*args, **kwargs):
+        return Path("/fake/video.mp4")
+
+    async def _coro_audio(*args, **kwargs):
+        return Path("/fake/bgm.mp3")
+
+    def _stub_download_video(*args, **kwargs):
+        return asyncio.create_task(_coro_video(*args, **kwargs))
+
+    def _stub_download_audio(*args, **kwargs):
+        return asyncio.create_task(_coro_audio(*args, **kwargs))
+
+    def _stub_download_img(*args, **kwargs):
+        return asyncio.create_task(_coro_video(*args, **kwargs))
+
+    merge_called = []
+
+    async def _fake_merge_bgm(video_task, audio_task):
+        merge_called.append(True)
+        await video_task  # 消费 task 避免未消费告警
+        await audio_task
+        return Path("/fake/merged.mp4")
+
+    monkeypatch.setattr(parser.downloader, "download_video", _stub_download_video)
+    monkeypatch.setattr(parser.downloader, "download_audio", _stub_download_audio)
+    monkeypatch.setattr(parser.downloader, "download_img", _stub_download_img)
+    monkeypatch.setattr(parser, "_merge_bgm", _fake_merge_bgm)
+
+    # Case 1: 带 bgm_url → _merge_bgm 应被调度
+    contents = parser.create_dynamic_contents(
+        ["https://example.com/v1", "https://example.com/v2"],
+        cover_urls=["https://example.com/c1", "https://example.com/c2"],
+        bgm_url="https://example.com/bgm",
+    )
+    assert len(contents) == 2
+    # 等待所有 task 完成, 让 _merge_bgm 协程执行
+    await asyncio.gather(*[c.get_path() for c in contents])
+    assert len(merge_called) == 2, f"bgm_url 存在时应调度 2 次 _merge_bgm, 实际 {len(merge_called)}"
+
+    # Case 2: 不带 bgm_url (默认 None) → _merge_bgm 不应被调度
+    merge_called.clear()
+    contents2 = parser.create_dynamic_contents(
+        ["https://example.com/v3"],
+        cover_urls=["https://example.com/c3"],
+    )
+    await asyncio.gather(*[c.get_path() for c in contents2])
+    assert len(merge_called) == 0, "bgm_url=None 时不应调度 _merge_bgm"

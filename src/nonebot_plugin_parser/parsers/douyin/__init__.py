@@ -230,6 +230,7 @@ class DouyinParser(BaseParser):
                 self.create_dynamic_contents(
                     dynamic_urls,
                     cover_urls=aweme_detail.dynamic_cover_urls,
+                    bgm_url=aweme_detail.bgm_url,
                 )
             )
 

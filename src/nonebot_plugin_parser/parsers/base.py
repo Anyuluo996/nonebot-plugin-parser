@@ -296,6 +296,7 @@ class BaseParser:
         convert_to_gif: bool = False,
         cover_url: str | None = None,
         cover_urls: list[str] | None = None,
+        bgm_url: str | None = None,
     ):
         """创建动态图片内容列表
 
@@ -304,6 +305,8 @@ class BaseParser:
             convert_to_gif: 是否转换为 GIF，默认 False（仅推特平台使用）
             cover_url: 缩略图 URL，对所有动态内容生效
             cover_urls: 每个动态内容单独的缩略图 URL（与 dynamic_urls 一一对应）
+            bgm_url: 背景音乐 URL（抖音实况照片视频轨静音, 下载后合并;
+                None 时不合并, 默认 None）
         """
         import asyncio
 
@@ -315,6 +318,13 @@ class BaseParser:
         contents: list[DynamicContent] = []
         for i, url in enumerate(dynamic_urls):
             task = DOWNLOADER.download_video(url, ext_headers=self.headers)
+
+            # 抖音实况照片: 视频轨静音, 下载 BGM 后用 merge task 替换 task,
+            # get_path() 直接返回含 BGM 的视频 (与 _convert_to_gif 替换 gif_path 同构)。
+            # 已含音轨的实况(含原声)在 _merge_bgm 内部跳过, 不影响其它平台。
+            if bgm_url:
+                audio_task = DOWNLOADER.download_audio(bgm_url, ext_headers=self.headers)
+                task = asyncio.create_task(self._merge_bgm(task, audio_task))
 
             # 处理缩略图: 优先使用每个视频单独的封面, 其次统一封面
             cover_task = None
@@ -359,6 +369,44 @@ class BaseParser:
 
         logger.info(f"开始转换视频到 GIF: {video_path.name}")
         return await convert_video_to_gif(video_path, optimize=False)
+
+    async def _merge_bgm(self, video_task: Task[Path], audio_task: Task[Path]) -> Path:
+        """合并实况照片视频与 BGM 音频。
+
+        抖音实况照片(live photo)的视频轨本身静音, BGM 在 aweme_detail.music.play_url。
+        本方法下载并合并二者, 输出含 BGM 的 mp4; 已含音轨(部分实况含原声)则跳过。
+
+        Args:
+            video_task: 视频下载任务 (静音轨)
+            audio_task: BGM 音频下载任务
+
+        Returns:
+            合并后的视频路径; 视频已含音轨或 ffmpeg 不可用时返回原视频路径
+        """
+        from nonebot import logger
+
+        from ..utils import has_audio_stream, merge_av
+
+        video_path = await video_task
+
+        # 已含音轨(部分实况含原声)则跳过, 避免 merge_av 丢失原声
+        if await has_audio_stream(video_path):
+            logger.debug(f"视频已含音轨, 跳过 BGM 合并: {video_path.name}")
+            # BGM 任务已在调度, 取消以释放并发槽位 (Task 已启动不可真正中止,
+            # 但丢弃其结果避免无谓的磁盘 IO; download_audio 自带缓存不影响)
+            audio_task.cancel()
+            return video_path
+
+        audio_path = await audio_task
+        output = video_path.with_name(f"{video_path.stem}_bgm.mp4")
+        try:
+            await merge_av(v_path=video_path, a_path=audio_path, output_path=output)
+        except (RuntimeError, FileNotFoundError) as e:
+            # ffmpeg 不可用或合并失败: 不阻塞发送, 降级为无声视频
+            logger.warning(f"BGM 合并失败, 降级为无声视频: {e!r}")
+            return video_path
+        logger.debug(f"BGM 合并完成: {output.name}")
+        return output
 
     def create_audio_content(
         self,

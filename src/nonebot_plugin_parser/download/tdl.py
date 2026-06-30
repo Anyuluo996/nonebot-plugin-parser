@@ -79,7 +79,10 @@ async def _run(cmd: list[str], timeout: float = 300.0) -> tuple[int, str, str]:
         proc.kill()
         await proc.wait()
         raise ParseException(f"tdl 执行超时（{timeout}s）: {' '.join(cmd)}")
-    return proc.returncode, stdout_b.decode(errors="replace"), stderr_b.decode(errors="replace")
+    # proc.returncode 类型为 int | None; 正常退出路径非 None (None 仅在超时分支出现,
+    # 该分支已 raise)。此处断言收敛类型, 兜底为 -1 保证签名 tuple[int, str, str]。
+    rc = proc.returncode if proc.returncode is not None else -1
+    return rc, stdout_b.decode(errors="replace"), stderr_b.decode(errors="replace")
 
 
 async def login_qr(timeout: float = 180.0) -> tuple[bool, str]:

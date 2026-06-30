@@ -1,6 +1,6 @@
 import re
 from copy import deepcopy
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from nonebot import logger, get_driver, on_command, on_message
 from nonebot.params import CommandArg
@@ -9,6 +9,9 @@ from nonebot.matcher import Matcher, current_event
 from nonebot.adapters import Message
 from nonebot.permission import SUPERUSER
 from nonebot_plugin_uninfo import Session, UniSession
+
+if TYPE_CHECKING:
+    from ..download import LoginQrHandle
 
 from .rule import SUPER_PRIVATE, PSR_FORCE_PARSE_KEY, Searched, SearchResult, on_keyword_regex
 from ..utils import LimitedSizeDict
@@ -88,7 +91,7 @@ def clear_result_cache():
 async def parser_handler(
     sr: SearchResult = Searched(),
     session: Session = UniSession(),
-    state: T_State = None,
+    state: T_State | None = None,
 ):
     """统一的解析处理器"""
     # 1. 获取对应平台 parser
@@ -375,7 +378,8 @@ async def _tg_list(matcher: Matcher):
 
 # 模块级 2FA 密码等待状态：{user_id: LoginQrHandle}
 # tg登录 检测到 2FA 时写入，tg密码 matcher 消费后删除
-_tg_2fa_pending: dict[str, object] = {}
+# LoginQrHandle 仅用于类型标注（TYPE_CHECKING 避免运行时循环导入）
+_tg_2fa_pending: dict[str, "LoginQrHandle"] = {}
 
 
 @on_command("tg登录", block=True, permission=SUPERUSER).handle()

@@ -10,7 +10,6 @@ from typing import Literal, ClassVar, overload
 from msgspec import ValidationError
 
 from ..base import Platform, BaseParser, PlatformEnum, ParseException, handle
-from ..data import ImageContent
 from .models import Detail, BizType
 from .encrypt import sign_header
 from .._format import format_num
@@ -64,7 +63,7 @@ class IlluParser(BaseParser):
         object_id = searched.group("articleId")
         result: ArticleByIdV2 = await self._fetch_detail(object_id, BizType.Article)  # type: ignore[assignment]  # overload 已声明, pyright 对枚举 Literal 匹配有限
         detail = result.dataObject
-        text_lines: list[str | ImageContent] = await fetch_html_text_from_zip(self, detail.contentFile)
+        text_lines = await fetch_html_text_from_zip(self, detail.contentFile)
 
         return self.result(
             title=detail.title,

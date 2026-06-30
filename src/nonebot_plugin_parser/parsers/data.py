@@ -225,7 +225,7 @@ class ParseResult:
     """来源链接"""
     contents: Sequence[MediaContent] = field(default_factory=list)
     """媒体内容"""
-    graphics: list[str | ImageContent] = field(default_factory=list)
+    graphics: Sequence[str | ImageContent] = field(default_factory=list)
     """图文内容"""
     extra: dict[str, Any] = field(default_factory=dict)
     """额外信息"""
@@ -453,7 +453,7 @@ class ParseResultKwargs(TypedDict, total=False):
     title: str | None
     text: str | None
     contents: Sequence[MediaContent]
-    graphics: list[str | ImageContent]
+    graphics: Sequence[str | ImageContent]
     timestamp: int | None
     url: str | None
     author: Author | None

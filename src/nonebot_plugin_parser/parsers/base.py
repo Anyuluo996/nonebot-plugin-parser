@@ -385,7 +385,7 @@ class BaseParser:
         """
         from nonebot import logger
 
-        from ..utils import has_audio_stream, merge_av
+        from ..utils import merge_av, has_audio_stream
 
         video_path = await video_task
 

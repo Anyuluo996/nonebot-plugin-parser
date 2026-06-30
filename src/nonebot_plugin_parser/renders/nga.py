@@ -40,6 +40,7 @@ class Renderer(ImageRenderer):
         await result.ensure_downloads_complete()
 
         from .resources import DEFAULT_AVATAR_PATH
+
         default_avatar = DEFAULT_AVATAR_PATH.as_uri()
 
         if _BACKEND == "htmlrender":
@@ -75,4 +76,3 @@ class Renderer(ImageRenderer):
             urls = (result.display_url, result.repost_display_url)
             msg += "\n".join(url for url in urls if url)
         yield msg
-

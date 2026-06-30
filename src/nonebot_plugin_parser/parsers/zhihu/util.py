@@ -55,9 +55,7 @@ async def _fetch_video(parser: "BaseParser", video_id: str, content_type: str) -
     )
 
 
-async def parse_rich_content(
-    parser: "BaseParser", html: str, content_type: str
-) -> list[str | Any]:
+async def parse_rich_content(parser: "BaseParser", html: str, content_type: str) -> list[str | Any]:
     """将知乎内容 HTML 解析为有顺序的 文本行 + 图片/视频 列表（graphics 格式）。"""
     soup = BeautifulSoup(html.replace(r"\"", '"'), "html.parser")
     _clean_soup(soup)
@@ -92,9 +90,7 @@ def _clean_soup(soup: BeautifulSoup) -> None:
         noscript.decompose()
 
 
-async def _iter_media_and_text(
-    parser: "BaseParser", soup: BeautifulSoup, content_type: str
-):
+async def _iter_media_and_text(parser: "BaseParser", soup: BeautifulSoup, content_type: str):
     """按 DOM 顺序依次产出文本 / 图片 / 视频等内容。"""
     for element in soup.descendants:
         if isinstance(element, Tag):
@@ -120,9 +116,7 @@ async def _iter_media_and_text(
 
             if element.name == "img":
                 attrs: dict[str, str] = {
-                    str(k): str(v[0] if isinstance(v, list) and v else v)
-                    for k, v in (element.attrs or {}).items()
-                    if v
+                    str(k): str(v[0] if isinstance(v, list) and v else v) for k, v in (element.attrs or {}).items() if v
                 }
                 if src := (
                     attrs.get("data-original")

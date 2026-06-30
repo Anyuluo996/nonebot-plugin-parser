@@ -50,11 +50,7 @@ async def pack_req(parser, data: bytes) -> bytes:
     """通过 BaseParser.request 发送 protobuf 请求。"""
     boundary = "-*_r1999"
     body = (
-        (
-            f"--{boundary}\r\n"
-            'Content-Disposition: form-data; name="data"; filename="file"\r\n'
-            f"\r\n"
-        ).encode()
+        (f'--{boundary}\r\nContent-Disposition: form-data; name="data"; filename="file"\r\n\r\n').encode()
         + data
         + f"\r\n--{boundary}--\r\n".encode()
     )
@@ -114,9 +110,7 @@ def _frags_to_graphics(contents_objs, create_image, create_video=None) -> list:
             else:
                 out.append(url_str)
         elif isinstance(part, FragVideo) and create_video:
-            out.append(
-                create_video(part.src, cover_url=part.cover_src, duration=part.duration)
-            )
+            out.append(create_video(part.src, cover_url=part.cover_src, duration=part.duration))
     return out
 
 

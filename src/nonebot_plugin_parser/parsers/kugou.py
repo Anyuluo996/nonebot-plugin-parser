@@ -13,9 +13,7 @@ from .meting_base import MetingBaseParser
 
 
 class KuGouParser(MetingBaseParser):
-    platform: ClassVar[Platform] = Platform(
-        name=PlatformEnum.KUGOU, display_name="酷狗音乐"
-    )
+    platform: ClassVar[Platform] = Platform(name=PlatformEnum.KUGOU, display_name="酷狗音乐")
     _meting_server: ClassVar[str] = "kugou"
 
     def _extract_song_id(self, searched) -> str:

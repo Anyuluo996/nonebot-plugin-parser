@@ -34,12 +34,7 @@ KEY16 = b"059053f7d15e01d7"
 
 
 def _read_u32_be(b: bytes, off: int) -> int:
-    return (
-        ((b[off] & 0xFF) << 24)
-        | ((b[off + 1] & 0xFF) << 16)
-        | ((b[off + 2] & 0xFF) << 8)
-        | (b[off + 3] & 0xFF)
-    )
+    return ((b[off] & 0xFF) << 24) | ((b[off + 1] & 0xFF) << 16) | ((b[off + 2] & 0xFF) << 8) | (b[off + 3] & 0xFF)
 
 
 def _write_u32_be(v: int, out: bytearray, off: int) -> None:
@@ -60,20 +55,9 @@ def _g_transform(tt: int) -> int:
     te2 = (tt >> 8) & 0xFF
     te3 = tt & 0xFF
 
-    ti = (
-        ((ZB[te0] & 0xFF) << 24)
-        | ((ZB[te1] & 0xFF) << 16)
-        | ((ZB[te2] & 0xFF) << 8)
-        | (ZB[te3] & 0xFF)
-    )
+    ti = ((ZB[te0] & 0xFF) << 24) | ((ZB[te1] & 0xFF) << 16) | ((ZB[te2] & 0xFF) << 8) | (ZB[te3] & 0xFF)
 
-    return (
-        ti
-        ^ _rotate_left(ti, 2)
-        ^ _rotate_left(ti, 10)
-        ^ _rotate_left(ti, 18)
-        ^ _rotate_left(ti, 24)
-    ) & 0xFFFFFFFF
+    return (ti ^ _rotate_left(ti, 2) ^ _rotate_left(ti, 10) ^ _rotate_left(ti, 18) ^ _rotate_left(ti, 24)) & 0xFFFFFFFF
 
 
 def _r_block(input16: bytes) -> bytes:
@@ -181,9 +165,7 @@ class _ZseSigner:
 
 class ZhihuFetchSignature:
     @classmethod
-    def create_zse96_header(
-        cls, zse93: str, url: str, dc0: str, body: str | None = None
-    ) -> str:
+    def create_zse96_header(cls, zse93: str, url: str, dc0: str, body: str | None = None) -> str:
         parsed_url = urlparse(url)
         pathname = parsed_url.path
         if parsed_url.query:
@@ -201,11 +183,7 @@ class ZhihuFetchSignature:
         return f"2.0_{_ZseSigner.encrypt_zse_v4(md5_result)}"
 
 
-def sign_zhihu_fetch_request(
-    url: str, dc0: str = "", body: str | None = None, zse93: str = "101_3_3.0"
-) -> dict:
+def sign_zhihu_fetch_request(url: str, dc0: str = "", body: str | None = None, zse93: str = "101_3_3.0") -> dict:
     """获取签名后的请求头"""
-    zse96 = ZhihuFetchSignature.create_zse96_header(
-        zse93=zse93, url=url, dc0=dc0, body=body
-    )
+    zse96 = ZhihuFetchSignature.create_zse96_header(zse93=zse93, url=url, dc0=dc0, body=body)
     return {"x-zse-93": zse93, "x-zse-96": zse96, "x-requested-with": "fetch"}

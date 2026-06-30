@@ -19,9 +19,7 @@ _ROUTER_DATA = re.compile(
 
 
 class QSMusicParser(BaseParser):
-    platform: ClassVar[Platform] = Platform(
-        name=PlatformEnum.QSMUSIC, display_name="汽水音乐"
-    )
+    platform: ClassVar[Platform] = Platform(name=PlatformEnum.QSMUSIC, display_name="汽水音乐")
 
     @handle(
         "qishui.douyin.com",
@@ -37,13 +35,9 @@ class QSMusicParser(BaseParser):
         else:
             raise ParseException("未找到结构化数据")
 
-        music_data = shareDecoder.decode(
-            raw
-        ).loaderData.track_page.audioWithLyricsOption
+        music_data = shareDecoder.decode(raw).loaderData.track_page.audioWithLyricsOption
 
-        contents = [
-            self.create_audio_content(music_data.url, duration=music_data.duration)
-        ]
+        contents = [self.create_audio_content(music_data.url, duration=music_data.duration)]
 
         return self.result(
             title=music_data.trackName,

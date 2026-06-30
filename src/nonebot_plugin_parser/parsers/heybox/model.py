@@ -74,9 +74,7 @@ class Link(Struct):
             if isinstance(element, Tag) and element.name == "img":
                 attrs = element.attrs or {}
                 src = (
-                    attrs.get("data-original")
-                    or attrs.get("data-actualsrc")
-                    or attrs.get("data-default-watermark-src")
+                    attrs.get("data-original") or attrs.get("data-actualsrc") or attrs.get("data-default-watermark-src")
                 )
                 if src:
                     result.append(create_image(str(src)))

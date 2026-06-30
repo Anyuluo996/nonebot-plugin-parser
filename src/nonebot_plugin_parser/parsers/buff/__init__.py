@@ -41,14 +41,10 @@ class BuffParser(BaseParser):
             graphics=news.to_graphics(self.create_image_content),
             timestamp=news.publish_time,
             url=news.share_data.url,
-            author=self.create_author(
-                name=news.author, avatar_url=news.avatar, description=news.ip_location
-            ),
+            author=self.create_author(name=news.author, avatar_url=news.avatar, description=news.ip_location),
             extra={
                 "info": (
-                    f"浏览 {format_num(news.views)} | "
-                    f"赞 {format_num(news.ups_num)} | "
-                    f"评 {format_num(news.replies)}"
+                    f"浏览 {format_num(news.views)} | 赞 {format_num(news.ups_num)} | 评 {format_num(news.replies)}"
                 ),
             },
         )

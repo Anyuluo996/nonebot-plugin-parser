@@ -25,9 +25,7 @@ class MetingBaseParser(BaseParser):
     避免被注册逻辑选中。子类覆盖 platform、_meting_server、_extract_song_id。
     """
 
-    platform: ClassVar[Platform] = Platform(
-        name=PlatformEnum.NETEASE, display_name="Meting"
-    )
+    platform: ClassVar[Platform] = Platform(name=PlatformEnum.NETEASE, display_name="Meting")
     _abstract_parser: ClassVar[bool] = True
     """标记为抽象基类，不注册到 _registry（避免占用平台列表）"""
     """Meting-API 统一音乐解析基类。子类需覆盖 _meting_server 和 _extract_song_id。"""
@@ -44,12 +42,8 @@ class MetingBaseParser(BaseParser):
         """通过 meting-api 获取歌曲信息（title/author/url/pic/lrc 代理链接）。"""
         api = self._api_base()
         if not api:
-            raise IgnoreException(
-                "音乐解析未配置，请在 parser_meting_api 设置 Meting-API 地址"
-            )
-        resp = await self.request(
-            f"{api}/api", params={"server": self._meting_server, "type": "song", "id": song_id}
-        )
+            raise IgnoreException("音乐解析未配置，请在 parser_meting_api 设置 Meting-API 地址")
+        resp = await self.request(f"{api}/api", params={"server": self._meting_server, "type": "song", "id": song_id})
         data = resp.json()
         if isinstance(data, list):
             if not data:

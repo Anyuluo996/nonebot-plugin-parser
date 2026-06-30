@@ -78,8 +78,38 @@ class ABogus:
         # ua_code 对应特定 UA (Chrome/90 桌面端); 抖音服务端对该映射校验较松,
         # 实测 Chrome/131 UA + 此 ua_code 签名仍可被接受。
         self.ua_code = [
-            76, 98, 15, 131, 97, 245, 224, 133, 122, 199, 241, 166, 79, 34, 90, 191,
-            128, 126, 122, 98, 66, 11, 14, 40, 49, 110, 110, 173, 67, 96, 138, 252,
+            76,
+            98,
+            15,
+            131,
+            97,
+            245,
+            224,
+            133,
+            122,
+            199,
+            241,
+            166,
+            79,
+            34,
+            90,
+            191,
+            128,
+            126,
+            122,
+            98,
+            66,
+            11,
+            14,
+            40,
+            49,
+            110,
+            110,
+            173,
+            67,
+            96,
+            138,
+            252,
         ]
         self.browser = self.generate_browser_info(platform) if platform else self.__browser
         self.browser_len = len(self.browser)
@@ -136,14 +166,23 @@ class ABogus:
         params_array = self.generate_params_code(url_params)
         method_array = self.generate_method_code(method)
         return self.list_4(
-            (end_time >> 24) & 255, params_array[21], self.ua_code[23],
-            (end_time >> 16) & 255, params_array[22], self.ua_code[24],
-            (end_time >> 8) & 255, (end_time >> 0) & 255,
-            (start_time >> 24) & 255, (start_time >> 16) & 255,
-            (start_time >> 8) & 255, (start_time >> 0) & 255,
-            method_array[21], method_array[22],
+            (end_time >> 24) & 255,
+            params_array[21],
+            self.ua_code[23],
+            (end_time >> 16) & 255,
+            params_array[22],
+            self.ua_code[24],
+            (end_time >> 8) & 255,
+            (end_time >> 0) & 255,
+            (start_time >> 24) & 255,
+            (start_time >> 16) & 255,
+            (start_time >> 8) & 255,
+            (start_time >> 0) & 255,
+            method_array[21],
+            method_array[22],
             int(end_time / 256 / 256 / 256 / 256) >> 0,
-            int(start_time / 256 / 256 / 256 / 256) >> 0, self.browser_len,
+            int(start_time / 256 / 256 / 256 / 256) >> 0,
+            self.browser_len,
         )
 
     @staticmethod
@@ -151,13 +190,13 @@ class ABogus:
         o = [0] * 32
         for i in range(8):
             c = a[i]
-            o[4 * i + 3] = (255 & c)
+            o[4 * i + 3] = 255 & c
             c >>= 8
-            o[4 * i + 2] = (255 & c)
+            o[4 * i + 2] = 255 & c
             c >>= 8
-            o[4 * i + 1] = (255 & c)
+            o[4 * i + 1] = 255 & c
             c >>= 8
-            o[4 * i] = (255 & c)
+            o[4 * i] = 255 & c
         return o
 
     def compress(self, a):
@@ -165,7 +204,7 @@ class ABogus:
         i = self.reg[:]
         for o in range(64):
             c = self.de(i[0], 12) + i[4] + self.de(self.pe(o), o)
-            c = (c & 0xFFFFFFFF)
+            c = c & 0xFFFFFFFF
             c = self.de(c, 7)
             s = (c ^ self.de(i[0], 12)) & 0xFFFFFFFF
             u = self.he(o, i[0], i[1], i[2])
@@ -213,8 +252,50 @@ class ABogus:
     @staticmethod
     def list_4(a, b, c, d, e, f, g, h, i, j, k, m, n, o, p, q, r):
         return [
-            44, a, 0, 0, 0, 0, 24, b, n, 0, c, d, 0, 0, 0, 1, 0, 239, e, o, f, g, 0, 0, 0, 0,
-            h, 0, 0, 14, i, j, 0, k, m, 3, p, 1, q, 1, r, 0, 0, 0,
+            44,
+            a,
+            0,
+            0,
+            0,
+            0,
+            24,
+            b,
+            n,
+            0,
+            c,
+            d,
+            0,
+            0,
+            0,
+            1,
+            0,
+            239,
+            e,
+            o,
+            f,
+            g,
+            0,
+            0,
+            0,
+            0,
+            h,
+            0,
+            0,
+            14,
+            i,
+            j,
+            0,
+            k,
+            m,
+            3,
+            p,
+            1,
+            q,
+            1,
+            r,
+            0,
+            0,
+            0,
         ]
 
     @staticmethod
@@ -270,7 +351,7 @@ class ABogus:
         if len(e) <= 64:
             self.chunk = e
         else:
-            chunks = [e[i:i + 64] for i in range(0, len(e), 64)]
+            chunks = [e[i : i + 64] for i in range(0, len(e), 64)]
             for i in chunks[:-1]:
                 self.compress(i)
             self.chunk = chunks[-1]
@@ -300,7 +381,7 @@ class ABogus:
         r = []
         for i in range(0, len(s), 3):
             if i + 2 < len(s):
-                n = ((ord(s[i]) << 16) | (ord(s[i + 1]) << 8) | ord(s[i + 2]))
+                n = (ord(s[i]) << 16) | (ord(s[i + 1]) << 8) | ord(s[i + 2])
             elif i + 1 < len(s):
                 n = (ord(s[i]) << 16) | (ord(s[i + 1]) << 8)
             else:
@@ -331,7 +412,7 @@ class ABogus:
         else:
             b = bytes(data)  # List[int] -> bytes
         h = sm3.sm3_hash(func.bytes_to_list(b))
-        return [int(h[i: i + 2], 16) for i in range(0, len(h), 2)]
+        return [int(h[i : i + 2], 16) for i in range(0, len(h), 2)]
 
     @classmethod
     def generate_browser_info(cls, platform="Win32"):
@@ -342,9 +423,23 @@ class ABogus:
         screen_x = 0
         screen_y = choice((0, 30))
         value_list = [
-            inner_width, inner_height, outer_width, outer_height,
-            screen_x, screen_y, 0, 0, outer_width, outer_height, outer_width,
-            outer_height, inner_width, inner_height, 24, 24, platform,
+            inner_width,
+            inner_height,
+            outer_width,
+            outer_height,
+            screen_x,
+            screen_y,
+            0,
+            0,
+            outer_width,
+            outer_height,
+            outer_width,
+            outer_height,
+            inner_width,
+            inner_height,
+            24,
+            24,
+            platform,
         ]
         return "|".join(str(i) for i in value_list)
 
@@ -387,7 +482,9 @@ class ABogus:
         string_1 = self.generate_string_1(random_num_1, random_num_2, random_num_3)
         string_2 = self.generate_string_2(
             urlencode(url_params) if isinstance(url_params, dict) else url_params,
-            method, start_time, end_time,
+            method,
+            start_time,
+            end_time,
         )
         string = string_1 + string_2
         return self.generate_result(string, "s4")

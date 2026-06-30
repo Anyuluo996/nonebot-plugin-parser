@@ -47,8 +47,4 @@ class Post(Struct):
 
     @property
     def photo_urls(self) -> list[str]:
-        return [
-            photo["orign"]
-            for photo in json.loads(self.photoLinks)
-            if "orign" in photo
-        ]
+        return [photo["orign"] for photo in json.loads(self.photoLinks) if "orign" in photo]

@@ -244,6 +244,10 @@ async def _():
 @on_command("qqmusic登录", block=True, permission=SUPERUSER).handle()
 async def _qqmusic_login(matcher: Matcher):
     """SUPERUSER: 触发 QQ 音乐扫码登录，登录态持久化后 VIP 歌曲可解析。"""
+    from ..parsers import _QQMUSIC_AVAILABLE
+
+    if not _QQMUSIC_AVAILABLE:
+        await matcher.finish("qqmusic-api-python 未安装，该指令不可用。请先 `pip install qqmusic-api-python`")
     from qqmusic_api import Client
     from qqmusic_api.models.login import QRLoginType
     from qqmusic_api.modules.login_utils import QRCodeLoginSession
@@ -273,6 +277,10 @@ async def _qqmusic_login(matcher: Matcher):
 @on_command("qqmusic登出", block=True, permission=SUPERUSER).handle()
 async def _qqmusic_logout(matcher: Matcher):
     """SUPERUSER: 清除已保存的 QQ 音乐登录态。"""
+    from ..parsers import _QQMUSIC_AVAILABLE
+
+    if not _QQMUSIC_AVAILABLE:
+        await matcher.finish("qqmusic-api-python 未安装，该指令不可用。请先 `pip install qqmusic-api-python`")
     from ..parsers.qqmusic import credential as qq_cred
 
     if qq_cred.clear_credential():

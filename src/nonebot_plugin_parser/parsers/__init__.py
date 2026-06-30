@@ -20,7 +20,19 @@ from .coolapk import CoolapkParser as CoolapkParser
 from .duitang import DuiTangParser as DuiTangParser
 from .netease import NCMParser as NCMParser
 from .qsmusic import QSMusicParser as QSMusicParser
-from .qqmusic import QQMusicParser as QQMusicParser
+
+# QQ 音乐解析依赖 qqmusic-api-python（主依赖，但允许缺包降级：缺时仅 QQ 音乐解析
+# 不可用，其余平台照常启动）。导入失败由 parsers/qqmusic/api.py 顶层对
+# qqmusic_api 的 import 触发，这里捕获后置哨兵，不阻塞整个插件加载。
+try:
+    from .qqmusic import QQMusicParser as QQMusicParser
+
+    _QQMUSIC_AVAILABLE = True
+except ImportError as _qqmusic_import_err:
+    QQMusicParser = None  # type: ignore[assignment,misc]
+    _QQMUSIC_AVAILABLE = False
+    _QQMUSIC_IMPORT_ERROR = _qqmusic_import_err
+
 from .baidu_music import BaiduMusicParser as BaiduMusicParser
 from .twitter import TwitterParser as TwitterParser
 from .bilibili import BilibiliParser as BilibiliParser
@@ -45,7 +57,6 @@ PARSERS: dict[str, type[BaseParser]] = {
     "kugou": KuGouParser,
     "kuwo": KuWoParser,
     "qsmusic": QSMusicParser,
-    "qqmusic": QQMusicParser,
     "baidu": BaiduMusicParser,
     "hupu": HupuParser,
     "coolapk": CoolapkParser,
@@ -57,6 +68,9 @@ PARSERS: dict[str, type[BaseParser]] = {
     "tieba": TiebaParser,
     "pixiv": PixivParser,
 }
+
+if _QQMUSIC_AVAILABLE:
+    PARSERS["qqmusic"] = QQMusicParser  # type: ignore[assignment]
 
 if YTDLP_DOWNLOADER is not None:
     from .tiktok import TikTokParser as TikTokParser

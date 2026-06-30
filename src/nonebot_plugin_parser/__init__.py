@@ -51,6 +51,23 @@ def _check_tdl():
         )
 
 
+@get_driver().on_startup
+def _check_qqmusic():
+    """启动时检测 qqmusic-api-python 是否可用，缺包则降级提醒（仅 QQ 音乐解析受影响）。
+
+    qqmusic-api-python 是主依赖，但环境异常（装包失败/被卸载）时缺包不应阻塞整个
+    插件启动。这里仅 warning 提醒，其余平台照常工作。
+    """
+    from .parsers import _QQMUSIC_AVAILABLE
+
+    if _QQMUSIC_AVAILABLE:
+        return
+    logger.warning(
+        "qqmusic-api-python 未安装或加载失败，QQ音乐解析将不可用（其余平台正常）。"
+        "执行 `pip install qqmusic-api-python` 或 `uv sync` 后重启即可恢复。"
+    )
+
+
 @get_driver().on_shutdown
 async def close_downloader():
     await DOWNLOADER.close()

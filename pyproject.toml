@@ -159,10 +159,17 @@ show-bump = "bump-my-version show-bump"
 pythonVersion = "3.10"
 pythonPlatform = "All"
 defineConstant = { PYDANTIC_V2 = true }
+# 关键: 显式声明 venv 位置 + 仅 include src/。否则 pyright 默认会把整个仓库
+# (含 .venv/site-packages 的 5000+ 第三方文件) 当作待分析源码, 导致 CI 卡死
+# (实测 5041 文件, 直到 6h 超时无输出)。显式 venvPath 让它把已装包当依赖解析
+# 而非逐文件分析; include 限定只检查本项目代码。
+venvPath = "."
+venv = ".venv"
+include = ["src"]
 # 与 [tool.ruff] extend-exclude 对齐：tests/ 根目录下是开发期手动调试/对比脚本
 # （非 CI pytest 目标，CI 只跑 tests/parsers|others|renders 子目录），排除以避免
 # 大量调试代码的类型噪声干扰 BasedPyright 检查。
-exclude = ["tests/*.py"]
+exclude = ["tests/*.py", "**/__pycache__"]
 executionEnvironments = [
   { root = "./tests", extraPaths = [
     "./src",

@@ -245,7 +245,7 @@ class BaseParser:
 
     def create_video_content(
         self,
-        url_or_task: str | Task[Path],
+        url_or_task: str | Task[Path] | Path,
         cover_url: str | None = None,
         duration: float = 0.0,
     ):
@@ -273,7 +273,7 @@ class BaseParser:
 
     def create_image_content(
         self,
-        url_or_task: str | Task[Path],
+        url_or_task: str | Task[Path] | Path,
         alt: str | None = None,
     ):
         """创建图片内容"""
@@ -362,7 +362,7 @@ class BaseParser:
 
     def create_audio_content(
         self,
-        url_or_task: str | Task[Path],
+        url_or_task: str | Task[Path] | Path,
         duration: float = 0.0,
     ):
         """创建音频内容"""

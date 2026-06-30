@@ -51,7 +51,7 @@ class Renderer(ImageRenderer):
                     "result": result,
                     "default_avatar": default_avatar,
                 },
-                pages={"viewport": {"width": 720, "height": 100}},
+                pages={"viewport": {"width": 720, "height": 100}},  # type: ignore[call-arg]
             )
         else:
             # htmlkit: 位置参数 (template_path, template_name, templates=)

@@ -75,6 +75,31 @@ def test_bilibili_parser_initializes_base_fields():
     assert parser.headers["Referer"].rstrip("/") == "https://www.bilibili.com"
 
 
+def test_parser_handler_state_param_is_injected_by_nonebot_di():
+    """回归测试: parser_handler 的 state 参数必须被 NoneBot DI 注入。
+
+    之前 ``state: T_State | None = None`` 让 Union 类型绕过了
+    StateParam._check_param (它只认直接的 T_State/Annotated), 导致
+    state 始终为 None, force_parse 永远 False, 前缀强制解析失效。
+    正确注解下 NoneBot 会把它解析成 StateParam。
+    """
+    import inspect
+
+    from nonebot.internal.params import StateParam
+
+    from nonebot_plugin_parser.matchers import parser_handler
+
+    sig = inspect.signature(parser_handler)
+    state_param = sig.parameters["state"]
+
+    # 用 NoneBot 的 StateParam 解析器逐参校验, 它应返回 StateParam 实例
+    resolved = StateParam._check_param(state_param, ())
+    assert resolved is not None, (
+        f"state 参数未被 NoneBot DI 识别为 StateParam (annotation={state_param.annotation!r}); "
+        "若用 T_State | None 会丢失 StateFlag, 导致 force_parse 永远 False, 前缀强制解析失效"
+    )
+
+
 def test_is_enabled_all_disabled_but_force_prefix_still_allowed(monkeypatch):
     from nonebot_plugin_parser.constants import PlatformEnum
     from nonebot_plugin_parser.config import pconfig

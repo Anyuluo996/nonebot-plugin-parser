@@ -30,6 +30,7 @@ jobs:
   basedpyright:
     name: BasedPyright
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
@@ -43,8 +44,14 @@ jobs:
       - name: Install Dependencies
         run: uv sync --locked
 
+      # 通过 npm 全局安装 basedpyright, 使用 runner 预装的系统 node,
+      # 绕开 PyPI 版捆绑的 nodejs-wheel —— 该 wheel 在 ubuntu-latest 上运行
+      # pyright 分析时会挂起(无任何输出直到 6h 超时, 见 actions/runner-images#6698)。
+      - name: Install basedpyright via npm
+        run: npm install -g basedpyright
+
       - name: Static typing check
-        run: uvx basedpyright
+        run: basedpyright
 
   test:
     name: Test

@@ -2,7 +2,7 @@ from pathlib import Path
 
 from nonebot import logger, require, get_driver, get_plugin_config
 from apilmoji import ELK_SH_CDN, EmojiStyle
-from pydantic import Field, BaseModel
+from pydantic import Field, BaseModel, field_validator
 from bilibili_api.video import VideoCodecs, VideoQuality
 
 from .constants import RenderType, PlatformEnum
@@ -74,6 +74,7 @@ class Config(BaseModel):
         ]
     )
     """B站视频编码"""
+
     parser_bili_video_quality: VideoQuality = VideoQuality._1080P
     """B站视频分辨率"""
     parser_render_type: RenderType = RenderType.common
@@ -98,6 +99,39 @@ class Config(BaseModel):
     """tdl session namespace，对应 `tdl login -n <ns>` 的命名空间"""
     parser_tdl_proxy: str | None = None
     """tdl 专用代理（tdl 不读 http_proxy 环境变量，必须显式 --proxy），为空时沿用 parser_proxy"""
+
+    @field_validator("parser_bili_video_codes", mode="before")
+    @classmethod
+    def _coerce_bili_video_codes(cls, v: object) -> object:
+        """兼容 bilibili-api 17.4.2 起 VideoCodecs 值由 str 变为 tuple 的变更。
+
+        旧 .env / .env.test 里写的 ``["avc", "av01"]`` 在新版会被 pydantic 当作
+        不合法的枚举值拒绝 (实际枚举值是 ``('avc',)``/``('av01','av1')``)。
+        这里把短名 (大小写不敏感) 映射回枚举成员, 同时仍接受原生 tuple/成员输入。
+        """
+        if not isinstance(v, (list, tuple)):
+            return v
+        # 大小写不敏感短名 → 枚举成员映射表
+        name_map = {c.name.lower(): c for c in VideoCodecs}
+        # 把已知子串值也并入 (如 'avc'/'av01'/'hev'/'hvc'/'av1')
+        for c in VideoCodecs:
+            for part in c.value if isinstance(c.value, tuple) else (c.value,):
+                if isinstance(part, str) and part.lower() not in name_map:
+                    name_map[part.lower()] = c
+        out: list[VideoCodecs] = []
+        for item in v:
+            if isinstance(item, VideoCodecs):
+                out.append(item)
+            elif isinstance(item, str):
+                resolved = name_map.get(item.lower())
+                if resolved is not None:
+                    out.append(resolved)
+                else:
+                    # 解析不出, 原样返回交给 pydantic 报错
+                    return v
+            else:
+                return v
+        return out
 
     @property
     def nickname(self) -> str:

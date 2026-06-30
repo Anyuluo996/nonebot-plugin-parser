@@ -161,7 +161,13 @@ async def test_pixiv_render(tmp_path):
 
 @pytest.mark.asyncio
 async def test_pixiv_html_render(tmp_path):
-    """测试 Pixiv HTML 渲染（需安装 nonebot-plugin-htmlrender）"""
+    """测试 Pixiv HTML 渲染（需安装 nonebot-plugin-htmlrender + chromium 二进制）
+
+    注意: 此测试实为渲染/像素测试, 但放在 tests/parsers/ 下。CI 的 Test Parsers job
+    只装 python 包 (uv sync) 不装 chromium 二进制 (playwright install), 而本测试调用
+    template_to_pic → get_browser → playwright.launch 必须有 chromium 才能跑。
+    故 skip 需同时挡 python 包 import 和 chromium 二进制存在, 不能只 try import。
+    """
     from pathlib import Path
 
     from nonebot_plugin_parser.parsers import PixivParser
@@ -175,6 +181,14 @@ async def test_pixiv_html_render(tmp_path):
         from nonebot_plugin_htmlrender import template_to_pic
     except Exception:
         pytest.skip("nonebot_plugin_htmlrender not available")
+
+    # chromium 二进制是 lazy 安装 (playwright install), uv sync 不会装。
+    # 仅 import 成功不代表浏览器可用; 必须检测 executable_path 实际存在。
+    import os
+
+    async with async_playwright() as p:
+        if not p.chromium.executable_path or not os.path.exists(p.chromium.executable_path):
+            pytest.skip("chromium binary not installed (run: playwright install chromium)")
 
     from nonebot_plugin_parser.renders import resources
     from nonebot_plugin_parser.renders.base import pconfig

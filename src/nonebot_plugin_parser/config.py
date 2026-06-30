@@ -50,6 +50,9 @@ class Config(BaseModel):
     或仅游客态 ttwid 都会返回 200 + 空 body。配置登录态 ttwid 后, 解析器会自动
     计算 a_bogus 签名, 即可恢复实况照片 (live photo) 视频解析。从浏览器登录抖音
     后复制 ``ttwid`` Cookie 填入即可; 留空则纯图文仍可正常解析 (走分享页兜底)。
+
+    注: 这是兜底途径。推荐用 SUPERUSER 指令 ``dyttwid <值>`` 热更新（持久化到本地,
+    优先级更高、无需重启，覆盖上一次的值），用 ``dyttwid查看`` 核对当前生效值。
     """
     parser_need_upload: bool = False
     """是否需要上传音频文件"""

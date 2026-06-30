@@ -8,7 +8,7 @@ from msgspec import MsgspecError, convert
 from nonebot import logger
 from bilibili_api import HEADERS, Credential, select_client, request_settings
 from bilibili_api.opus import Opus
-from bilibili_api.video import Video
+from bilibili_api.video import Video, VideoQuality
 from bilibili_api.login_v2 import QrCodeLogin, QrCodeLoginEvents
 
 from ..base import (
@@ -451,7 +451,7 @@ class BilibiliParser(BaseParser):
     def _fallback_select_streams(
         download_url_data: dict,
         *,
-        max_quality=120,
+        max_quality: VideoQuality | int = 120,
         allowed_codecs: list | None = None,
     ) -> list:
         """bilibili_api detect_best_streams 降级: 直接从 dash 原始数据重新解析选最佳流
@@ -465,12 +465,11 @@ class BilibiliParser(BaseParser):
         """
         from bilibili_api.video import (
             AudioQuality,
-            VideoQuality,
             AudioStreamDownloadURL,
             VideoStreamDownloadURL,
         )
 
-        max_qv = max_quality.value if hasattr(max_quality, "value") else max_quality
+        max_qv = max_quality.value if isinstance(max_quality, VideoQuality) else max_quality
         allowed = set(allowed_codecs) if allowed_codecs is not None else None
 
         video_streams: list[VideoStreamDownloadURL] = []

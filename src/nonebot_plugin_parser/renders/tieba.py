@@ -49,7 +49,7 @@ class Renderer(ImageRenderer):
                     "result": result,
                     "default_avatar": default_avatar,
                 },
-                pages={"viewport": {"width": 720, "height": 100}},
+                pages={"viewport": {"width": 720, "height": 100}},  # type: ignore[call-arg]
             )
         else:
             return await _template_to_pic(

@@ -403,7 +403,7 @@ async def _tg_login(matcher: Matcher):
             "tdl 不可用，请先安装 tdl (https://github.com/iyear/tdl)，或配置 parser_tdl_path 指向 tdl 路径"
         )
 
-    user_id = str(event.user_id) if (event := current_event.get()) else "unknown"
+    user_id = str(event.user_id) if (event := current_event.get()) else "unknown"  # type: ignore[attr-defined]
     # 清理该用户之前的 pending（避免残留）
     _tg_2fa_pending.pop(user_id, None)
 
@@ -463,7 +463,7 @@ async def _tg_password(matcher: Matcher):
     event_obj = current_event.get()
     if event_obj is None or not hasattr(event_obj, "user_id"):
         return
-    user_id = str(event_obj.user_id)
+    user_id = str(event_obj.user_id)  # type: ignore[attr-defined]
     handle = _tg_2fa_pending.get(user_id)
     if handle is None:
         return  # 该用户没在等密码，跳过

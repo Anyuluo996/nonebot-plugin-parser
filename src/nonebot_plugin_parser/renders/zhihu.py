@@ -39,7 +39,7 @@ class Renderer(ImageRenderer):
             from . import get_global_renderer
 
             global_renderer = get_global_renderer()
-            return await global_renderer.render_image(result)
+            return await global_renderer.render_image(result)  # type: ignore[attr-defined]
 
         if _template_to_pic is None:
             raise RuntimeError("知乎渲染器: 无可用的 template_to_pic 后端 (htmlrender/htmlkit)")
@@ -59,7 +59,7 @@ class Renderer(ImageRenderer):
                     "result": result,
                     "default_avatar": default_avatar,
                 },
-                pages={"viewport": {"width": 720, "height": 100}},
+                pages={"viewport": {"width": 720, "height": 100}},  # type: ignore[call-arg]
             )
         else:
             return await _template_to_pic(

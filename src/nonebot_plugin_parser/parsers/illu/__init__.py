@@ -5,11 +5,12 @@
 """
 
 import re
-from typing import ClassVar
+from typing import Literal, ClassVar, overload
 
 from msgspec import ValidationError
 
 from ..base import Platform, BaseParser, PlatformEnum, ParseException, handle
+from ..data import ImageContent
 from .models import Detail, BizType
 from .encrypt import sign_header
 from .._format import format_num
@@ -28,6 +29,10 @@ class IlluParser(BaseParser):
         super().__init__()
         self.headers.update({"Referer": "https://illund.com/", "Origin": "https://illund.com"})
 
+    @overload
+    async def _fetch_detail(self, object_id: str, biz_type: Literal[BizType.Article]) -> ArticleByIdV2: ...
+    @overload
+    async def _fetch_detail(self, object_id: str, biz_type: Literal[BizType.Drawing]) -> DrawingDetail: ...
     async def _fetch_detail(self, object_id: str, biz_type: BizType):
         if biz_type is BizType.Article:
             router = Detail.ArticleDetail.value
@@ -57,9 +62,9 @@ class IlluParser(BaseParser):
     @handle("illund.com/share.html", r"articleId%3D(?P<articleId>[0-9a-z]+)")
     async def parse_article(self, searched: re.Match[str]):
         object_id = searched.group("articleId")
-        result: ArticleByIdV2 = await self._fetch_detail(object_id, BizType.Article)
+        result: ArticleByIdV2 = await self._fetch_detail(object_id, BizType.Article)  # type: ignore[assignment]  # overload 已声明, pyright 对枚举 Literal 匹配有限
         detail = result.dataObject
-        text_lines = await fetch_html_text_from_zip(self, detail.contentFile)
+        text_lines: list[str | ImageContent] = await fetch_html_text_from_zip(self, detail.contentFile)
 
         return self.result(
             title=detail.title,
@@ -88,7 +93,7 @@ class IlluParser(BaseParser):
     @handle("illund.com/share.html", r"mainid%3D(?P<mainId>[0-9a-z]+)")
     async def parse_drawing(self, searched: re.Match[str]):
         object_id = searched.group("mainId")
-        detail: DrawingDetail = await self._fetch_detail(object_id, BizType.Drawing)
+        detail: DrawingDetail = await self._fetch_detail(object_id, BizType.Drawing)  # type: ignore[assignment]  # overload 已声明, pyright 对枚举 Literal 匹配有限
 
         graphics: list = []
         if detail.content:

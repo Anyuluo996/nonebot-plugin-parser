@@ -16,6 +16,9 @@ try:
 
     PIL_AVAILABLE = True
 except ImportError:
+    # pyright: Image 在 except 分支未绑定会让后续使用报 unbound;
+    # 赋 None 保证它始终 bound (实际使用前已有 PIL_AVAILABLE 守卫 raise)。
+    Image = None  # type: ignore[assignment]
     PIL_AVAILABLE = False
 
 K = TypeVar("K")
@@ -92,7 +95,10 @@ async def _run_subprocess(
             pass
         raise
 
-    return process.returncode, stdout, stderr
+    # process.returncode 类型为 int | None; 超时分支已 raise, 正常退出非 None。
+    # 断言收敛类型, 兜底 -1 保证签名 tuple[int, bytes, bytes]。
+    rc = process.returncode if process.returncode is not None else -1
+    return rc, stdout, stderr
 
 
 async def exec_ffmpeg_cmd(cmd: list[str]) -> None:
@@ -459,7 +465,7 @@ def render_qr_ascii_to_png(ascii_qr: str, scale: int = 10, border: int = 4) -> b
 
     # 1. 先画 1:1 的位图
     img = Image.new("1", (width, height), 1)  # 模式 1：0=黑 1=白
-    pixels = img.load()
+    pixels = img.load()  # type: ignore[union-attr]  # Image.new 返回 ImageFile, .load() 非 None
     for row_idx, line in enumerate(lines):
         for col, ch in enumerate(line):
             upper = ch in ("█", "▀")  # 上半黑

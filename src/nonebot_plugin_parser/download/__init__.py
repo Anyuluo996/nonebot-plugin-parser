@@ -140,13 +140,17 @@ async def _download_by_curl(
     for attempt in range(max_retries + 1):
         try:
             # curl_cffi 也加超时（DOWNLOAD_TIMEOUT 秒），避免连接挂起永久卡死下载
-            async with AsyncSession(impersonate=impersonate, timeout=DOWNLOAD_TIMEOUT) as session:
+            # DOWNLOAD_TIMEOUT 是 httpx.Timeout，curl_cffi 期望 float；运行时 curl_cffi 可接受
+            async with AsyncSession(
+                impersonate=impersonate,
+                timeout=DOWNLOAD_TIMEOUT,  # type: ignore[arg-type]
+            ) as session:
                 # 流式下载：边读边累计大小，超限立即中止，避免把整个大文件载入内存
                 resp = await session.get(
                     url,
                     headers=headers,
                     allow_redirects=True,
-                    proxies=proxies,
+                    proxies=proxies,  # type: ignore[arg-type]
                     stream=True,
                 )
                 status = resp.status_code

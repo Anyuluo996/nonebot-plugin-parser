@@ -6,7 +6,7 @@ from asyncio import Task
 from pathlib import Path
 from datetime import datetime
 from dataclasses import field, dataclass
-from collections.abc import Iterator, Awaitable
+from collections.abc import Iterator, Sequence, Awaitable
 
 from ..utils import fmt_duration
 
@@ -223,7 +223,7 @@ class ParseResult:
     """发布时间戳, 秒"""
     url: str | None = None
     """来源链接"""
-    contents: list[MediaContent] = field(default_factory=list)
+    contents: Sequence[MediaContent] = field(default_factory=list)
     """媒体内容"""
     graphics: list[str | ImageContent] = field(default_factory=list)
     """图文内容"""
@@ -452,7 +452,7 @@ class ParseResult:
 class ParseResultKwargs(TypedDict, total=False):
     title: str | None
     text: str | None
-    contents: list[MediaContent]
+    contents: Sequence[MediaContent]
     graphics: list[str | ImageContent]
     timestamp: int | None
     url: str | None

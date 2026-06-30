@@ -159,6 +159,10 @@ show-bump = "bump-my-version show-bump"
 pythonVersion = "3.10"
 pythonPlatform = "All"
 defineConstant = { PYDANTIC_V2 = true }
+# 与 [tool.ruff] extend-exclude 对齐：tests/ 根目录下是开发期手动调试/对比脚本
+# （非 CI pytest 目标，CI 只跑 tests/parsers|others|renders 子目录），排除以避免
+# 大量调试代码的类型噪声干扰 BasedPyright 检查。
+exclude = ["tests/*.py"]
 executionEnvironments = [
   { root = "./tests", extraPaths = [
     "./src",

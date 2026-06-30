@@ -97,7 +97,8 @@ class ZhiHuParser(BaseParser):
 
     async def _parse_answer(self, question_id: str, answer_id: str):
         """回答页：``answers/{id}`` 已风控，改从 feeds/answers 中按 id 匹配目标回答。"""
-        from .feeds import build_feeds_answers_url, decoder as feedDecoder
+        from .feeds import decoder as feedDecoder
+        from .feeds import build_feeds_answers_url
 
         resp = await self.fetch(
             build_feeds_answers_url(question_id, limit=FEEDS_FETCH_LIMIT),
@@ -141,8 +142,9 @@ class ZhiHuParser(BaseParser):
 
     async def _parse_question(self, question_id: str):
         """问题页：主楼 detail + 前 3 条高赞回答（feeds/answers）。"""
+        from .feeds import decoder as feedDecoder
+        from .feeds import build_feeds_answers_url
         from .question import decoder as questionDecoder
-        from .feeds import build_feeds_answers_url, decoder as feedDecoder
 
         question_data = await self.fetch(
             "https://www.zhihu.com/api/v4/questions/"

@@ -3,7 +3,7 @@ import asyncio
 import hashlib
 import zipfile
 import importlib.util
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from pathlib import Path
 from collections import OrderedDict
 from urllib.parse import urlparse
@@ -11,14 +11,23 @@ from urllib.parse import urlparse
 from anyio import Path as AnyioPath
 from nonebot import logger
 
-try:
+if TYPE_CHECKING:
+    # 仅类型检查期导入, 让 pyright 知道 Image 的真实类型 (PIL.Image 模块),
+    # 从而能正确解析 Image.new / Image.open / Image.Image / Image.Resampling。
     from PIL import Image
+    from PIL.Image import Image as PILImage
+
+try:
+    from PIL import Image  # type: ignore[no-redef]
 
     PIL_AVAILABLE = True
 except ImportError:
-    # pyright: Image 在 except 分支未绑定会让后续使用报 unbound;
-    # 赋 None 保证它始终 bound (实际使用前已有 PIL_AVAILABLE 守卫 raise)。
-    Image = None  # type: ignore[assignment]
+    # PIL 缺失时给 Image 一个与模块结构兼容的占位, 避免后续 unbound 引用;
+    # 实际调用前每个函数都有 PIL_AVAILABLE 守卫 raise, 不会真的走到占位属性。
+    # 用 TYPE_CHECKING 导入保证类型检查期 Image 仍是 PIL 模块类型。
+    from types import ModuleType
+
+    Image = ModuleType("Image")  # type: ignore[assignment,misc]
     PIL_AVAILABLE = False
 
 K = TypeVar("K")
@@ -465,7 +474,8 @@ def render_qr_ascii_to_png(ascii_qr: str, scale: int = 10, border: int = 4) -> b
 
     # 1. 先画 1:1 的位图
     img = Image.new("1", (width, height), 1)  # 模式 1：0=黑 1=白
-    pixels = img.load()  # type: ignore[union-attr]  # Image.new 返回 ImageFile, .load() 非 None
+    pixels = img.load()
+    assert pixels is not None  # Image.new 返回 ImageFile, .load() 在已加载图像上必非 None
     for row_idx, line in enumerate(lines):
         for col, ch in enumerate(line):
             upper = ch in ("█", "▀")  # 上半黑
@@ -540,7 +550,7 @@ async def convert_ugoira_to_gif(
     if not zip_path.exists():
         raise FileNotFoundError(f"动图 ZIP 文件不存在: {zip_path}")
 
-    images: list[Image.Image] = []
+    images: list[PILImage] = []
     durations: list[int] = []
 
     with zipfile.ZipFile(zip_path, "r") as zf:

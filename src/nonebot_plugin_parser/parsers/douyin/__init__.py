@@ -179,12 +179,12 @@ class DouyinParser(BaseParser):
             "Referer": "https://www.douyin.com/",
             "X-Requested-With": "XMLHttpRequest",
         }
-        # 注入 ttwid Cookie (从 .env 的 parser_douyin_ttwid 读取):
-        # 抖音 detail 接口要求登录态凭据, 仅 a_bogus 签名 + 游客态 ttwid 仍会被
-        # 风控拦截返回空 body。配置登录态 ttwid + a_bogus 签名两者配套才生效。
-        from ...config import pconfig
+        # 注入 ttwid Cookie: 抖音 detail 接口要求登录态凭据 + a_bogus 签名配套才放行,
+        # 仅 a_bogus 或游客态 ttwid 都会被风控拦截返回空 body。
+        # ttwid 来源优先级: dyttwid 指令持久化 > .env 环境变量兜底 (见 ttwid.get_effective_ttwid)。
+        from . import ttwid as dy_ttwid
 
-        if ttwid := pconfig.douyin_ttwid:
+        if ttwid := dy_ttwid.get_effective_ttwid():
             headers["Cookie"] = f"ttwid={ttwid}"
         # 组装请求参数: 通用参数 + aweme_id + msToken + a_bogus 签名。
         # - msToken: 128 位随机 hex, 仿浏览器随机生成 (真实 msToken 由服务端下发,

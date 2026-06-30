@@ -280,6 +280,41 @@ async def _qqmusic_logout(matcher: Matcher):
     await matcher.finish("当前未保存 QQ 音乐登录态")
 
 
+# ==================== 抖音 ttwid 凭据管理 ====================
+# 抖音图文/实况照片需登录态 ttwid + a_bogus 签名配套才放行。
+# 除 .env 兜底外，SUPERUSER 可通过指令热更新 ttwid，无需重启。
+@on_command("dyttwid", block=True, permission=SUPERUSER).handle()
+async def _douyin_set_ttwid(matcher: Matcher, args: Message = CommandArg()):
+    """SUPERUSER: 写入抖音登录态 ttwid（持久化，热更新，覆盖上一次的值）。
+
+    用法: dyttwid <ttwid 值>   —— 从浏览器登录抖音后复制 ``ttwid`` Cookie。
+    优先级高于 .env 的 ``parser_douyin_ttwid``，写入后立即生效。
+    """
+    from ..parsers.douyin import ttwid as dy_ttwid
+
+    value = args.extract_plain_text().strip()
+    if not value:
+        await matcher.finish("用法: dyttwid <ttwid 值>（从浏览器登录抖音后复制 ttwid Cookie）")
+    dy_ttwid.save_ttwid(value)
+    await matcher.finish(f"✅ 已保存抖音 ttwid（{len(value)} 字符），图文/实况照片解析立即生效")
+
+
+@on_command("dyttwid查看", block=True, permission=SUPERUSER).handle()
+async def _douyin_show_ttwid(matcher: Matcher):
+    """SUPERUSER: 查看当前生效的抖音 ttwid（排查设置是否成功）。"""
+    from ..parsers.douyin import ttwid as dy_ttwid
+
+    persisted = dy_ttwid.load_ttwid()
+    effective = dy_ttwid.get_effective_ttwid()
+    if persisted is not None:
+        # 指令持久化生效，显示实际值以便核对
+        await matcher.finish(f"当前生效抖音 ttwid（来源: 指令持久化）:\n{effective}")
+    if effective is not None:
+        # 无持久化，回落到 .env
+        await matcher.finish(f"当前生效抖音 ttwid（来源: .env parser_douyin_ttwid）:\n{effective}")
+    await matcher.finish("当前未配置抖音 ttwid（指令和 .env 均为空）")
+
+
 # ==================== Telegram 解析授权管理 ====================
 # Telegram 解析需消耗本机 tdl 会话，仅 SUPERUSER 可用，
 # SUPERUSER 可通过以下命令授权/取消授权其他用户

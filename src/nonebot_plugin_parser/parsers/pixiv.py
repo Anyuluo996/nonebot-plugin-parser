@@ -130,9 +130,7 @@ class PixivParser(BaseParser):
         proxy = self._get_proxy()
 
         # 获取动图元数据（ZIP URL 和帧信息）
-        ugoira_resp = await self.request(
-            f"{base_url}/ajax/illust/{illust_id}/ugoira_meta", proxy=proxy
-        )
+        ugoira_resp = await self.request(f"{base_url}/ajax/illust/{illust_id}/ugoira_meta", proxy=proxy)
         ugoira_data = ugoira_decoder.decode(ugoira_resp.content)
 
         if ugoira_data.error:
@@ -200,9 +198,7 @@ class PixivParser(BaseParser):
         if user_id:
             proxy = self._get_proxy()
             try:
-                user_resp = await self.request(
-                    f"{base_url}/ajax/user/{user_id}?full=1", proxy=proxy
-                )
+                user_resp = await self.request(f"{base_url}/ajax/user/{user_id}?full=1", proxy=proxy)
                 user_data = user_decoder.decode(user_resp.content)
                 if not user_data.error:
                     avatar_url = user_data.body.get("image")

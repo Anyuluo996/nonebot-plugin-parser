@@ -19,9 +19,7 @@ _NEXT_DATA = re.compile(
 
 
 class CoolapkParser(BaseParser):
-    platform: ClassVar[Platform] = Platform(
-        name=PlatformEnum.COOLAPK, display_name="酷安"
-    )
+    platform: ClassVar[Platform] = Platform(name=PlatformEnum.COOLAPK, display_name="酷安")
 
     @handle("coolapk1s.com/feed/", r"coolapk1s\.com/feed/(?P<feed_id>\d+)")
     @handle("www.coolapk.com/feed/", r"www\.coolapk\.com/feed/(?P<feed_id>\d+)")

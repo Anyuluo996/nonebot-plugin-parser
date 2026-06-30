@@ -20,9 +20,7 @@ class HupuParser(BaseParser):
     @handle("m.hupu.com/bbs", r"bbs/(?P<topic_id>\d+)(?:\.html)?")
     async def parse_bbs(self, searched: re.Match[str]):
         topic_id = searched.group("topic_id")
-        res = await self.request(
-            f"https://m.hupu.com/api/v1/bbs-thread-frontend/{topic_id}"
-        )
+        res = await self.request(f"https://m.hupu.com/api/v1/bbs-thread-frontend/{topic_id}")
         data = decoder.decode(res.content).data
         bbs = data.t_detail
 
@@ -39,11 +37,7 @@ class HupuParser(BaseParser):
                 description=bbs.via,
             ),
             extra={
-                "info": (
-                    f"浏览 {format_num(bbs.hits)} | "
-                    f"亮 {format_num(bbs.lights)} | "
-                    f"回复 {format_num(bbs.replies)}"
-                ),
+                "info": (f"浏览 {format_num(bbs.hits)} | 亮 {format_num(bbs.lights)} | 回复 {format_num(bbs.replies)}"),
                 "forum": bbs.f_info.f_name,
                 "reply_count": len(data.r_list),
             },

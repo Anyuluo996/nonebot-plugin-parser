@@ -15,9 +15,7 @@ from .._format import format_num
 
 
 class LofterParser(BaseParser):
-    platform: ClassVar[Platform] = Platform(
-        name=PlatformEnum.LOFTER, display_name="LOFTER"
-    )
+    platform: ClassVar[Platform] = Platform(name=PlatformEnum.LOFTER, display_name="LOFTER")
 
     @handle("s.lofter.com", r"s\.lofter\.com/-s/[0-9A-Za-z]+")
     async def _parse_short_link(self, searched: re.Match[str]):
@@ -42,9 +40,7 @@ class LofterParser(BaseParser):
 
         meta = post_data.get("meta") or {}
         if meta.get("status") != 200:
-            raise ParseException(
-                f"Lofter 解析失败: {meta.get('msg', '未知错误')}"
-            )
+            raise ParseException(f"Lofter 解析失败: {meta.get('msg', '未知错误')}")
 
         post_raw = (post_data.get("response") or {}).get("posts") or []
         if not post_raw:

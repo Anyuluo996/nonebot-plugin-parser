@@ -140,9 +140,7 @@ class Picture(Struct):
     url: str
     width: int = 0
     height: int = 0
-    video_bit_rate_list: list[PictureVideoBitRate] = field(
-        default_factory=list, name="videoBitRateList"
-    )
+    video_bit_rate_list: list[PictureVideoBitRate] = field(default_factory=list, name="videoBitRateList")
 
 
 class PictureSlidesData(Struct):

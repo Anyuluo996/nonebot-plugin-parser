@@ -13,9 +13,7 @@ from .._format import format_num
 
 
 class TiebaParser(BaseParser):
-    platform: ClassVar[Platform] = Platform(
-        name=PlatformEnum.TIEBA, display_name="百度贴吧"
-    )
+    platform: ClassVar[Platform] = Platform(name=PlatformEnum.TIEBA, display_name="百度贴吧")
 
     @handle("tieba.baidu.com", r"tieba\.baidu\.com/p/(?P<post_id>\d+)")
     async def _parse(self, searched: re.Match[str]):
@@ -33,9 +31,7 @@ class TiebaParser(BaseParser):
         contents = build_content(posts, self.create_image_content, self.create_video_content)
 
         # 前几楼回复，渲染进长图（与 NGA/知乎对齐的多楼层模式）
-        reply_floors = build_reply_floors(
-            posts, self.create_image_content, self.create_video_content
-        )
+        reply_floors = build_reply_floors(posts, self.create_image_content, self.create_video_content)
 
         return self.result(
             title=thread.title,

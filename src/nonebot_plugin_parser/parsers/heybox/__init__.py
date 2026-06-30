@@ -27,14 +27,9 @@ async def _fetch_token_id() -> str | None:
         return None
     try:
         async with get_new_page(viewport={"width": 1280, "height": 800}) as page:
-            await page.goto(
-                "https://www.xiaoheihe.cn/", wait_until="networkidle", timeout=20_000
-            )
+            await page.goto("https://www.xiaoheihe.cn/", wait_until="networkidle", timeout=20_000)
             await page.wait_for_timeout(1500)
-            token = await page.evaluate(
-                "window.SMSdk && window.SMSdk.getDeviceId"
-                " ? window.SMSdk.getDeviceId() : null"
-            )
+            token = await page.evaluate("window.SMSdk && window.SMSdk.getDeviceId ? window.SMSdk.getDeviceId() : null")
         return token
     except Exception as e:
         logger.warning(f"小黑盒 tokenid 获取失败: {e!r}")
@@ -53,9 +48,7 @@ async def _browser_fetch_link(link_id: str) -> dict | None:
     try:
         url = build_url(link_id)
         async with get_new_page(viewport={"width": 1280, "height": 800}) as page:
-            await page.goto(
-                "https://www.xiaoheihe.cn/", wait_until="networkidle", timeout=20_000
-            )
+            await page.goto("https://www.xiaoheihe.cn/", wait_until="networkidle", timeout=20_000)
             await page.wait_for_timeout(1500)
             data = await page.evaluate(
                 """async (url) => {
@@ -73,9 +66,7 @@ async def _browser_fetch_link(link_id: str) -> dict | None:
 
 
 class HeyBoxParser(BaseParser):
-    platform: ClassVar[Platform] = Platform(
-        name=PlatformEnum.HEYBOX, display_name="小黑盒"
-    )
+    platform: ClassVar[Platform] = Platform(name=PlatformEnum.HEYBOX, display_name="小黑盒")
 
     _token_id: ClassVar[str | None] = None
 
@@ -90,14 +81,8 @@ class HeyBoxParser(BaseParser):
         )
 
     async def _httpx_request(self, link_id: str) -> dict:
-        cookies = (
-            {"x_xhh_tokenid": HeyBoxParser._token_id}
-            if HeyBoxParser._token_id
-            else None
-        )
-        response = await self.request(
-            build_url(link_id), headers=self.headers, cookies=cookies
-        )
+        cookies = {"x_xhh_tokenid": HeyBoxParser._token_id} if HeyBoxParser._token_id else None
+        response = await self.request(build_url(link_id), headers=self.headers, cookies=cookies)
         response.raise_for_status()
         return response.json()
 
@@ -125,9 +110,7 @@ class HeyBoxParser(BaseParser):
         data = convert(res["result"], BaseResult)
         link = data.link
 
-        graphics = link.to_graphics(
-            self.create_image_content, self.create_video_content
-        )
+        graphics = link.to_graphics(self.create_image_content, self.create_video_content)
 
         return self.result(
             title=link.title,
@@ -147,4 +130,3 @@ class HeyBoxParser(BaseParser):
                 ),
             },
         )
-

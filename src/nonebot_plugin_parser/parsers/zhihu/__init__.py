@@ -26,13 +26,9 @@ class ZhiHuParser(BaseParser):
     问题页渲染主楼 + 前 3 条高赞回答（extra["answers"]，专用渲染器画长图）。
     """
 
-    platform: ClassVar[Platform] = Platform(
-        name=PlatformEnum.ZHIHU, display_name="知乎"
-    )
+    platform: ClassVar[Platform] = Platform(name=PlatformEnum.ZHIHU, display_name="知乎")
 
-    async def fetch(
-        self, url: str, decoder: Decoder[T], ext_header: dict[str, Any] | None = None
-    ) -> T:
+    async def fetch(self, url: str, decoder: Decoder[T], ext_header: dict[str, Any] | None = None) -> T:
         from .sign import sign_zhihu_fetch_request
 
         res = await self.request(
@@ -118,9 +114,7 @@ class ZhiHuParser(BaseParser):
         if target is None:
             target = targets[0] if targets else None
         if target is None:
-            raise ParseException(
-                f"无法从 feeds/answers 获取回答 {answer_id}（问题 {question_id}）"
-            )
+            raise ParseException(f"无法从 feeds/answers 获取回答 {answer_id}（问题 {question_id}）")
 
         return self.result(
             title=target.question.title or f"知乎回答 {answer_id}",
@@ -133,10 +127,7 @@ class ZhiHuParser(BaseParser):
                 description=target.author.headline,
             ),
             extra={
-                "info": (
-                    f"赞同 {format_num(target.voteup_count)} | "
-                    f"评论 {format_num(target.comment_count)}"
-                ),
+                "info": (f"赞同 {format_num(target.voteup_count)} | 评论 {format_num(target.comment_count)}"),
             },
         )
 
@@ -173,11 +164,7 @@ class ZhiHuParser(BaseParser):
                     {
                         "name": t.author.name or "匿名用户",
                         "headline": t.author.headline,
-                        "avatar": (
-                            self.create_image_content(t.author.avatar_url)
-                            if t.author.avatar_url
-                            else None
-                        ),
+                        "avatar": (self.create_image_content(t.author.avatar_url) if t.author.avatar_url else None),
                         "voteup": t.voteup_count,
                         "comment": t.comment_count,
                         "content": await t.get_content(self),

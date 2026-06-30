@@ -14,9 +14,7 @@ from .._format import format_num
 
 
 class DuiTangParser(BaseParser):
-    platform: ClassVar[Platform] = Platform(
-        name=PlatformEnum.DUITANG, display_name="堆糖"
-    )
+    platform: ClassVar[Platform] = Platform(name=PlatformEnum.DUITANG, display_name="堆糖")
 
     @handle("duitang.com/blog", r"duitang\.com/blog/?\?id=(?P<id>\d+)")
     async def parse_blog(self, searched: re.Match[str]):

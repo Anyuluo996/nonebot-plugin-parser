@@ -69,9 +69,7 @@ def _interleave_js(arr: list[str]) -> str:
     if not arr:
         return ""
     max_len = max(len(s) for s in arr)
-    out: list[str] = [
-        s[i] for i, s in itertools.product(range(max_len), arr) if i < len(s)
-    ]
+    out: list[str] = [s[i] for i, s in itertools.product(range(max_len), arr) if i < len(s)]
     return "".join(out)
 
 

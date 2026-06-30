@@ -123,7 +123,7 @@ class NGAParser(BaseParser):
         matched = re.search(r"commonui\.userInfo\.setAll\s*\(\s*(\{)", html, re.DOTALL)
         if not matched:
             return {}
-        blob = html[matched.start(1):]
+        blob = html[matched.start(1) :]
         # 匹配最外层平衡花括号
         depth = 0
         end = 0
@@ -187,9 +187,7 @@ class NGAParser(BaseParser):
                 return None
         return None
 
-    def _extract_floor_content(
-        self, content_tag: Tag
-    ) -> tuple[list[str], list[str]]:
+    def _extract_floor_content(self, content_tag: Tag) -> tuple[list[str], list[str]]:
         """提取单个楼层正文，返回 (文字行列表, 图片URL列表)。
 
         NGA 使用 BBCode：[img]./mon_xxx[/img] 为内嵌图片，[url]/[quote]/[s:表情]

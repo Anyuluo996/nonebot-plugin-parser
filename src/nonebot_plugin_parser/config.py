@@ -53,6 +53,23 @@ class Config(BaseModel):
 
     注: 这是兜底途径。推荐用 SUPERUSER 指令 ``dyttwid <值>`` 热更新（持久化到本地,
     优先级更高、无需重启，覆盖上一次的值），用 ``dyttwid查看`` 核对当前生效值。
+
+    .. deprecated::
+        仅带 ttwid 易被间歇性风控, 推荐改用 ``parser_douyin_cookie`` 配置完整登录态
+        Cookie (含 ``sessionid``/``sid_guard``/``odin_tt`` 等)。本字段仍保留向后兼容,
+        当 cookie 未配置时回退使用。
+    """
+    parser_douyin_cookie: str | None = None
+    """抖音 PC web 详情接口用的完整登录态 Cookie（图文/实况照片解析）。
+
+    比 ``parser_douyin_ttwid`` 更强的凭据: 整条浏览器 Cookie 字符串 (含
+    ``sessionid``/``sid_guard``/``odin_tt``/``ttwid`` 等), 可大幅降低被风控返回空
+    body 的概率。从浏览器 F12 → Network → www.douyin.com → Request Headers → Cookie
+    整行复制填入。
+
+    优先级高于 ``parser_douyin_ttwid``: 配置了 cookie 时忽略 ttwid。
+    推荐 SUPERUSER 指令 ``dycookie <整条 Cookie>`` 热更新（持久化, 无需重启）,
+    ``dycookie查看`` 核对当前生效值。
     """
     parser_need_upload: bool = False
     """是否需要上传音频文件"""
@@ -233,6 +250,17 @@ class Config(BaseModel):
         if self.parser_douyin_ttwid is None:
             return None
         return self.parser_douyin_ttwid.strip() or None
+
+    @property
+    def douyin_cookie(self) -> str | None:
+        """抖音 PC web 详情接口完整 Cookie，无首尾空白/换行
+
+        cookie 字符串含 ``;`` 分隔的多 key, 内部不应有换行 (浏览器复制的单行),
+        strip() 去除首尾空白即可。
+        """
+        if self.parser_douyin_cookie is None:
+            return None
+        return self.parser_douyin_cookie.strip() or None
 
     @property
     def need_upload(self) -> bool:

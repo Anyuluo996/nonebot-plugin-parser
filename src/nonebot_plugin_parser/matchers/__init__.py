@@ -326,6 +326,52 @@ async def _douyin_show_ttwid(matcher: Matcher):
     await matcher.finish("当前未配置抖音 ttwid（指令和 .env 均为空）")
 
 
+@on_command("dycookie", block=True, permission=SUPERUSER).handle()
+async def _douyin_set_cookie(matcher: Matcher, args: Message = CommandArg()):
+    """SUPERUSER: 写入抖音完整登录态 Cookie（持久化，热更新，覆盖上一次的值）。
+
+    用法: dycookie <整条 Cookie> —— 从浏览器 F12 → Network → www.douyin.com →
+    Request Headers → Cookie 整行复制（含 sessionid/sid_guard/odin_tt/ttwid 等）。
+    优先级高于 dyttwid / parser_douyin_ttwid，写入后立即生效。
+    完整 Cookie 比仅 ttwid 抗风控能力更强（含完整登录态字段）。
+    """
+    from ..parsers.douyin import ttwid as dy_ttwid
+
+    value = args.extract_plain_text().strip()
+    if not value:
+        await matcher.finish(
+            "用法: dycookie <整条 Cookie>\n"
+            "（从浏览器 F12 → Network → www.douyin.com → Cookie 整行复制）"
+        )
+    dy_ttwid.save_cookie(value)
+    await matcher.finish(f"✅ 已保存抖音 Cookie（{len(value)} 字符），图文/实况照片解析立即生效")
+
+
+@on_command("dycookie查看", block=True, permission=SUPERUSER).handle()
+async def _douyin_show_cookie(matcher: Matcher):
+    """SUPERUSER: 查看当前生效的抖音凭据（排查设置是否成功）。"""
+    from ..parsers.douyin import ttwid as dy_ttwid
+
+    # 优先显示完整 cookie（若已配置）
+    cookie_persisted = dy_ttwid.load_cookie()
+    cookie_effective = dy_ttwid.get_effective_cookie()
+    if cookie_persisted is not None:
+        # 脱敏：只显示前 40 字符，完整 cookie 太长且含敏感登录态
+        preview = cookie_effective[:40] + "..." if cookie_effective and len(cookie_effective) > 40 else cookie_effective
+        await matcher.finish(f"当前生效抖音 Cookie（来源: 指令持久化）:\n{preview}")
+    if cookie_effective is not None:
+        preview = cookie_effective[:40] + "..." if len(cookie_effective) > 40 else cookie_effective
+        await matcher.finish(f"当前生效抖音 Cookie（来源: .env parser_douyin_cookie）:\n{preview}")
+
+    # 无 cookie，回退显示 ttwid 状态
+    ttwid_effective = dy_ttwid.get_effective_ttwid()
+    if ttwid_effective is not None:
+        ttwid_persisted = dy_ttwid.load_ttwid()
+        source = "指令持久化" if ttwid_persisted is not None else ".env parser_douyin_ttwid"
+        await matcher.finish(f"未配置完整 Cookie，当前回退使用 ttwid（来源: {source}）:\n{ttwid_effective}")
+    await matcher.finish("当前未配置抖音凭据（cookie/ttwid 指令和 .env 均为空）")
+
+
 # ==================== Telegram 解析授权管理 ====================
 # Telegram 解析需消耗本机 tdl 会话，仅 SUPERUSER 可用，
 # SUPERUSER 可通过以下命令授权/取消授权其他用户

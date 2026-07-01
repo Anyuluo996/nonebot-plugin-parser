@@ -340,8 +340,7 @@ async def _douyin_set_cookie(matcher: Matcher, args: Message = CommandArg()):
     value = args.extract_plain_text().strip()
     if not value:
         await matcher.finish(
-            "用法: dycookie <整条 Cookie>\n"
-            "（从浏览器 F12 → Network → www.douyin.com → Cookie 整行复制）"
+            "用法: dycookie <整条 Cookie>\n（从浏览器 F12 → Network → www.douyin.com → Cookie 整行复制）"
         )
     dy_ttwid.save_cookie(value)
     await matcher.finish(f"✅ 已保存抖音 Cookie（{len(value)} 字符），图文/实况照片解析立即生效")

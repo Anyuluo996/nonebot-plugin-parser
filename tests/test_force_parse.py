@@ -18,8 +18,8 @@ def test_config_parse_prefix_requires_explicit_setting():
 async def test_keyword_regex_rule_does_not_use_nickname_as_default_prefix(monkeypatch):
     from nonebot_plugin_parser.config import pconfig
     from nonebot_plugin_parser.matchers.rule import (
-        PSR_FORCE_PARSE_KEY,
         PSR_SEARCHED_KEY,
+        PSR_FORCE_PARSE_KEY,
         KeyPatternList,
         KeywordRegexRule,
     )
@@ -47,8 +47,8 @@ async def test_keyword_regex_rule_does_not_use_nickname_as_default_prefix(monkey
 async def test_keyword_regex_rule_force_parse_with_explicit_prefix(monkeypatch, text: str):
     from nonebot_plugin_parser.config import pconfig
     from nonebot_plugin_parser.matchers.rule import (
-        PSR_FORCE_PARSE_KEY,
         PSR_SEARCHED_KEY,
+        PSR_FORCE_PARSE_KEY,
         KeyPatternList,
         KeywordRegexRule,
     )
@@ -140,8 +140,8 @@ async def test_force_prefix_reply_extracts_url_from_quoted_message(monkeypatch):
 
     from nonebot_plugin_parser.config import pconfig
     from nonebot_plugin_parser.matchers.rule import (
-        PSR_FORCE_PARSE_KEY,
         PSR_SEARCHED_KEY,
+        PSR_FORCE_PARSE_KEY,
         KeyPatternList,
         KeywordRegexRule,
     )
@@ -197,7 +197,6 @@ async def test_force_prefix_no_reply_does_not_match(monkeypatch):
 
     from nonebot_plugin_parser.config import pconfig
     from nonebot_plugin_parser.matchers.rule import (
-        PSR_FORCE_PARSE_KEY,
         KeyPatternList,
         KeywordRegexRule,
     )
@@ -217,9 +216,9 @@ async def test_force_prefix_no_reply_does_not_match(monkeypatch):
 
 
 def test_is_enabled_all_disabled_but_force_prefix_still_allowed(monkeypatch):
-    from nonebot_plugin_parser.constants import PlatformEnum
     from nonebot_plugin_parser.config import pconfig
-    from nonebot_plugin_parser.matchers.filter import _DISABLED_PLATFORMS_DICT, get_group_key, is_enabled
+    from nonebot_plugin_parser.constants import PlatformEnum
+    from nonebot_plugin_parser.matchers.filter import _DISABLED_PLATFORMS_DICT, is_enabled, get_group_key
 
     class MockScene:
         is_private = False
@@ -249,12 +248,17 @@ def test_is_enabled_all_disabled_but_force_prefix_still_allowed(monkeypatch):
 async def test_force_prefix_still_reaches_parser_handler_when_all_platforms_disabled(monkeypatch):
     from nonebot.matcher import current_event
 
-    from nonebot_plugin_parser.constants import PlatformEnum
     from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.parsers import Platform, ParseResult
     from nonebot_plugin_parser.matchers import parser_handler
-    from nonebot_plugin_parser.matchers.filter import _DISABLED_PLATFORMS_DICT, get_group_key, is_enabled
-    from nonebot_plugin_parser.matchers.rule import PSR_FORCE_PARSE_KEY, PSR_SEARCHED_KEY, KeyPatternList, KeywordRegexRule
-    from nonebot_plugin_parser.parsers import ParseResult, Platform
+    from nonebot_plugin_parser.constants import PlatformEnum
+    from nonebot_plugin_parser.matchers.rule import (
+        PSR_SEARCHED_KEY,
+        PSR_FORCE_PARSE_KEY,
+        KeyPatternList,
+        KeywordRegexRule,
+    )
+    from nonebot_plugin_parser.matchers.filter import _DISABLED_PLATFORMS_DICT, is_enabled, get_group_key
 
     class MockScene:
         is_private = False

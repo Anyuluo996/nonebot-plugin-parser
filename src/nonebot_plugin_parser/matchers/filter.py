@@ -134,11 +134,7 @@ def _starts_with_force_prefix(message: UniMsg | None) -> bool:
     text = message.extract_plain_text().strip()
     # 纯前缀 (如 "par") 用于引用回复场景: 回复含 URL 的消息 + 只输入前缀,
     # 从被引用消息提取 URL 强制解析。prefix+ / prefix<空格> 为直接带 URL 的形式。
-    return (
-        text == parse_prefix
-        or text.startswith(f"{parse_prefix}+")
-        or text.startswith(f"{parse_prefix} ")
-    )
+    return text == parse_prefix or text.startswith(f"{parse_prefix}+") or text.startswith(f"{parse_prefix} ")
 
 
 def is_enabled(message: UniMsg, session: Session = UniSession()) -> bool:

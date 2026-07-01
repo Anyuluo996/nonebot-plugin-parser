@@ -149,21 +149,42 @@ class KeywordRegexRule:
         # 检查是否使用了解析前缀强制触发
         parse_prefix = pconfig.parse_prefix
 
+        # 标记是否触发了强制解析 (前缀命中)
+        force_parse = False
+
         # 如果没有设置前缀，跳过前缀检查
         if not parse_prefix:
             state[PSR_FORCE_PARSE_KEY] = False
         else:
-            # 检查前缀模式: prefix+ 或 prefix（空格）
-            if text.startswith(f"{parse_prefix}+") or text.startswith(f"{parse_prefix} "):
-                # 去除前缀
+            # 检查前缀模式: prefix+ / prefix（空格）/ 纯 prefix（引用回复场景）
+            # 纯 prefix (如 "par") 配合引用回复时, 从被引用消息提取 URL
+            if text == parse_prefix or text.startswith(f"{parse_prefix}+") or text.startswith(f"{parse_prefix} "):
+                force_parse = True
                 if text.startswith(f"{parse_prefix}+"):
                     text = text[len(f"{parse_prefix}+") :].lstrip()
-                else:
+                elif text.startswith(f"{parse_prefix} "):
                     text = text[len(f"{parse_prefix} ") :].lstrip()
-                logger.debug(f"检测到前缀 '{parse_prefix}' 强制解析，去除后: '{text[:50]}...'")
-                state[PSR_FORCE_PARSE_KEY] = True
-            else:
-                state[PSR_FORCE_PARSE_KEY] = False
+                else:
+                    # 纯前缀: text == parse_prefix, 清空以触发引用回退
+                    text = ""
+                logger.debug(f"检测到前缀 '{parse_prefix}' 强制解析，去除后: '{text[:50]}'")
+
+        state[PSR_FORCE_PARSE_KEY] = force_parse
+
+        # 引用回复场景: 用户只输入前缀 (无 URL), 从被引用消息提取 URL。
+        # OneBot v11 adapter 在 matcher 运行前已用 get_msg 填充 event.reply.message,
+        # 故可直接读 event.reply.message.extract_plain_text() 拿到被引用消息的文本。
+        if force_parse and not text:
+            from nonebot.matcher import current_event
+
+            event = current_event.get(None)
+            reply = getattr(event, "reply", None) if event else None
+            if reply and getattr(reply, "message", None):
+                text = reply.message.extract_plain_text().strip()
+                logger.debug(f"前缀强制解析 + 引用回复, 从被引用消息提取: '{text[:50]}'")
+
+        if not text:
+            return False
 
         for keyword, pattern in self.key_pattern_list:
             if keyword not in text:

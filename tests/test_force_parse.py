@@ -100,6 +100,122 @@ def test_parser_handler_state_param_is_injected_by_nonebot_di():
     )
 
 
+# === 引用回复强制解析测试 ===
+
+
+class _FakeReplyMessage:
+    """模拟 OneBot v11 event.reply.message (有 extract_plain_text)。"""
+
+    def __init__(self, text: str):
+        self._text = text
+
+    def extract_plain_text(self) -> str:
+        return self._text
+
+
+class _FakeReply:
+    """模拟 OneBot v11 event.reply。"""
+
+    def __init__(self, text: str):
+        self.message = _FakeReplyMessage(text)
+        self.message_id = 12345
+
+
+class _FakeEvent:
+    """模拟 OneBot v11 event (有 reply 属性)。"""
+
+    def __init__(self, reply_text: str | None):
+        self.reply = _FakeReply(reply_text) if reply_text is not None else None
+
+
+@pytest.mark.asyncio
+async def test_force_prefix_reply_extracts_url_from_quoted_message(monkeypatch):
+    """回归: 回复含 URL 的消息 + 只输入前缀 'par', 从被引用消息提取 URL 强制解析。
+
+    OneBot v11 adapter 在 matcher 运行前已把 reply 段从 event.message 删除并填充
+    event.reply.message, 故用户只输入 'par' 时 event.message 无 URL, 需从
+    event.reply.message.extract_plain_text() 提取。
+    """
+    from nonebot.matcher import current_event
+
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.matchers.rule import (
+        PSR_FORCE_PARSE_KEY,
+        PSR_SEARCHED_KEY,
+        KeyPatternList,
+        KeywordRegexRule,
+    )
+
+    monkeypatch.setattr(pconfig, "parser_force_prefix", "par")
+    rule = KeywordRegexRule(KeyPatternList(("bilibili", r"bilibili\.com/video/([A-Za-z0-9]+)")))
+
+    # 用户只输入 'par', 被引用消息含 bilibili URL
+    msg = _text_message("par")
+    state = {}
+    token = current_event.set(_FakeEvent("https://www.bilibili.com/video/BV1xx411c7mD"))
+    try:
+        matched = await rule(msg, state)
+    finally:
+        current_event.reset(token)
+
+    assert matched is True, "回复含 URL 的消息 + 前缀应匹配"
+    assert state[PSR_FORCE_PARSE_KEY] is True
+    assert state[PSR_SEARCHED_KEY].text == "https://www.bilibili.com/video/BV1xx411c7mD"
+
+
+@pytest.mark.asyncio
+async def test_force_prefix_reply_no_url_does_not_match(monkeypatch):
+    """回归: 回复无 URL 的消息 + 只输入前缀, 不应误匹配。"""
+    from nonebot.matcher import current_event
+
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.matchers.rule import (
+        PSR_FORCE_PARSE_KEY,
+        KeyPatternList,
+        KeywordRegexRule,
+    )
+
+    monkeypatch.setattr(pconfig, "parser_force_prefix", "par")
+    rule = KeywordRegexRule(KeyPatternList(("bilibili", r"bilibili\.com/video/([A-Za-z0-9]+)")))
+
+    msg = _text_message("par")
+    state = {}
+    token = current_event.set(_FakeEvent("你好,这是一条普通消息"))
+    try:
+        matched = await rule(msg, state)
+    finally:
+        current_event.reset(token)
+
+    assert matched is False, "被引用消息无 URL 不应匹配"
+    assert state[PSR_FORCE_PARSE_KEY] is True  # 前缀仍被识别
+
+
+@pytest.mark.asyncio
+async def test_force_prefix_no_reply_does_not_match(monkeypatch):
+    """回归: 只输入前缀但无引用回复, 不应匹配 (没有 URL 来源)。"""
+    from nonebot.matcher import current_event
+
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.matchers.rule import (
+        PSR_FORCE_PARSE_KEY,
+        KeyPatternList,
+        KeywordRegexRule,
+    )
+
+    monkeypatch.setattr(pconfig, "parser_force_prefix", "par")
+    rule = KeywordRegexRule(KeyPatternList(("bilibili", r"bilibili\.com/video/([A-Za-z0-9]+)")))
+
+    msg = _text_message("par")
+    state = {}
+    token = current_event.set(_FakeEvent(None))
+    try:
+        matched = await rule(msg, state)
+    finally:
+        current_event.reset(token)
+
+    assert matched is False, "无引用回复时纯前缀不应匹配"
+
+
 def test_is_enabled_all_disabled_but_force_prefix_still_allowed(monkeypatch):
     from nonebot_plugin_parser.constants import PlatformEnum
     from nonebot_plugin_parser.config import pconfig

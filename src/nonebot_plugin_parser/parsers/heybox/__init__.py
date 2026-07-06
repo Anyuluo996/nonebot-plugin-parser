@@ -26,7 +26,14 @@ async def _fetch_token_id() -> str | None:
     except ImportError:
         return None
     try:
-        async with get_new_page(viewport={"width": 1280, "height": 800}) as page:
+        # nonebot-plugin-htmlrender 0.7.x 的 get_new_page 返回类型标注为 object，
+        # 实际是 playwright Page，cast 收窄避免 basedpyright 误报。
+        from typing import cast
+
+        from playwright.async_api import Page
+
+        async with get_new_page(viewport={"width": 1280, "height": 800}) as raw_page:
+            page = cast(Page, raw_page)
             await page.goto("https://www.xiaoheihe.cn/", wait_until="networkidle", timeout=20_000)
             await page.wait_for_timeout(1500)
             token = await page.evaluate("window.SMSdk && window.SMSdk.getDeviceId ? window.SMSdk.getDeviceId() : null")
@@ -47,7 +54,13 @@ async def _browser_fetch_link(link_id: str) -> dict | None:
         return None
     try:
         url = build_url(link_id)
-        async with get_new_page(viewport={"width": 1280, "height": 800}) as page:
+        # 同 _fetch_token_id，cast 绕过 htmlrender 0.7.x 的 object 返回类型。
+        from typing import cast
+
+        from playwright.async_api import Page
+
+        async with get_new_page(viewport={"width": 1280, "height": 800}) as raw_page:
+            page = cast(Page, raw_page)
             await page.goto("https://www.xiaoheihe.cn/", wait_until="networkidle", timeout=20_000)
             await page.wait_for_timeout(1500)
             data = await page.evaluate(

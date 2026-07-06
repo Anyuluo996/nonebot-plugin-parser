@@ -10,7 +10,8 @@ True，而底层 asyncio 传输（`WriteUnixTransport`）已经关闭，下一�
     <WriteUnixTransport closed=True ...>; the handler is closed
 
 本模块提供 `with_browser_retry`，在捕获此类"传输已关闭"错误时强制
-`shutdown_browser()` + `init_browser()` 重启浏览器，然后重试一次。
+`shutdown_render()` + `startup_render()` 重启浏览器（nonebot-plugin-htmlrender
+0.7.x API；0.6.x 回退到 `shutdown_browser()` + `init_browser()`），然后重试一次。
 """
 
 from typing import TypeVar
@@ -41,20 +42,35 @@ def _is_browser_dead_error(exc: BaseException) -> bool:
 
 
 async def _restart_global_browser() -> None:
-    """强制重启 nonebot_plugin_htmlrender 的全局浏览器实例。"""
+    """强制重启 nonebot_plugin_htmlrender 的全局浏览器实例。
+
+    nonebot-plugin-htmlrender 0.7.x 用 startup_render/shutdown_render 取代了
+    旧的 init_browser/shutdown_browser；为兼容两个版本，这里按可用性动态选择。
+    """
     try:
-        from nonebot_plugin_htmlrender import init_browser, shutdown_browser
+        # 0.7.x: startup_render / shutdown_render
+        from nonebot_plugin_htmlrender import startup_render, shutdown_render  # type: ignore
+
+        shutdown = shutdown_render
+        startup = startup_render
     except ImportError:
-        logger.error("nonebot_plugin_htmlrender 未安装，无法重启浏览器")
-        return
+        try:
+            # 0.6.x 回退: init_browser / shutdown_browser
+            from nonebot_plugin_htmlrender import init_browser, shutdown_browser  # type: ignore
+
+            shutdown = shutdown_browser  # type: ignore[assignment]
+            startup = init_browser  # type: ignore[assignment]
+        except ImportError:
+            logger.error("nonebot_plugin_htmlrender 未安装，无法重启浏览器")
+            return
 
     logger.warning("检测到浏览器传输已关闭，正在强制重启 Playwright…")
     try:
-        await shutdown_browser()
+        await shutdown()
     except Exception as e:
-        logger.debug(f"shutdown_browser 抑制异常: {e!r}")
+        logger.debug(f"shutdown 抑制异常: {e!r}")
     try:
-        await init_browser()
+        await startup()
     except Exception:
         logger.exception("重启浏览器失败")
         raise

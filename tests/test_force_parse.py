@@ -29,7 +29,7 @@ async def test_keyword_regex_rule_does_not_use_nickname_as_default_prefix(monkey
     rule = KeywordRegexRule(KeyPatternList(("bilibili", r"bilibili\.com/video/([A-Za-z0-9]+)")))
     state = {}
 
-    matched = await rule(_text_message(text), state)
+    matched = await rule(_text_message(text), _FakeEvent(None), state)
 
     assert matched is True
     assert state[PSR_FORCE_PARSE_KEY] is False
@@ -57,7 +57,7 @@ async def test_keyword_regex_rule_force_parse_with_explicit_prefix(monkeypatch, 
     rule = KeywordRegexRule(KeyPatternList(("bilibili", r"bilibili\.com/video/([A-Za-z0-9]+)")))
     state = {}
 
-    matched = await rule(_text_message(text), state)
+    matched = await rule(_text_message(text), _FakeEvent(None), state)
 
     assert matched is True
     assert state[PSR_FORCE_PARSE_KEY] is True
@@ -122,7 +122,11 @@ class _FakeReply:
 
 
 class _FakeEvent:
-    """模拟 OneBot v11 event (有 reply 属性)。"""
+    """模拟 OneBot v11 event (有 reply 属性)。
+
+    通过 DI 注入到 rule.__call__ 的 event 参数 (而非 current_event ContextVar),
+    因为 NoneBot 规则在 ensure_context 之前执行, 此时 current_event 尚未设置。
+    """
 
     def __init__(self, reply_text: str | None):
         self.reply = _FakeReply(reply_text) if reply_text is not None else None
@@ -132,12 +136,13 @@ class _FakeEvent:
 async def test_force_prefix_reply_extracts_url_from_quoted_message(monkeypatch):
     """回归: 回复含 URL 的消息 + 只输入前缀 'par', 从被引用消息提取 URL 强制解析。
 
-    OneBot v11 adapter 在 matcher 运行前已把 reply 段从 event.message 删除并填充
-    event.reply.message, 故用户只输入 'par' 时 event.message 无 URL, 需从
-    event.reply.message.extract_plain_text() 提取。
-    """
-    from nonebot.matcher import current_event
+    OneBot v11 adapter 在分发前已把 reply 段从 event.message 删除并填充
+    event.reply.message (含被引用消息完整内容), 故用户只输入 'par' 时 event.message
+    无 URL, 需从 event.reply.message.extract_plain_text() 提取。
 
+    event 由 NoneBot DI 注入到 rule.__call__ 的 event 参数 (非 current_event,
+    因规则在 ensure_context 之前执行, current_event 此时尚未设置)。
+    """
     from nonebot_plugin_parser.config import pconfig
     from nonebot_plugin_parser.matchers.rule import (
         PSR_SEARCHED_KEY,
@@ -152,11 +157,8 @@ async def test_force_prefix_reply_extracts_url_from_quoted_message(monkeypatch):
     # 用户只输入 'par', 被引用消息含 bilibili URL
     msg = _text_message("par")
     state = {}
-    token = current_event.set(_FakeEvent("https://www.bilibili.com/video/BV1xx411c7mD"))
-    try:
-        matched = await rule(msg, state)
-    finally:
-        current_event.reset(token)
+    event = _FakeEvent("https://www.bilibili.com/video/BV1xx411c7mD")
+    matched = await rule(msg, event, state)
 
     assert matched is True, "回复含 URL 的消息 + 前缀应匹配"
     assert state[PSR_FORCE_PARSE_KEY] is True
@@ -165,9 +167,7 @@ async def test_force_prefix_reply_extracts_url_from_quoted_message(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_force_prefix_reply_no_url_does_not_match(monkeypatch):
-    """回归: 回复无 URL 的消息 + 只输入前缀, 不应误匹配。"""
-    from nonebot.matcher import current_event
-
+    """回归: 回复无URL 的消息 + 只输入前缀, 不应误匹配。"""
     from nonebot_plugin_parser.config import pconfig
     from nonebot_plugin_parser.matchers.rule import (
         PSR_FORCE_PARSE_KEY,
@@ -180,11 +180,8 @@ async def test_force_prefix_reply_no_url_does_not_match(monkeypatch):
 
     msg = _text_message("par")
     state = {}
-    token = current_event.set(_FakeEvent("你好,这是一条普通消息"))
-    try:
-        matched = await rule(msg, state)
-    finally:
-        current_event.reset(token)
+    event = _FakeEvent("你好,这是一条普通消息")
+    matched = await rule(msg, event, state)
 
     assert matched is False, "被引用消息无 URL 不应匹配"
     assert state[PSR_FORCE_PARSE_KEY] is True  # 前缀仍被识别
@@ -193,8 +190,6 @@ async def test_force_prefix_reply_no_url_does_not_match(monkeypatch):
 @pytest.mark.asyncio
 async def test_force_prefix_no_reply_does_not_match(monkeypatch):
     """回归: 只输入前缀但无引用回复, 不应匹配 (没有 URL 来源)。"""
-    from nonebot.matcher import current_event
-
     from nonebot_plugin_parser.config import pconfig
     from nonebot_plugin_parser.matchers.rule import (
         KeyPatternList,
@@ -206,13 +201,49 @@ async def test_force_prefix_no_reply_does_not_match(monkeypatch):
 
     msg = _text_message("par")
     state = {}
-    token = current_event.set(_FakeEvent(None))
-    try:
-        matched = await rule(msg, state)
-    finally:
-        current_event.reset(token)
+    event = _FakeEvent(None)
+    matched = await rule(msg, event, state)
 
     assert matched is False, "无引用回复时纯前缀不应匹配"
+
+
+@pytest.mark.asyncio
+async def test_force_prefix_reply_works_without_current_event_set(monkeypatch):
+    """回归: 规则执行期间 current_event 未设置时引用回复仍可工作。
+
+    NoneBot 规则在 _check_matcher → check_rule 中执行, 早于 _run_matcher →
+    ensure_context 设置 current_event。故 rule.__call__ 不能依赖 current_event
+    ContextVar (会 LookupError), 必须用 NoneBot DI 注入的 event 参数。
+    本测试显式不设置 current_event, 断言修复后路径仍能提取被引用 URL。
+    """
+    from nonebot.matcher import current_event
+
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.matchers.rule import (
+        PSR_SEARCHED_KEY,
+        PSR_FORCE_PARSE_KEY,
+        KeyPatternList,
+        KeywordRegexRule,
+    )
+
+    # 确认测试起点 current_event 未被设置 (模拟规则阶段真实状态)
+    try:
+        current_event.get()
+        raise AssertionError("测试前置失败: current_event 不应已设置")
+    except LookupError:
+        pass
+
+    monkeypatch.setattr(pconfig, "parser_force_prefix", "par")
+    rule = KeywordRegexRule(KeyPatternList(("bilibili", r"bilibili\.com/video/([A-Za-z0-9]+)")))
+
+    msg = _text_message("par")
+    state = {}
+    event = _FakeEvent("https://www.bilibili.com/video/BV1xx411c7mD")
+    matched = await rule(msg, event, state)
+
+    assert matched is True, "current_event 未设置时, DI 注入的 event 仍应能提取被引用 URL"
+    assert state[PSR_FORCE_PARSE_KEY] is True
+    assert state[PSR_SEARCHED_KEY].text == "https://www.bilibili.com/video/BV1xx411c7mD"
 
 
 def test_is_enabled_all_disabled_but_force_prefix_still_allowed(monkeypatch):
@@ -317,7 +348,7 @@ async def test_force_prefix_still_reaches_parser_handler_when_all_platforms_disa
     token = current_event.set(object())
     try:
         assert is_enabled(message, session) is True
-        assert await rule(message, state) is True
+        assert await rule(message, _FakeEvent(None), state) is True
         assert state[PSR_FORCE_PARSE_KEY] is True
         await parser_handler(state[PSR_SEARCHED_KEY], session, state)
     finally:

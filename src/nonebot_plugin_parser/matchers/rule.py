@@ -8,6 +8,7 @@ from nonebot.rule import Rule
 from nonebot.params import Depends
 from nonebot.typing import T_State
 from nonebot.matcher import Matcher
+from nonebot.adapters import Event
 from nonebot.plugin.on import get_matcher_source
 from nonebot.permission import Permission
 from nonebot_plugin_uninfo import Session, UniSession
@@ -141,7 +142,7 @@ class KeywordRegexRule:
     def __hash__(self) -> int:
         return hash(frozenset(self.key_pattern_list))
 
-    async def __call__(self, message: UniMsg, state: T_State) -> bool:
+    async def __call__(self, message: UniMsg, event: Event, state: T_State) -> bool:
         text = _extract_text(message)
         if not text:
             return False
@@ -172,13 +173,11 @@ class KeywordRegexRule:
         state[PSR_FORCE_PARSE_KEY] = force_parse
 
         # 引用回复场景: 用户只输入前缀 (无 URL), 从被引用消息提取 URL。
-        # OneBot v11 adapter 在 matcher 运行前已用 get_msg 填充 event.reply.message,
-        # 故可直接读 event.reply.message.extract_plain_text() 拿到被引用消息的文本。
+        # 规则在 Matcher 运行 (ensure_context) 之前执行, 此时 current_event 尚未设置,
+        # 故必须通过依赖注入拿 event。OneBot v11 adapter 在分发前已用 get_msg 填充
+        # event.reply.message (含被引用消息完整内容), 故可直接提取其纯文本。
         if force_parse and not text:
-            from nonebot.matcher import current_event
-
-            event = current_event.get(None)
-            reply = getattr(event, "reply", None) if event else None
+            reply = getattr(event, "reply", None)
             if reply and getattr(reply, "message", None):
                 text = reply.message.extract_plain_text().strip()
                 logger.debug(f"前缀强制解析 + 引用回复, 从被引用消息提取: '{text[:50]}'")

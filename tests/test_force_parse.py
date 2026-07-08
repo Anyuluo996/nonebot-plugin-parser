@@ -103,21 +103,41 @@ def test_parser_handler_state_param_is_injected_by_nonebot_di():
 # === 引用回复强制解析测试 ===
 
 
-class _FakeReplyMessage:
-    """模拟 OneBot v11 event.reply.message (有 extract_plain_text)。"""
+class _FakeSegment:
+    """模拟 OneBot v11 MessageSegment (有 .type / .data 属性, 可迭代)。"""
 
-    def __init__(self, text: str):
-        self._text = text
+    def __init__(self, type: str, data: dict):
+        self.type = type
+        self.data = data
+
+
+class _FakeReplyMessage:
+    """模拟 OneBot v11 event.reply.message。
+
+    支持两种被引用消息形态, 与真实 OneBot v11 Message 行为对齐:
+    - 纯文本: extract_plain_text 返回该文本, 遍历无 json 段
+    - 卡片: 传入 json 卡片原始 data 字符串, extract_plain_text 返回空
+      (json 段 is_text() 为 False), 遍历可拿到 .type=='json' 的 _FakeSegment
+    """
+
+    def __init__(self, text: str | None = None, json_data: str | None = None):
+        self._text = text or ""
+        self._segments: list[_FakeSegment] = []
+        if json_data is not None:
+            self._segments.append(_FakeSegment("json", {"data": json_data}))
 
     def extract_plain_text(self) -> str:
         return self._text
+
+    def __iter__(self):
+        return iter(self._segments)
 
 
 class _FakeReply:
     """模拟 OneBot v11 event.reply。"""
 
-    def __init__(self, text: str):
-        self.message = _FakeReplyMessage(text)
+    def __init__(self, text: str | None = None, json_data: str | None = None):
+        self.message = _FakeReplyMessage(text=text, json_data=json_data)
         self.message_id = 12345
 
 
@@ -128,8 +148,11 @@ class _FakeEvent:
     因为 NoneBot 规则在 ensure_context 之前执行, 此时 current_event 尚未设置。
     """
 
-    def __init__(self, reply_text: str | None):
-        self.reply = _FakeReply(reply_text) if reply_text is not None else None
+    def __init__(self, reply_text: str | None = None, reply_json: str | None = None):
+        if reply_text is None and reply_json is None:
+            self.reply = None
+        else:
+            self.reply = _FakeReply(text=reply_text, json_data=reply_json)
 
 
 @pytest.mark.asyncio
@@ -205,6 +228,78 @@ async def test_force_prefix_no_reply_does_not_match(monkeypatch):
     matched = await rule(msg, event, state)
 
     assert matched is False, "无引用回复时纯前缀不应匹配"
+
+
+@pytest.mark.asyncio
+async def test_force_prefix_reply_json_card_extracts_url(monkeypatch):
+    """回归: 回复一条 JSON 卡片消息 (如 B站分享卡) + 只输前缀, 应从卡片提取 URL。
+
+    extract_plain_text() 对 json 段返回空 (is_text() 为 False), 故纯文本提取路径
+    会丢弃卡片 URL。需从 reply.message 的 json 段构造 Hyper, 复用 _extract_url
+    解析 meta.detail_1.qqdocurl / meta.news.jumpUrl / meta.music.jumpUrl。
+
+    detail_1 卡片 (qqdocurl) 形态 - 常见于 QQ 转发的 B站/抖音分享卡。
+    """
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.matchers.rule import (
+        PSR_SEARCHED_KEY,
+        PSR_FORCE_PARSE_KEY,
+        KeyPatternList,
+        KeywordRegexRule,
+    )
+
+    monkeypatch.setattr(pconfig, "parser_force_prefix", "par")
+    rule = KeywordRegexRule(KeyPatternList(("bilibili", r"bilibili\.com/video/([A-Za-z0-9]+)")))
+
+    # detail_1 卡片: URL 在 meta.detail_1.qqdocurl
+    card = (
+        '{"app":"com.tencent.structmsg","meta":{"detail_1":{"qqdocurl":"https://www.bilibili.com/video/BV1xx411c7mD"}}}'
+    )
+    msg = _text_message("par")
+    state = {}
+    event = _FakeEvent(reply_json=card)
+    matched = await rule(msg, event, state)
+
+    assert matched is True, "回复 JSON 卡片 (detail_1.qqdocurl) + 前缀应匹配"
+    assert state[PSR_FORCE_PARSE_KEY] is True
+    assert state[PSR_SEARCHED_KEY].text == "https://www.bilibili.com/video/BV1xx411c7mD"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("card", "expected_url"),
+    [
+        # news 卡片: URL 在 meta.news.jumpUrl (常见于腾讯新闻类分享)
+        (
+            '{"app":"com.tencent.news","meta":{"news":{"jumpUrl":"https://www.bilibili.com/video/BV1xx411c7mD"}}}',
+            "https://www.bilibili.com/video/BV1xx411c7mD",
+        ),
+        # music 卡片: URL 在 meta.music.jumpUrl (音乐分享)
+        (
+            '{"app":"com.tencent.music","meta":{"music":{"jumpUrl":"https://www.bilibili.com/video/BV1xx411c7mD"}}}',
+            "https://www.bilibili.com/video/BV1xx411c7mD",
+        ),
+    ],
+)
+async def test_force_prefix_reply_json_card_variants(monkeypatch, card: str, expected_url: str):
+    """回归: news / music 两种卡片形态也应从 jumpUrl 提取 URL 强制解析。"""
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.matchers.rule import (
+        PSR_SEARCHED_KEY,
+        KeyPatternList,
+        KeywordRegexRule,
+    )
+
+    monkeypatch.setattr(pconfig, "parser_force_prefix", "par")
+    rule = KeywordRegexRule(KeyPatternList(("bilibili", r"bilibili\.com/video/([A-Za-z0-9]+)")))
+
+    msg = _text_message("par")
+    state = {}
+    event = _FakeEvent(reply_json=card)
+    matched = await rule(msg, event, state)
+
+    assert matched is True, f"卡片形态应匹配: {card[:60]}"
+    assert state[PSR_SEARCHED_KEY].text == expected_url
 
 
 @pytest.mark.asyncio

@@ -113,6 +113,36 @@ def _extract_text(message: UniMsg) -> str | None:
     return None
 
 
+def _extract_reply_text(reply: object) -> str:
+    """从被引用消息提取文本/URL, 优先解析 JSON 卡片。
+
+    OneBot v11 的 extract_plain_text() 对 json 卡片段返回空 (is_text() 为 False),
+    会丢弃卡片里的 jumpUrl/qqdocurl。而 reply 场景下被引用消息常见为分享卡片
+    (如 B站/抖音/小红书转发卡), 故需优先扫 json 段, 用 _extract_url 解析出 URL;
+    无卡片时回退到 extract_plain_text()。
+
+    reply.message 可能是任意 adapter 的 Message 对象, 这里只依赖最小鸭子类型:
+    可迭代出 (type, data_dict) 段 + 有 extract_plain_text。非 OneBot v11 的
+    adapter 若无 json 段则自然回退纯文本路径。
+    """
+    message = getattr(reply, "message", None)
+    if message is None:
+        return ""
+    # 优先扫 json 段提取卡片 URL (extract_plain_text 会跳过这些段)
+    for seg in message:
+        seg_type = getattr(seg, "type", None)
+        if seg_type != "json":
+            continue
+        data = getattr(seg, "data", None) or {}
+        raw = data.get("data") or data.get("raw")
+        if raw:
+            hyper = Hyper("json", raw=raw)
+            if url := _extract_url(hyper):
+                return url
+    # 无卡片, 回退纯文本
+    return message.extract_plain_text().strip()
+
+
 class KeyPatternList(list[tuple[str, re.Pattern[str]]]):
     def __init__(self, *args: tuple[str, str | re.Pattern[str]]):
         super().__init__()
@@ -175,12 +205,15 @@ class KeywordRegexRule:
         # 引用回复场景: 用户只输入前缀 (无 URL), 从被引用消息提取 URL。
         # 规则在 Matcher 运行 (ensure_context) 之前执行, 此时 current_event 尚未设置,
         # 故必须通过依赖注入拿 event。OneBot v11 adapter 在分发前已用 get_msg 填充
-        # event.reply.message (含被引用消息完整内容), 故可直接提取其纯文本。
+        # event.reply.message (含被引用消息完整内容), 故可直接提取。
+        # 被引用消息可能是纯文本含 URL, 也可能是 JSON 卡片 (分享卡), 后者需解析
+        # meta.detail_1.qqdocurl / news.jumpUrl / music.jumpUrl (见 _extract_reply_text)。
         if force_parse and not text:
             reply = getattr(event, "reply", None)
-            if reply and getattr(reply, "message", None):
-                text = reply.message.extract_plain_text().strip()
-                logger.debug(f"前缀强制解析 + 引用回复, 从被引用消息提取: '{text[:50]}'")
+            if reply:
+                text = _extract_reply_text(reply)
+                if text:
+                    logger.debug(f"前缀强制解析 + 引用回复, 从被引用消息提取: '{text[:50]}'")
 
         if not text:
             return False

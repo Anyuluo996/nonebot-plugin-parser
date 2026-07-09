@@ -71,6 +71,17 @@ class QQMusicParser(BaseParser):
         return await self._parse_by_song_id(song_id, share_url=f"https://y.qq.com/n/ryqq/songDetail/{song_id}")
 
     @handle(
+        # QQ音乐分享卡片的 playsong.html 格式 (i.y.qq.com 域, songmid 在查询参数)。
+        # 用 playsong.html 作关键词避免与长链 handler 的 "y.qq.com" 冲突
+        # (同 keyword 下后注册的 handler 会覆盖前者, 导致 songDetail 长链被误路由)。
+        "playsong.html",
+        r"playsong\.html.*?[?&]songmid=(?P<song_id>[a-zA-Z0-9_]+)",
+    )
+    async def _parse_qqmusic_card(self, searched: re.Match[str]):
+        song_id = searched.group("song_id")
+        return await self._parse_by_song_id(song_id, share_url=f"https://y.qq.com/n/ryqq/songDetail/{song_id}")
+
+    @handle(
         # 用更具体的 keyword 避免与长链 handler 的 "y.qq.com" 冲突
         # （同 keyword 下后注册的 handler 会覆盖前者，导致长链被误路由到短链分支）
         "fcgi-bin/u",

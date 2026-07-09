@@ -8,6 +8,7 @@ from nonebot.rule import Rule
 from nonebot.params import Depends
 from nonebot.typing import T_State
 from nonebot.matcher import Matcher
+from nonebot.adapters import Event
 from nonebot.plugin.on import get_matcher_source
 from nonebot.permission import Permission
 from nonebot_plugin_uninfo import Session, UniSession
@@ -41,6 +42,8 @@ class Meta(Struct):
 
 
 class RawData(Struct):
+    # app 字段标识卡片类型 (QQ 卡片的 com.tencent.xxx), 用于诊断未覆盖的卡片形态
+    app: str | None = None
     meta: Meta | None = None
 
 
@@ -87,7 +90,12 @@ def _extract_url(hyper: Hyper) -> str | None:
         logger.exception(f"json 卡片解析失败: {raw_str}")
         return None
 
+    # 提取 app 类型(QQ 卡片的 com.tencent.xxx), 便于诊断未知卡片形态
+    app = _get_card_app(raw)
+
     if not raw.meta:
+        # 卡片有内容但无 meta 字段 —— 可能是未覆盖的卡片类型, 打印原文供诊断
+        logger.warning(f"json 卡片无 meta 字段, 无法提取 URL (app={app}): {raw_str[:300]}")
         return None
 
     meta, url = raw.meta, None
@@ -99,8 +107,20 @@ def _extract_url(hyper: Hyper) -> str | None:
     elif meta.music:
         url = meta.music.jumpUrl
 
-    logger.debug(f"extract url[{url}] from raw#meta[{meta}]")
+    if url:
+        logger.debug(f"extract url[{url}] from raw#meta[{meta}]")
+    else:
+        # meta 存在但 detail_1/news/music 都不匹配 —— 该卡片类型的 URL 字段位置未知,
+        # 打印 app 类型 + meta 结构原文, 供后续扩展 _extract_url 覆盖 (如 com.tencent.qqmusic)
+        logger.warning(
+            f"json 卡片 meta 无已知 URL 字段 (app={app}, meta keys={meta.__struct_fields__}): {raw_str[:500]}"
+        )
     return url
+
+
+def _get_card_app(raw: RawData) -> str | None:
+    """从卡片 JSON 提取 app 字段 (QQ 卡片的 com.tencent.xxx), 用于诊断卡片类型。"""
+    return raw.app
 
 
 def _extract_text(message: UniMsg) -> str | None:
@@ -110,6 +130,36 @@ def _extract_text(message: UniMsg) -> str | None:
     elif plain_text := message.extract_plain_text().strip():
         return plain_text
     return None
+
+
+def _extract_reply_text(reply: object) -> str:
+    """从被引用消息提取文本/URL, 优先解析 JSON 卡片。
+
+    OneBot v11 的 extract_plain_text() 对 json 卡片段返回空 (is_text() 为 False),
+    会丢弃卡片里的 jumpUrl/qqdocurl。而 reply 场景下被引用消息常见为分享卡片
+    (如 B站/抖音/小红书转发卡), 故需优先扫 json 段, 用 _extract_url 解析出 URL;
+    无卡片时回退到 extract_plain_text()。
+
+    reply.message 可能是任意 adapter 的 Message 对象, 这里只依赖最小鸭子类型:
+    可迭代出 (type, data_dict) 段 + 有 extract_plain_text。非 OneBot v11 的
+    adapter 若无 json 段则自然回退纯文本路径。
+    """
+    message = getattr(reply, "message", None)
+    if message is None:
+        return ""
+    # 优先扫 json 段提取卡片 URL (extract_plain_text 会跳过这些段)
+    for seg in message:
+        seg_type = getattr(seg, "type", None)
+        if seg_type != "json":
+            continue
+        data = getattr(seg, "data", None) or {}
+        raw = data.get("data") or data.get("raw")
+        if raw:
+            hyper = Hyper("json", raw=raw)
+            if url := _extract_url(hyper):
+                return url
+    # 无卡片, 回退纯文本
+    return message.extract_plain_text().strip()
 
 
 class KeyPatternList(list[tuple[str, re.Pattern[str]]]):
@@ -141,7 +191,7 @@ class KeywordRegexRule:
     def __hash__(self) -> int:
         return hash(frozenset(self.key_pattern_list))
 
-    async def __call__(self, message: UniMsg, state: T_State) -> bool:
+    async def __call__(self, message: UniMsg, event: Event, state: T_State) -> bool:
         text = _extract_text(message)
         if not text:
             return False
@@ -172,16 +222,17 @@ class KeywordRegexRule:
         state[PSR_FORCE_PARSE_KEY] = force_parse
 
         # 引用回复场景: 用户只输入前缀 (无 URL), 从被引用消息提取 URL。
-        # OneBot v11 adapter 在 matcher 运行前已用 get_msg 填充 event.reply.message,
-        # 故可直接读 event.reply.message.extract_plain_text() 拿到被引用消息的文本。
+        # 规则在 Matcher 运行 (ensure_context) 之前执行, 此时 current_event 尚未设置,
+        # 故必须通过依赖注入拿 event。OneBot v11 adapter 在分发前已用 get_msg 填充
+        # event.reply.message (含被引用消息完整内容), 故可直接提取。
+        # 被引用消息可能是纯文本含 URL, 也可能是 JSON 卡片 (分享卡), 后者需解析
+        # meta.detail_1.qqdocurl / news.jumpUrl / music.jumpUrl (见 _extract_reply_text)。
         if force_parse and not text:
-            from nonebot.matcher import current_event
-
-            event = current_event.get(None)
-            reply = getattr(event, "reply", None) if event else None
-            if reply and getattr(reply, "message", None):
-                text = reply.message.extract_plain_text().strip()
-                logger.debug(f"前缀强制解析 + 引用回复, 从被引用消息提取: '{text[:50]}'")
+            reply = getattr(event, "reply", None)
+            if reply:
+                text = _extract_reply_text(reply)
+                if text:
+                    logger.debug(f"前缀强制解析 + 引用回复, 从被引用消息提取: '{text[:50]}'")
 
         if not text:
             return False

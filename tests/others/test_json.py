@@ -34,3 +34,26 @@ def test_parse_json_card():
         url = _extract_url(hyper)
         logger.info(f"extract url from raw json: {url}")
         assert url == url_list[i]
+
+
+def test_extract_url_unknown_card_app_field_captured():
+    """诊断: 未知卡片类型的 app 字段应能被 decode 出来, 用于日志标记卡片类型。
+
+    RawData 声明了 app 字段 (QQ 卡片的 com.tencent.xxx), msgspec decode 时保留。
+    com.tencent.qqmusic 等原生音乐卡的 URL 字段位置未知, 需靠日志的 app 标记定位。
+    """
+    from nonebot_plugin_alconna import Hyper
+
+    from nonebot_plugin_parser.matchers.rule import raw_decoder, _extract_url, _get_card_app
+
+    # 模拟 com.tencent.qqmusic 卡片: meta 结构不在已知 detail_1/news/music 之内
+    raw_json = (
+        r'{"app":"com.tencent.qqmusic","meta":{"unknown_key":{"some_url":"https://y.qq.com/n/ryqq/songDetail/test"}}}'
+    )
+    raw = raw_decoder.decode(raw_json)
+    assert _get_card_app(raw) == "com.tencent.qqmusic", "app 字段应能被 decode 提取"
+
+    # 未知 meta 结构 → URL 提取返回 None (当前不支持), 但不报错
+    hyper = Hyper(format="json", raw=raw_json)
+    url = _extract_url(hyper)
+    assert url is None, "未知卡片类型当前应返回 None (待拿到真实样本后扩展)"

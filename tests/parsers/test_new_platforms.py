@@ -51,6 +51,52 @@ async def test_netease():
     assert result.contents, "应有音频内容"
 
 
+# QQ 音乐分享卡片的 playsong.html 格式 (i.y.qq.com 域, songmid 在查询参数)
+# 关键词匹配需覆盖卡片场景: extract_plain_text 跳过 json 段, 故走 _extract_url
+# 提取 jumpUrl, 该 URL 不含 songDetail/ 故现有长链正则不匹配。
+QQMUSIC_CARD_URL = (
+    "https://i.y.qq.com/v8/playsong.html?platform=11&appshare=android_qq"
+    "&appversion=14090008&hosteuin=oK-P7i4lowoq7v**&songmid=003vP9J945Wv8J"
+    "&type=0&appsongtype=1&_wv=1&source=qq&ADTAG=qfshare"
+)
+
+
+def test_qqmusic_card_playsong_url_matches():
+    """离线: QQ音乐分享卡片的 playsong.html?songmid= 格式应能被 search_url 匹配。
+
+    卡片 jumpUrl 是 i.y.qq.com/v8/playsong.html?songmid=xxx, 与长链 songDetail/ 不同,
+    需独立的 @handle 覆盖。纯单元测试 (只测 search_url, 不触发网络请求)。
+    """
+    from nonebot_plugin_parser.parsers import QQMusicParser
+
+    if QQMusicParser is None:
+        pytest.skip("qqmusic-api-python 未安装, QQMusicParser 不可用")
+    parser = QQMusicParser()
+    _, matched = parser.search_url(QQMUSIC_CARD_URL)
+    assert matched, "QQ音乐卡片 playsong.html URL 应被匹配"
+    assert matched.group("song_id") == "003vP9J945Wv8J", "应从 songmid= 提取歌曲 id"
+
+
+def test_qqmusic_long_url_not_regression_after_card_handler():
+    """回归: 加 playsong.html 卡片 handler 后, 长链 songDetail 仍正确路由。
+
+    两者 keyword 不同 (playsong.html vs y.qq.com), 卡片 URL 含 y.qq.com 但不含
+    songDetail/, 不会误匹配长链正则; 长链不含 playsong.html, 不会误匹配卡片正则。
+    """
+    from nonebot_plugin_parser.parsers import QQMusicParser
+
+    if QQMusicParser is None:
+        pytest.skip("qqmusic-api-python 未安装, QQMusicParser 不可用")
+    parser = QQMusicParser()
+    # 长链 songDetail 仍正常匹配
+    _, matched = parser.search_url(QQMUSIC_SONG)
+    assert matched, "长链 songDetail URL 不应因卡片 handler 回归"
+    assert matched.group("song_id") == "002Qvhtb46OI7q"
+    # 卡片 URL 不会误匹配到长链 keyword (keyword != "y.qq.com")
+    keyword_card, _ = parser.search_url(QQMUSIC_CARD_URL)
+    assert keyword_card != "y.qq.com", "卡片 URL 应走 playsong.html handler 而非长链"
+
+
 @pytest.mark.asyncio
 async def test_qqmusic():
     from nonebot_plugin_parser.parsers import QQMusicParser

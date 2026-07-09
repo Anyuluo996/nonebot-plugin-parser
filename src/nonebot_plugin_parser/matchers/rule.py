@@ -42,6 +42,8 @@ class Meta(Struct):
 
 
 class RawData(Struct):
+    # app 字段标识卡片类型 (QQ 卡片的 com.tencent.xxx), 用于诊断未覆盖的卡片形态
+    app: str | None = None
     meta: Meta | None = None
 
 
@@ -88,7 +90,12 @@ def _extract_url(hyper: Hyper) -> str | None:
         logger.exception(f"json 卡片解析失败: {raw_str}")
         return None
 
+    # 提取 app 类型(QQ 卡片的 com.tencent.xxx), 便于诊断未知卡片形态
+    app = _get_card_app(raw)
+
     if not raw.meta:
+        # 卡片有内容但无 meta 字段 —— 可能是未覆盖的卡片类型, 打印原文供诊断
+        logger.warning(f"json 卡片无 meta 字段, 无法提取 URL (app={app}): {raw_str[:300]}")
         return None
 
     meta, url = raw.meta, None
@@ -100,8 +107,20 @@ def _extract_url(hyper: Hyper) -> str | None:
     elif meta.music:
         url = meta.music.jumpUrl
 
-    logger.debug(f"extract url[{url}] from raw#meta[{meta}]")
+    if url:
+        logger.debug(f"extract url[{url}] from raw#meta[{meta}]")
+    else:
+        # meta 存在但 detail_1/news/music 都不匹配 —— 该卡片类型的 URL 字段位置未知,
+        # 打印 app 类型 + meta 结构原文, 供后续扩展 _extract_url 覆盖 (如 com.tencent.qqmusic)
+        logger.warning(
+            f"json 卡片 meta 无已知 URL 字段 (app={app}, meta keys={meta.__struct_fields__}): {raw_str[:500]}"
+        )
     return url
+
+
+def _get_card_app(raw: RawData) -> str | None:
+    """从卡片 JSON 提取 app 字段 (QQ 卡片的 com.tencent.xxx), 用于诊断卡片类型。"""
+    return raw.app
 
 
 def _extract_text(message: UniMsg) -> str | None:

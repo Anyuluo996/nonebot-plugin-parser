@@ -29,7 +29,7 @@ async def test_keyword_regex_rule_does_not_use_nickname_as_default_prefix(monkey
     rule = KeywordRegexRule(KeyPatternList(("bilibili", r"bilibili\.com/video/([A-Za-z0-9]+)")))
     state = {}
 
-    matched = await rule(_text_message(text), state)
+    matched = await rule(_text_message(text), _FakeEvent(None), state)
 
     assert matched is True
     assert state[PSR_FORCE_PARSE_KEY] is False
@@ -57,7 +57,7 @@ async def test_keyword_regex_rule_force_parse_with_explicit_prefix(monkeypatch, 
     rule = KeywordRegexRule(KeyPatternList(("bilibili", r"bilibili\.com/video/([A-Za-z0-9]+)")))
     state = {}
 
-    matched = await rule(_text_message(text), state)
+    matched = await rule(_text_message(text), _FakeEvent(None), state)
 
     assert matched is True
     assert state[PSR_FORCE_PARSE_KEY] is True
@@ -103,41 +103,69 @@ def test_parser_handler_state_param_is_injected_by_nonebot_di():
 # === 引用回复强制解析测试 ===
 
 
-class _FakeReplyMessage:
-    """模拟 OneBot v11 event.reply.message (有 extract_plain_text)。"""
+class _FakeSegment:
+    """模拟 OneBot v11 MessageSegment (有 .type / .data 属性, 可迭代)。"""
 
-    def __init__(self, text: str):
-        self._text = text
+    def __init__(self, type: str, data: dict):
+        self.type = type
+        self.data = data
+
+
+class _FakeReplyMessage:
+    """模拟 OneBot v11 event.reply.message。
+
+    支持两种被引用消息形态, 与真实 OneBot v11 Message 行为对齐:
+    - 纯文本: extract_plain_text 返回该文本, 遍历无 json 段
+    - 卡片: 传入 json 卡片原始 data 字符串, extract_plain_text 返回空
+      (json 段 is_text() 为 False), 遍历可拿到 .type=='json' 的 _FakeSegment
+    """
+
+    def __init__(self, text: str | None = None, json_data: str | None = None):
+        self._text = text or ""
+        self._segments: list[_FakeSegment] = []
+        if json_data is not None:
+            self._segments.append(_FakeSegment("json", {"data": json_data}))
 
     def extract_plain_text(self) -> str:
         return self._text
+
+    def __iter__(self):
+        return iter(self._segments)
 
 
 class _FakeReply:
     """模拟 OneBot v11 event.reply。"""
 
-    def __init__(self, text: str):
-        self.message = _FakeReplyMessage(text)
+    def __init__(self, text: str | None = None, json_data: str | None = None):
+        self.message = _FakeReplyMessage(text=text, json_data=json_data)
         self.message_id = 12345
 
 
 class _FakeEvent:
-    """模拟 OneBot v11 event (有 reply 属性)。"""
+    """模拟 OneBot v11 event (有 reply 属性)。
 
-    def __init__(self, reply_text: str | None):
-        self.reply = _FakeReply(reply_text) if reply_text is not None else None
+    通过 DI 注入到 rule.__call__ 的 event 参数 (而非 current_event ContextVar),
+    因为 NoneBot 规则在 ensure_context 之前执行, 此时 current_event 尚未设置。
+    """
+
+    def __init__(self, reply_text: str | None = None, reply_json: str | None = None):
+        if reply_text is None and reply_json is None:
+            self.reply = None
+        else:
+            self.reply = _FakeReply(text=reply_text, json_data=reply_json)
 
 
 @pytest.mark.asyncio
 async def test_force_prefix_reply_extracts_url_from_quoted_message(monkeypatch):
     """回归: 回复含 URL 的消息 + 只输入前缀 'par', 从被引用消息提取 URL 强制解析。
 
-    OneBot v11 adapter 在 matcher 运行前已把 reply 段从 event.message 删除并填充
-    event.reply.message, 故用户只输入 'par' 时 event.message 无 URL, 需从
-    event.reply.message.extract_plain_text() 提取。
-    """
-    from nonebot.matcher import current_event
+    OneBot v11 adapter 在分发前已把 reply 段从 event.message 删除并填充
+    event.reply.message (含被引用消息完整内容), 故用户只输入 'par' 时 event.message
+    无 URL, 需从 event.reply.message.extract_plain_text() 提取。
 
+    event 由 NoneBot DI 注入到 rule.__call__ 的 event 参数 (非 current_event,
+    因规则在 ensure_context 之前执行, current_event 此时尚未设置)。
+    """
     from nonebot_plugin_parser.config import pconfig
     from nonebot_plugin_parser.matchers.rule import (
         PSR_SEARCHED_KEY,
@@ -152,11 +180,8 @@ async def test_force_prefix_reply_extracts_url_from_quoted_message(monkeypatch):
     # 用户只输入 'par', 被引用消息含 bilibili URL
     msg = _text_message("par")
     state = {}
-    token = current_event.set(_FakeEvent("https://www.bilibili.com/video/BV1xx411c7mD"))
-    try:
-        matched = await rule(msg, state)
-    finally:
-        current_event.reset(token)
+    event = _FakeEvent("https://www.bilibili.com/video/BV1xx411c7mD")
+    matched = await rule(msg, event, state)
 
     assert matched is True, "回复含 URL 的消息 + 前缀应匹配"
     assert state[PSR_FORCE_PARSE_KEY] is True
@@ -165,9 +190,7 @@ async def test_force_prefix_reply_extracts_url_from_quoted_message(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_force_prefix_reply_no_url_does_not_match(monkeypatch):
-    """回归: 回复无 URL 的消息 + 只输入前缀, 不应误匹配。"""
-    from nonebot.matcher import current_event
-
+    """回归: 回复无URL 的消息 + 只输入前缀, 不应误匹配。"""
     from nonebot_plugin_parser.config import pconfig
     from nonebot_plugin_parser.matchers.rule import (
         PSR_FORCE_PARSE_KEY,
@@ -180,11 +203,8 @@ async def test_force_prefix_reply_no_url_does_not_match(monkeypatch):
 
     msg = _text_message("par")
     state = {}
-    token = current_event.set(_FakeEvent("你好,这是一条普通消息"))
-    try:
-        matched = await rule(msg, state)
-    finally:
-        current_event.reset(token)
+    event = _FakeEvent("你好,这是一条普通消息")
+    matched = await rule(msg, event, state)
 
     assert matched is False, "被引用消息无 URL 不应匹配"
     assert state[PSR_FORCE_PARSE_KEY] is True  # 前缀仍被识别
@@ -193,8 +213,6 @@ async def test_force_prefix_reply_no_url_does_not_match(monkeypatch):
 @pytest.mark.asyncio
 async def test_force_prefix_no_reply_does_not_match(monkeypatch):
     """回归: 只输入前缀但无引用回复, 不应匹配 (没有 URL 来源)。"""
-    from nonebot.matcher import current_event
-
     from nonebot_plugin_parser.config import pconfig
     from nonebot_plugin_parser.matchers.rule import (
         KeyPatternList,
@@ -206,13 +224,121 @@ async def test_force_prefix_no_reply_does_not_match(monkeypatch):
 
     msg = _text_message("par")
     state = {}
-    token = current_event.set(_FakeEvent(None))
-    try:
-        matched = await rule(msg, state)
-    finally:
-        current_event.reset(token)
+    event = _FakeEvent(None)
+    matched = await rule(msg, event, state)
 
     assert matched is False, "无引用回复时纯前缀不应匹配"
+
+
+@pytest.mark.asyncio
+async def test_force_prefix_reply_json_card_extracts_url(monkeypatch):
+    """回归: 回复一条 JSON 卡片消息 (如 B站分享卡) + 只输前缀, 应从卡片提取 URL。
+
+    extract_plain_text() 对 json 段返回空 (is_text() 为 False), 故纯文本提取路径
+    会丢弃卡片 URL。需从 reply.message 的 json 段构造 Hyper, 复用 _extract_url
+    解析 meta.detail_1.qqdocurl / meta.news.jumpUrl / meta.music.jumpUrl。
+
+    detail_1 卡片 (qqdocurl) 形态 - 常见于 QQ 转发的 B站/抖音分享卡。
+    """
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.matchers.rule import (
+        PSR_SEARCHED_KEY,
+        PSR_FORCE_PARSE_KEY,
+        KeyPatternList,
+        KeywordRegexRule,
+    )
+
+    monkeypatch.setattr(pconfig, "parser_force_prefix", "par")
+    rule = KeywordRegexRule(KeyPatternList(("bilibili", r"bilibili\.com/video/([A-Za-z0-9]+)")))
+
+    # detail_1 卡片: URL 在 meta.detail_1.qqdocurl
+    card = (
+        '{"app":"com.tencent.structmsg","meta":{"detail_1":{"qqdocurl":"https://www.bilibili.com/video/BV1xx411c7mD"}}}'
+    )
+    msg = _text_message("par")
+    state = {}
+    event = _FakeEvent(reply_json=card)
+    matched = await rule(msg, event, state)
+
+    assert matched is True, "回复 JSON 卡片 (detail_1.qqdocurl) + 前缀应匹配"
+    assert state[PSR_FORCE_PARSE_KEY] is True
+    assert state[PSR_SEARCHED_KEY].text == "https://www.bilibili.com/video/BV1xx411c7mD"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("card", "expected_url"),
+    [
+        # news 卡片: URL 在 meta.news.jumpUrl (常见于腾讯新闻类分享)
+        (
+            '{"app":"com.tencent.news","meta":{"news":{"jumpUrl":"https://www.bilibili.com/video/BV1xx411c7mD"}}}',
+            "https://www.bilibili.com/video/BV1xx411c7mD",
+        ),
+        # music 卡片: URL 在 meta.music.jumpUrl (音乐分享)
+        (
+            '{"app":"com.tencent.music","meta":{"music":{"jumpUrl":"https://www.bilibili.com/video/BV1xx411c7mD"}}}',
+            "https://www.bilibili.com/video/BV1xx411c7mD",
+        ),
+    ],
+)
+async def test_force_prefix_reply_json_card_variants(monkeypatch, card: str, expected_url: str):
+    """回归: news / music 两种卡片形态也应从 jumpUrl 提取 URL 强制解析。"""
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.matchers.rule import (
+        PSR_SEARCHED_KEY,
+        KeyPatternList,
+        KeywordRegexRule,
+    )
+
+    monkeypatch.setattr(pconfig, "parser_force_prefix", "par")
+    rule = KeywordRegexRule(KeyPatternList(("bilibili", r"bilibili\.com/video/([A-Za-z0-9]+)")))
+
+    msg = _text_message("par")
+    state = {}
+    event = _FakeEvent(reply_json=card)
+    matched = await rule(msg, event, state)
+
+    assert matched is True, f"卡片形态应匹配: {card[:60]}"
+    assert state[PSR_SEARCHED_KEY].text == expected_url
+
+
+@pytest.mark.asyncio
+async def test_force_prefix_reply_works_without_current_event_set(monkeypatch):
+    """回归: 规则执行期间 current_event 未设置时引用回复仍可工作。
+
+    NoneBot 规则在 _check_matcher → check_rule 中执行, 早于 _run_matcher →
+    ensure_context 设置 current_event。故 rule.__call__ 不能依赖 current_event
+    ContextVar (会 LookupError), 必须用 NoneBot DI 注入的 event 参数。
+    本测试显式不设置 current_event, 断言修复后路径仍能提取被引用 URL。
+    """
+    from nonebot.matcher import current_event
+
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.matchers.rule import (
+        PSR_SEARCHED_KEY,
+        PSR_FORCE_PARSE_KEY,
+        KeyPatternList,
+        KeywordRegexRule,
+    )
+
+    # 确认测试起点 current_event 未被设置 (模拟规则阶段真实状态)
+    try:
+        current_event.get()
+        raise AssertionError("测试前置失败: current_event 不应已设置")
+    except LookupError:
+        pass
+
+    monkeypatch.setattr(pconfig, "parser_force_prefix", "par")
+    rule = KeywordRegexRule(KeyPatternList(("bilibili", r"bilibili\.com/video/([A-Za-z0-9]+)")))
+
+    msg = _text_message("par")
+    state = {}
+    event = _FakeEvent("https://www.bilibili.com/video/BV1xx411c7mD")
+    matched = await rule(msg, event, state)
+
+    assert matched is True, "current_event 未设置时, DI 注入的 event 仍应能提取被引用 URL"
+    assert state[PSR_FORCE_PARSE_KEY] is True
+    assert state[PSR_SEARCHED_KEY].text == "https://www.bilibili.com/video/BV1xx411c7mD"
 
 
 def test_is_enabled_all_disabled_but_force_prefix_still_allowed(monkeypatch):
@@ -317,7 +443,7 @@ async def test_force_prefix_still_reaches_parser_handler_when_all_platforms_disa
     token = current_event.set(object())
     try:
         assert is_enabled(message, session) is True
-        assert await rule(message, state) is True
+        assert await rule(message, _FakeEvent(None), state) is True
         assert state[PSR_FORCE_PARSE_KEY] is True
         await parser_handler(state[PSR_SEARCHED_KEY], session, state)
     finally:

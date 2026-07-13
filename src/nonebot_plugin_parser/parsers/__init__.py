@@ -6,7 +6,6 @@ from .nga import NGAParser as NGAParser
 from .buff import BuffParser as BuffParser
 from .hupu import HupuParser as HupuParser
 from .illu import IlluParser as IlluParser
-from .kuwo import KuWoParser as KuWoParser
 from .acfun import AcfunParser as AcfunParser
 from .kugou import KuGouParser as KuGouParser
 from .pixiv import PixivParser as PixivParser
@@ -33,7 +32,6 @@ except ImportError as _qqmusic_import_err:
     _QQMUSIC_AVAILABLE = False
     _QQMUSIC_IMPORT_ERROR = _qqmusic_import_err
 
-from .baidu_music import BaiduMusicParser as BaiduMusicParser
 from .twitter import TwitterParser as TwitterParser
 from .bilibili import BilibiliParser as BilibiliParser
 from .kuaishou import KuaiShouParser as KuaiShouParser
@@ -55,9 +53,7 @@ PARSERS: dict[str, type[BaseParser]] = {
     "zhihu": ZhiHuParser,
     "netease": NCMParser,
     "kugou": KuGouParser,
-    "kuwo": KuWoParser,
     "qsmusic": QSMusicParser,
-    "baidu": BaiduMusicParser,
     "hupu": HupuParser,
     "coolapk": CoolapkParser,
     "lofter": LofterParser,

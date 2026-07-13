@@ -140,18 +140,25 @@ async def get_play_url(parser: "BaseParser", song_hash: str, quality: str = "128
 
     if AsyncSession is not None:
         import json as _json
+        import asyncio as _asyncio
 
-        async with AsyncSession(impersonate="chrome110", timeout=20, verify=False) as session:
-            resp = await session.get(_PLAY_URL_API, params=params, headers=headers)
-            if resp.headers.get("ssa-code") or resp.status_code != 200:
-                return None
-            try:
-                data = _json.loads(resp.text)
-            except _json.JSONDecodeError:
-                return None
-            if data.get("errcode") not in (None, 0, "0"):
-                return None
-            return _extract_url(data)
+        async def _do_request():
+            async with AsyncSession(impersonate="chrome110", timeout=15, verify=False) as session:
+                return await session.get(_PLAY_URL_API, params=params, headers=headers)
+
+        try:
+            resp = await _asyncio.wait_for(_do_request(), timeout=15)
+        except Exception:
+            return None
+        if resp.headers.get("ssa-code") or resp.status_code != 200:
+            return None
+        try:
+            data = _json.loads(resp.text)
+        except _json.JSONDecodeError:
+            return None
+        if data.get("errcode") not in (None, 0, "0"):
+            return None
+        return _extract_url(data)
 
     # 回退：httpx（大概率被 SSA 拦截）
     resp = await parser.request(_PLAY_URL_API, params=params, headers=headers, raise_for_status=False)

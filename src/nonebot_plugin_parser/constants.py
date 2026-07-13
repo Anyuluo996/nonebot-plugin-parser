@@ -31,7 +31,6 @@ DOWNLOAD_TIMEOUT: Final[Timeout] = Timeout(connect=15.0, read=240.0, write=10.0,
 
 class PlatformEnum(str, Enum):
     ACFUN = "acfun"
-    BAIDU_MUSIC = "baidu"
     BILIBILI = "bilibili"
     BUFF = "buff"
     COOLAPK = "coolapk"
@@ -42,7 +41,6 @@ class PlatformEnum(str, Enum):
     ILLU = "illu"
     KUAISHOU = "kuaishou"
     KUGOU = "kugou"
-    KUWO = "kuwo"
     LOFTER = "lofter"
     NGA = "nga"
     NETEASE = "netease"

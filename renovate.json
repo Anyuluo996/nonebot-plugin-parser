@@ -13,11 +13,17 @@
     "schedule": []
   },
   "pip_requirements": { "enabled": false },
+  "pre-commit": { "enabled": true },
   "packageRules": [
     {
       "description": "GitHub Actions 工作流依赖合并为一个 PR（major/minor/patch 不拆分）",
       "matchManagers": ["github-actions"],
       "groupName": "github actions"
+    },
+    {
+      "description": "pre-commit hooks 合并为一个 PR，与 github-actions 分组风格一致",
+      "matchManagers": ["pre-commit"],
+      "groupName": "pre-commit hooks"
     },
     {
       "description": "Python 运行时依赖 + 构建后端合并为一个 PR",

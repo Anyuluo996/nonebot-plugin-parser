@@ -1,4 +1,4 @@
-"""测试新增平台解析器：知乎、网易云、酷狗、酷我、汽水音乐、虎扑、酷安、
+"""测试新增平台解析器：知乎、网易云、酷狗、汽水音乐、虎扑、酷安、
 LOFTER、堆糖、BUFF、小黑盒、ILLU、贴吧。
 
 均为真实网络请求，失败时 skip（与现有 parser 测试风格一致）。
@@ -7,8 +7,8 @@ LOFTER、堆糖、BUFF、小黑盒、ILLU、贴吧。
 import pytest
 
 ZHIHU_ANSWER = "https://www.zhihu.com/question/67423622/answer/1396759249"
-KUGOU_SHARE = "https://www.kugou.com/share/2T6Jwe3e3b3.html"
-KUWO = "https://www.kuwo.cn/play_detail/2986743"
+# 酷狗「舍得 - 王唯旖」(免费歌曲 privilege=0)，hash 直接在 URL 参数中
+KUGOU_SHARE = "https://t.kugou.com/song/?hash=62C406C76F45C3EF39F451F2C4F22D95"
 # QQ 音乐「同桌的你」(天天) songmid，实测免费歌曲匿名可解析
 QQMUSIC_SONG = "https://y.qq.com/n/ryqq/songDetail/002Qvhtb46OI7q"
 HUPU = "https://bbs.hupu.com/639669147.html"
@@ -113,6 +113,10 @@ async def test_qqmusic():
     except Exception as e:
         pytest.skip(f"QQ音乐解析失败（网络/第三方服务），跳过: {e!r}")
     assert result.contents, "应有音频内容"
+
+
+@pytest.mark.asyncio
+async def test_kugou():
     from nonebot_plugin_parser.parsers import KuGouParser
 
     parser = KuGouParser()
@@ -122,20 +126,6 @@ async def test_qqmusic():
         result = await parser.parse(keyword, matched)
     except Exception as e:
         pytest.skip(f"酷狗解析失败，跳过: {e!r}")
-    assert result.contents, "应有音频内容"
-
-
-@pytest.mark.asyncio
-async def test_kuwo():
-    from nonebot_plugin_parser.parsers import KuWoParser
-
-    parser = KuWoParser()
-    keyword, matched = parser.search_url(KUWO)
-    assert matched
-    try:
-        result = await parser.parse(keyword, matched)
-    except Exception as e:
-        pytest.skip(f"酷我解析失败（第三方服务），跳过: {e!r}")
     assert result.contents, "应有音频内容"
 
 

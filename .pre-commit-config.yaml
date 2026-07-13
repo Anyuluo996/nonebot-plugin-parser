@@ -6,11 +6,6 @@ ci:
   autoupdate_schedule: monthly
   autoupdate_commit_msg: "chore: auto update pre-commit hooks"
 repos:
-  - repo: https://github.com/fllesser/ruff-rev-sync-pre-commit
-    rev: v1.0.0
-    hooks:
-      - id: ruff-rev-sync
-
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.21
     hooks:

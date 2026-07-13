@@ -17,6 +17,8 @@ from . import kugou_api
 from .base import Platform, BaseParser, PlatformEnum, IgnoreException, handle
 
 _HASH_RE = re.compile(r"hash=([a-zA-Z0-9]+)")
+# 页面内嵌 JSON 中的 hash 字段（share/song.html?chain= 格式不重定向，hash 在 body 里）
+_HASH_JSON_RE = re.compile(r'"hash":"([a-zA-Z0-9]+)"')
 
 
 class KuGouParser(BaseParser):
@@ -26,7 +28,8 @@ class KuGouParser(BaseParser):
 
     @handle(
         "kugou.com",
-        r"https?://[^\s]*?kugou\.com.*?(?:/(?:share|mixsong)/[a-zA-Z0-9]+\.html|(?:id|chain|hash)=[a-zA-Z0-9]+)",
+        # 匹配到 URL 末尾，避免 share/song.html?chain= 被截断在 .html 处
+        r"https?://[^\s]*?kugou\.com[^\s]*(?:/(?:share|mixsong)/[a-zA-Z0-9]+\.html|(?:id|chain|hash)=[a-zA-Z0-9]+)[^\s]*",
     )
     async def _parse_kugou(self, searched: re.Match[str]):
         share_url = searched.group(0)
@@ -36,11 +39,14 @@ class KuGouParser(BaseParser):
         if m := _HASH_RE.search(share_url):
             song_hash = m.group(1)
 
-        # share/mixsong 链接需重定向拿真实 hash
+        # share/mixsong/chain 链接需请求页面拿 hash
         if not song_hash:
             resp = await self.request(share_url, follow_redirects=True, raise_for_status=False)
             final_url = str(resp.url)
             if m := _HASH_RE.search(final_url):
+                song_hash = m.group(1)
+            elif m := _HASH_JSON_RE.search(resp.text):
+                # share/song.html?chain= 格式：页面内嵌 JSON 含 hash 字段
                 song_hash = m.group(1)
             elif m := re.search(r"songhash=([a-zA-Z0-9]+)", resp.text):
                 song_hash = m.group(1)

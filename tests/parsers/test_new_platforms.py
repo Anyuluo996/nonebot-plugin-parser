@@ -9,6 +9,8 @@ import pytest
 ZHIHU_ANSWER = "https://www.zhihu.com/question/67423622/answer/1396759249"
 # 酷狗「舍得 - 王唯旖」(免费歌曲 privilege=0)，hash 直接在 URL 参数中
 KUGOU_SHARE = "https://t.kugou.com/song/?hash=62C406C76F45C3EF39F451F2C4F22D95"
+# 酷狗分享链接（chain 格式，hash 在页面 body 的 JSON 里）
+KUGOU_CHAIN = "https://m.kugou.com/share/song.html?chain=4lDUBfcG3V2"
 # QQ 音乐「同桌的你」(天天) songmid，实测免费歌曲匿名可解析
 QQMUSIC_SONG = "https://y.qq.com/n/ryqq/songDetail/002Qvhtb46OI7q"
 HUPU = "https://bbs.hupu.com/639669147.html"
@@ -122,6 +124,23 @@ async def test_kugou():
     parser = KuGouParser()
     keyword, matched = parser.search_url(KUGOU_SHARE)
     assert matched
+    try:
+        result = await parser.parse(keyword, matched)
+    except Exception as e:
+        pytest.skip(f"酷狗解析失败，跳过: {e!r}")
+    assert result.contents, "应有音频内容"
+
+
+@pytest.mark.asyncio
+async def test_kugou_chain():
+    """酷狗分享链接 chain 格式：hash 在页面 body 的 JSON 里，需请求页面提取。"""
+    from nonebot_plugin_parser.parsers import KuGouParser
+
+    parser = KuGouParser()
+    keyword, matched = parser.search_url(KUGOU_CHAIN)
+    assert matched, "chain 分享链接应被匹配"
+    # 正则应匹配完整 URL（含 ?chain= 参数），不被截断在 .html 处
+    assert "chain=" in matched.group(0), "应包含 chain 参数"
     try:
         result = await parser.parse(keyword, matched)
     except Exception as e:

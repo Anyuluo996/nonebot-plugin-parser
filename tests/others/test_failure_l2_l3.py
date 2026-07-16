@@ -95,7 +95,7 @@ def test_mark_reported_persists(tmp_path):
 
 @pytest.fixture
 def _report_enabled(monkeypatch):
-    """开启上报并配置 url/key。
+    """开启上报并配置 url（上报公开无需 key）。
 
     pconfig 的 failure_* 是 @property 返回 self.parser_*（pydantic 字段）。
     monkeypatch 实例的 __dict__ 无效（property 优先）；改 monkeypatch property 本身。
@@ -104,7 +104,6 @@ def _report_enabled(monkeypatch):
 
     monkeypatch.setattr(Config, "failure_report_enabled", property(lambda self: True))
     monkeypatch.setattr(Config, "failure_report_url", property(lambda self: "http://localhost:9999"))
-    monkeypatch.setattr(Config, "failure_report_key", property(lambda self: "k" * 32))
 
 
 @pytest.mark.asyncio
@@ -120,13 +119,12 @@ async def test_report_disabled_returns_false(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("_report_enabled")
-async def test_report_missing_config_returns_false(monkeypatch):
-    """启用但 url/key 缺失 → False"""
+async def test_report_missing_url_returns_false(monkeypatch):
+    """启用但 url 缺失 → False"""
     from nonebot_plugin_parser import failure_reporter as fr
     from nonebot_plugin_parser.config import Config
 
     monkeypatch.setattr(Config, "failure_report_url", property(lambda self: None))
-    monkeypatch.setattr(Config, "failure_report_key", property(lambda self: None))
     ok = await fr.report_failure_record({"url": "u1"})
     assert ok is False
 

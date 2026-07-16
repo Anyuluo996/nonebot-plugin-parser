@@ -1,0 +1,4 @@
+# .env 含 API_KEY，禁止提交
+.env
+# SQLite 数据
+data/

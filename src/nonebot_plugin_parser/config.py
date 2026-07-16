@@ -111,6 +111,20 @@ class Config(BaseModel):
     parser_tdl_proxy: str | None = None
     """tdl 专用代理（tdl 不读 http_proxy 环境变量，必须显式 --proxy），为空时沿用 parser_proxy"""
 
+    # ── 解析失败链接收集：重试(L2) + 上报(L3) ──────────────────────────
+    parser_failure_retry_enabled: bool = True
+    """是否启用失败链接定时重试（L2）"""
+    parser_failure_retry_interval: int = 10
+    """失败链接重试间隔（分钟）"""
+    parser_failure_retry_max: int = 3
+    """失败链接最大重试次数，超过后停止重试"""
+    parser_failure_report_enabled: bool = False
+    """是否启用失败链接上报到远程服务器（L3），默认关闭"""
+    parser_failure_report_url: str | None = None
+    """失败链接上报地址（HTTP，通常经 nginx 反代 + HTTPS）"""
+    parser_failure_report_key: str | None = None
+    """失败链接上报 API key（与服务端 API_KEY 一致）"""
+
     @field_validator("parser_bili_video_codes", mode="before")
     @classmethod
     def _coerce_bili_video_codes(cls, v: object) -> object:
@@ -328,6 +342,36 @@ class Config(BaseModel):
     def tdl_proxy(self) -> str | None:
         """tdl 专用代理，为空时沿用 parser_proxy"""
         return self.parser_tdl_proxy or self.proxy
+
+    @property
+    def failure_retry_enabled(self) -> bool:
+        """是否启用失败链接定时重试"""
+        return self.parser_failure_retry_enabled
+
+    @property
+    def failure_retry_interval(self) -> int:
+        """失败链接重试间隔（分钟）"""
+        return self.parser_failure_retry_interval
+
+    @property
+    def failure_retry_max(self) -> int:
+        """失败链接最大重试次数"""
+        return self.parser_failure_retry_max
+
+    @property
+    def failure_report_enabled(self) -> bool:
+        """是否启用失败链接上报"""
+        return self.parser_failure_report_enabled
+
+    @property
+    def failure_report_url(self) -> str | None:
+        """失败链接上报地址"""
+        return self.parser_failure_report_url
+
+    @property
+    def failure_report_key(self) -> str | None:
+        """失败链接上报 API key"""
+        return self.parser_failure_report_key
 
 
 pconfig: Config = get_plugin_config(Config)

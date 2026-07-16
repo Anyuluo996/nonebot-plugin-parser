@@ -1,8 +1,14 @@
+import io
+from typing import Any
 from typing_extensions import override
 
 from nonebot import logger, require
 
-from .base import UniMessage, ParseResult, ImageRenderer
+from .base import UniHelper, UniMessage, ParseResult, ImageRenderer
+
+# QQ NT 内核对单张图片高度有上限（约 4000-5000px），超长会 rich media transfer failed。
+# NGA 长图内容无限增长，渲染后按此阈值垂直切片，逐张发送。
+MAX_IMAGE_HEIGHT = 4000
 
 # 优先用 htmlrender（容器/默认渲染栈已安装），回退到 htmlkit
 try:
@@ -68,11 +74,47 @@ class Renderer(ImageRenderer):
     @override
     async def render_messages(self, result: ParseResult):
         """NGA 的文字与图片已全部渲染进长图（主楼 graphics + 回复楼 images），
-        不再调用 render_contents 重复发送，避免主楼内容以文字消息二次发出。"""
-        image_seg = await self.cache_or_render_image(result)
+        不再调用 render_contents 重复发送，避免主楼内容以文字消息二次发出。
 
-        msg = UniMessage(image_seg)
-        if self.append_url:
-            urls = (result.display_url, result.repost_display_url)
-            msg += "\n".join(url for url in urls if url)
-        yield msg
+        长图超过 QQ NT 单图高度上限时，垂直切片逐张发送，避免 rich media transfer failed。
+        """
+        image_raw = await self.render_image(result)
+        slices = await self._split_long_image(image_raw)
+        if len(slices) > 1:
+            logger.debug(f"NGA 长图切片: {len(slices)} 张 (每张 ≤{MAX_IMAGE_HEIGHT}px)")
+
+        urls = (result.display_url, result.repost_display_url) if self.append_url else ()
+        url_text = "\n".join(url for url in urls if url)
+
+        for idx, piece in enumerate(slices):
+            msg: UniMessage[Any] = UniMessage(UniHelper.img_seg(piece))
+            # URL 只追加到最后一张，避免每片重复
+            if idx == len(slices) - 1 and url_text:
+                msg += url_text
+            yield msg
+
+    @staticmethod
+    async def _split_long_image(raw: bytes) -> list[bytes]:
+        """长图按 MAX_IMAGE_HEIGHT 垂直切片，返回各片 bytes；不超高时原样返回单元素列表。
+
+        Pillow 的 open/crop/save 是同步 CPU 操作，用 to_thread 避免阻塞事件循环。
+        """
+        import asyncio
+
+        from PIL import Image
+
+        def _do_split() -> list[bytes]:
+            img = Image.open(io.BytesIO(raw))
+            width, height = img.size
+            if height <= MAX_IMAGE_HEIGHT:
+                return [raw]
+            pieces: list[bytes] = []
+            for top in range(0, height, MAX_IMAGE_HEIGHT):
+                bottom = min(top + MAX_IMAGE_HEIGHT, height)
+                piece = img.crop((0, top, width, bottom))
+                buf = io.BytesIO()
+                piece.save(buf, format="PNG")
+                pieces.append(buf.getvalue())
+            return pieces
+
+        return await asyncio.to_thread(_do_split)

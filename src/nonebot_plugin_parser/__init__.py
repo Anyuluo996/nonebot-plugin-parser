@@ -91,3 +91,26 @@ async def clean_plugin_cache():
 
     # 资源清理完毕后，清理 result 缓存
     clear_result_cache()
+
+
+def _setup_failure_retry_job() -> None:
+    """注册失败链接定时重试 job（L2）。
+
+    间隔分钟数由 pconfig.failure_retry_interval 决定（默认 10 分钟）。
+    配置关闭时不注册。单独函数以便动态读配置。
+    """
+    if not pconfig.failure_retry_enabled:
+        return
+    interval = pconfig.failure_retry_interval
+
+    @scheduler.scheduled_job("interval", minutes=interval, id="parser-failure-retry")
+    async def _failure_retry_job():
+        from .failure_retry import run_failure_retry
+
+        try:
+            await run_failure_retry()
+        except Exception:
+            logger.exception("失败链接重试 job 异常")
+
+
+_setup_failure_retry_job()

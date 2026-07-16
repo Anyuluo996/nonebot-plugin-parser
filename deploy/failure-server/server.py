@@ -10,17 +10,21 @@
 - 非 root 运行
 """
 
-import hashlib
 import os
-import sqlite3
 import time
-from collections import defaultdict
-from contextlib import contextmanager
+import hashlib
+import logging
+import sqlite3
 from pathlib import Path
+from contextlib import contextmanager
+from collections import defaultdict
 
-from fastapi import FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel, Field
+from fastapi import Query, Header, FastAPI, Request, HTTPException
+from pydantic import Field, BaseModel
+from fastapi.responses import HTMLResponse
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+log = logging.getLogger("failure-server")
 
 API_KEY = os.environ.get("API_KEY", "")
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
@@ -169,7 +173,7 @@ async def report(
             ),
         )
     # 日志脱敏：只记 hash + platform，不记完整 url
-    print(f"[report] platform={payload.platform} url_hash={_url_hash(payload.url)}", flush=True)
+    log.info("[report] platform=%s url_hash=%s", payload.platform, _url_hash(payload.url))
     return {"status": "ok"}
 
 
@@ -188,9 +192,7 @@ async def list_failures(
                 "SELECT * FROM failures WHERE platform=? ORDER BY received_at DESC LIMIT ? OFFSET ?",
                 (platform, limit, offset),
             ).fetchall()
-            total = conn.execute(
-                "SELECT COUNT(*) FROM failures WHERE platform=?", (platform,)
-            ).fetchone()[0]
+            total = conn.execute("SELECT COUNT(*) FROM failures WHERE platform=?", (platform,)).fetchone()[0]
         else:
             rows = conn.execute(
                 "SELECT * FROM failures ORDER BY received_at DESC LIMIT ? OFFSET ?", (limit, offset)
@@ -210,15 +212,17 @@ async def index(authorization: str | None = Header(None)):
     _check_auth(authorization)
     with _get_db() as conn:
         rows = conn.execute(
-            "SELECT platform, error, count, retries, received_at FROM failures "
-            "ORDER BY received_at DESC LIMIT 100"
+            "SELECT platform, error, count, retries, received_at FROM failures ORDER BY received_at DESC LIMIT 100"
         ).fetchall()
-    rows_html = "\n".join(
-        f"<tr><td>{r['platform']}</td><td><pre>{_esc(r['error'])}</pre></td>"
-        f"<td>{r['count']}</td><td>{r['retries']}</td>"
-        f"<td>{time.strftime('%Y-%m-%d %H:%M', time.localtime(r['received_at']))}</td></tr>"
-        for r in rows
-    ) or "<tr><td colspan=5>(空)</td></tr>"
+    rows_html = (
+        "\n".join(
+            f"<tr><td>{r['platform']}</td><td><pre>{_esc(r['error'])}</pre></td>"
+            f"<td>{r['count']}</td><td>{r['retries']}</td>"
+            f"<td>{time.strftime('%Y-%m-%d %H:%M', time.localtime(r['received_at']))}</td></tr>"
+            for r in rows
+        )
+        or "<tr><td colspan=5>(空)</td></tr>"
+    )
     return f"""<!doctype html><html><head><meta charset=utf-8>
 <title>parser failures</title>
 <style>body{{font-family:system-ui;margin:2em}} table{{border-collapse:collapse;width:100%}}
@@ -249,4 +253,4 @@ def _cleanup_old():
     with _get_db() as conn:
         n = conn.execute("DELETE FROM failures WHERE received_at < ?", (cutoff,)).rowcount
         if n:
-            print(f"[cleanup] removed {n} records older than {RETENTION_DAYS} days", flush=True)
+            log.info("[cleanup] removed %s records older than %s days", n, RETENTION_DAYS)

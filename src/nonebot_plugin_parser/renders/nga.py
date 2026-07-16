@@ -76,7 +76,8 @@ class Renderer(ImageRenderer):
         """NGA 的文字与图片已全部渲染进长图（主楼 graphics + 回复楼 images），
         不再调用 render_contents 重复发送，避免主楼内容以文字消息二次发出。
 
-        长图超过 QQ NT 单图高度上限时，垂直切片逐张发送，避免 rich media transfer failed。
+        长图超过 QQ NT 单图高度上限时，垂直切片。单图直接发送；多图（≥2 张）
+        合并转发，避免逐条刷屏。合并转发发送失败时由 matcher 自动降级为逐条发送。
         """
         image_raw = await self.render_image(result)
         slices = await self._split_long_image(image_raw)
@@ -85,13 +86,20 @@ class Renderer(ImageRenderer):
 
         urls = (result.display_url, result.repost_display_url) if self.append_url else ()
         url_text = "\n".join(url for url in urls if url)
+        segs = [UniHelper.img_seg(piece) for piece in slices]
 
-        for idx, piece in enumerate(slices):
-            msg: UniMessage[Any] = UniMessage(UniHelper.img_seg(piece))
-            # URL 只追加到最后一张，避免每片重复
-            if idx == len(slices) - 1 and url_text:
+        if len(segs) == 1:
+            # 单图：直接发送（URL 追加为文本）
+            msg: UniMessage[Any] = UniMessage(segs[0])
+            if url_text:
                 msg += url_text
             yield msg
+        else:
+            # 多图：合并转发，URL 作为末尾文本节点
+            nodes: list[Any] = list(segs)
+            if url_text:
+                nodes.append(url_text)
+            yield UniMessage(UniHelper.construct_forward_message(nodes))
 
     @staticmethod
     async def _split_long_image(raw: bytes) -> list[bytes]:

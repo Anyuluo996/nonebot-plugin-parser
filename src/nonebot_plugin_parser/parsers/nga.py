@@ -131,6 +131,7 @@ class NGAParser(BaseParser):
 
         content-type 为 text/json;charset=UTF-8。响应体可能直接是 {...}，
         也可能带 `window.xxx=` 之类的 JS 赋值前缀（NGA 原始变量名有拼写错误）。
+        NGA 偶发返回非法 \\uXXXX 转义（如 \\u 后非 4 位 hex），需清洗后再解析。
         """
         body = text.strip()
         # 去掉 `window.xxx=` 前缀，取首个 JSON 对象
@@ -138,10 +139,12 @@ class NGAParser(BaseParser):
         if start == -1:
             raise ParseException("响应不是合法 JSON")
         blob = body[start:]
+        # NGA 偶发非法 \u 转义：把 \u 后非4位hex的转义降级为普通字符，避免 JSONDecodeError
+        blob = re.sub(r"\\u(?![0-9a-fA-F]{4})", r"\\\\u", blob)
         try:
             return json.loads(blob)
         except json.JSONDecodeError:
-            # 兜底：按平衡花括号截取
+            # 兜底：按平衡花括号截取（容忍字符串内花括号被误判，strict=False 容忍控制字符）
             depth = 0
             end = 0
             for i, ch in enumerate(blob):

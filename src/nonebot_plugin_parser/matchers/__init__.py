@@ -21,6 +21,7 @@ from ..helper import UniHelper, UniMessage
 from ..parsers import BaseParser, ParseResult, BilibiliParser
 from ..renders import get_renderer
 from ..exception import TipException
+from ..failure_store import record_failure
 
 
 def _get_enabled_parser_classes() -> list[type[BaseParser]]:
@@ -175,7 +176,13 @@ async def parser_handler(
             await UniHelper.message_reaction(event, "done")
         except Exception:
             pass
-    except Exception:
+    except Exception as e:
+        # 记录解析失败到本地（供维护者排查，不影响主流程）
+        record_failure(
+            url=sr.searched.group(0),
+            platform=parser.platform.name,
+            error=f"{type(e).__name__}: {getattr(e, 'message', e)}",
+        )
         # 发生错误，添加"失败"表情
         try:
             await UniHelper.message_reaction(event, "fail")

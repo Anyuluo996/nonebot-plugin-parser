@@ -97,6 +97,7 @@ test = [
   "poethepoet>=0.42.1",
   "pytest-asyncio>=1.4.0,<1.5.0",
   "pytest-cov>=7.0.0",
+  "pytest-timeout>=2.0.0",
   "pytest-xdist>=3.8.0,<4.0.0",
   "respx>=0.22.0",
 ]
@@ -187,6 +188,7 @@ addopts = [
   "-ra",                   # 显示所有测试结果摘要
   "-s",                    # 显示打印信息
   "-v",                    # 详细输出
+  "--timeout=120",         # 每个用例上限 120s, 防网络挂起拖死 CI
 ]
 pythonpath = ["src"]
 asyncio_mode = "auto"

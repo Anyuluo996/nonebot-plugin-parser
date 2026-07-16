@@ -147,11 +147,11 @@ def _startup_checks():
 
 def _check_auth(authorization: str | None = Header(None)) -> None:
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(401, "missing or malformed Authorization header")
+        raise HTTPException(401)
     token = authorization.removeprefix("Bearer ").strip()
     # 常量时间比较防时序攻击
     if not _consteq(token, API_KEY):
-        raise HTTPException(403, "invalid api key")
+        raise HTTPException(403)
 
 
 def _consteq(a: str, b: str) -> bool:
@@ -172,7 +172,7 @@ def _check_rate(client_ip: str) -> None:
     # 清理过期
     _rate_buckets[client_ip] = [t for t in bucket if now - t < _RATE_WINDOW]
     if len(_rate_buckets[client_ip]) >= _RATE_LIMIT:
-        raise HTTPException(429, "rate limit exceeded")
+        raise HTTPException(429)
     _rate_buckets[client_ip].append(now)
 
 
@@ -271,7 +271,7 @@ async def report(payload: ReportPayload, request: Request):
     """公开上报端点（无需 key）。靠白名单/枚举/限流/去重防滥用。"""
     # 1. URL 域名白名单
     if not _is_allowed_domain(payload.url):
-        raise HTTPException(403, "url domain not allowed")
+        raise HTTPException(403)
     # 2. 速率限制
     _check_rate(request.client.host if request.client else "unknown")
     now = int(time.time())

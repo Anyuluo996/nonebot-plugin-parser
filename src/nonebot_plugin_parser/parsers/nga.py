@@ -105,7 +105,12 @@ class NGAParser(BaseParser):
                     impersonate="chrome110",
                     timeout=NGA_REQUEST_TIMEOUT,
                 ) as session:
-                    return await session.get(api_url, headers=self.headers, allow_redirects=True, proxies=proxies)
+                    return await session.get(
+                        api_url,
+                        headers=self.headers,
+                        allow_redirects=True,
+                        proxies=proxies,  # type: ignore[arg-type]
+                    )
 
             try:
                 resp = await asyncio.wait_for(_do_request(), timeout=NGA_REQUEST_TIMEOUT)
@@ -125,7 +130,7 @@ class NGAParser(BaseParser):
         """解析 NGA JSON 响应。
 
         content-type 为 text/json;charset=UTF-8。响应体可能直接是 {...}，
-        也可能带 `window.script_muti_get_var_store=` 之类的 JS 赋值前缀。
+        也可能带 `window.xxx=` 之类的 JS 赋值前缀（NGA 原始变量名有拼写错误）。
         """
         body = text.strip()
         # 去掉 `window.xxx=` 前缀，取首个 JSON 对象

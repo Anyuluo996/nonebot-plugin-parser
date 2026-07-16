@@ -3,15 +3,12 @@ services:
     build: .
     container_name: parser-failure-server
     restart: unless-stopped
-    # 仅监听 127.0.0.1，不对外暴露端口；由宿主 nginx 反代
-    ports:
-      - "127.0.0.1:8317:8000"
+    # host 网络 + 监听 127.0.0.1:8317，不对外暴露；由宿主 nginx/openresty 反代
+    network_mode: host
     environment:
       - API_KEY=${API_KEY}
     volumes:
       - ./data:/data
-    read_only: true
-    tmpfs:
-      - /tmp
     security_opt:
       - no-new-privileges:true
+    command: ["uvicorn", "server:app", "--host", "127.0.0.1", "--port", "8317"]

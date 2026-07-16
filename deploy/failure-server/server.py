@@ -2,11 +2,15 @@
 
 单文件 FastAPI 服务，SQLite 存储。仅监听 127.0.0.1，经 nginx 反代对外。
 
-安全：
-- Bearer API key 鉴权（所有端点）
+安全模型：
+- POST /api/report 公开（无需 key），靠多重校验防滥用：
+  · URL 域名白名单（必须来自已知平台）
+  · platform 必须在已知枚举集合
+  · 速率限制（5 次/分钟/IP）
+  · 请求体大小上限 + 字段长度上限
+  · 服务端去重（同 url_hash 只更新一行）
+- GET /api/failures、GET /（HTML）需 Bearer key（防他人读数据）
 - key 从环境变量 API_KEY 读，长度校验 ≥32
-- pydantic 输入校验 + 字段长度上限
-- 速率限制（内存令牌桶，每 IP）
 - 非 root 运行
 """
 
@@ -18,9 +22,10 @@ import sqlite3
 from pathlib import Path
 from contextlib import contextmanager
 from collections import defaultdict
+from urllib.parse import urlparse
 
 from fastapi import Query, Header, FastAPI, Request, HTTPException
-from pydantic import Field, BaseModel
+from pydantic import Field, BaseModel, field_validator
 from fastapi.responses import HTMLResponse
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -31,12 +36,97 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", "/data"))
 DB_PATH = DATA_DIR / "failures.db"
 RETENTION_DAYS = 90
 
-# 速率限制：每 IP 每分钟最多 N 次 report
-_RATE_LIMIT = 10
+# 速率限制：每 IP 每分钟最多 N 次 report（公开端点，收紧）
+_RATE_LIMIT = 5
 _RATE_WINDOW = 60
 _rate_buckets: dict[str, list[float]] = defaultdict(list)
 
 MIN_KEY_LEN = 32
+
+# 已知平台域名白名单（POST 上报的 url 必须命中其一，子域也算）
+ALLOWED_DOMAINS: frozenset[str] = frozenset(
+    {
+        # bilibili
+        "bilibili.com",
+        "b23.tv",
+        "biligame.com",
+        # douyin
+        "douyin.com",
+        "iesdouyin.com",
+        # nga
+        "nga.178.com",
+        "ngabbs.com",
+        "bbs.nga.cn",
+        "nga.cn",
+        # weibo
+        "weibo.com",
+        "weibo.cn",
+        # xiaohongshu
+        "xiaohongshu.com",
+        "xhslink.com",
+        # kuaishou
+        "kuaishou.com",
+        "chenzhongtech.com",
+        # twitter / x
+        "twitter.com",
+        "x.com",
+        # acfun
+        "acfun.cn",
+        # youtube / tiktok
+        "youtube.com",
+        "youtu.be",
+        "tiktok.com",
+        # telegram
+        "t.me",
+        "telegram.me",
+        # zhihu
+        "zhihu.com",
+        # tieba
+        "tieba.baidu.com",
+        # 其他平台
+        "lofter.com",
+        "coolapk.com",
+        "hupu.com",
+        "heybox.com",
+        "buff.163.com",
+        "duitang.com",
+        "music.163.com",
+        "kugou.com",
+        "pixiv.net",
+        "pixivision.net",
+    }
+)
+
+# 已知 platform 值（POST 上报的 platform 必须命中其一）
+ALLOWED_PLATFORMS: frozenset[str] = frozenset(
+    {
+        "acfun",
+        "bilibili",
+        "buff",
+        "coolapk",
+        "douyin",
+        "duitang",
+        "heybox",
+        "hupu",
+        "illu",
+        "kuaishou",
+        "kugou",
+        "lofter",
+        "nga",
+        "netease",
+        "pixiv",
+        "qsmusic",
+        "qqmusic",
+        "telegram",
+        "tieba",
+        "tiktok",
+        "twitter",
+        "weibo",
+        "xiaohongshu",
+        "youtube",
+        "zhihu",
+    }
+)
 
 app = FastAPI(title="parser-failure-server", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -52,7 +142,7 @@ def _startup_checks():
     _init_db()
 
 
-# ── 鉴权 ─────────────────────────────────────────────────────────
+# ── 鉴权（仅 GET 端点用） ────────────────────────────────────────
 
 
 def _check_auth(authorization: str | None = Header(None)) -> None:
@@ -86,6 +176,21 @@ def _check_rate(client_ip: str) -> None:
     _rate_buckets[client_ip].append(now)
 
 
+def _is_allowed_domain(url: str) -> bool:
+    """url 的 host 命中白名单（精确或为白名单域名的子域）即放行。"""
+    try:
+        host = urlparse(url).hostname or ""
+    except (ValueError, TypeError):
+        return False
+    host = host.lower()
+    if not host:
+        return False
+    for d in ALLOWED_DOMAINS:
+        if host == d or host.endswith("." + d):
+            return True
+    return False
+
+
 # ── SQLite ───────────────────────────────────────────────────────
 
 
@@ -106,8 +211,8 @@ def _init_db():
             """
             CREATE TABLE IF NOT EXISTS failures (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                url_hash TEXT NOT NULL,            -- url 的 sha256，避免日志泄露 token
-                url TEXT NOT NULL,                 -- 完整 url（仅存储，日志不打印）
+                url_hash TEXT NOT NULL UNIQUE,        -- UNIQUE：同 url 去重
+                url TEXT NOT NULL,
                 platform TEXT NOT NULL,
                 error TEXT NOT NULL,
                 count INTEGER DEFAULT 1,
@@ -121,6 +226,11 @@ def _init_db():
         conn.execute("CREATE INDEX IF NOT EXISTS idx_received ON failures(received_at DESC)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_url_hash ON failures(url_hash)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_platform ON failures(platform)")
+        # 兼容旧表（无 UNIQUE）：尝试加约束，已存在则忽略
+        try:
+            conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_url_hash ON failures(url_hash)")
+        except sqlite3.OperationalError:
+            pass
 
 
 def _url_hash(url: str) -> str:
@@ -139,29 +249,51 @@ class ReportPayload(BaseModel):
     count: int = Field(default=1, ge=1, le=1000000)
     retries: int = Field(default=0, ge=0, le=1000000)
 
+    @field_validator("platform")
+    @classmethod
+    def _platform_must_be_known(cls, v: str) -> str:
+        if v not in ALLOWED_PLATFORMS:
+            raise ValueError(f"unknown platform: {v}")
+        return v
+
+    @field_validator("url")
+    @classmethod
+    def _url_must_be_whitelisted(cls, v: str) -> str:
+        # 实例方法无法访问 frozenset，校验放端点里（需 _is_allowed_domain）
+        return v
+
 
 # ── 端点 ─────────────────────────────────────────────────────────
 
 
 @app.post("/api/report")
-async def report(
-    payload: ReportPayload,
-    request: Request,
-    authorization: str | None = Header(None),
-):
-    _check_auth(authorization)
+async def report(payload: ReportPayload, request: Request):
+    """公开上报端点（无需 key）。靠白名单/枚举/限流/去重防滥用。"""
+    # 1. URL 域名白名单
+    if not _is_allowed_domain(payload.url):
+        raise HTTPException(403, "url domain not allowed")
+    # 2. 速率限制
     _check_rate(request.client.host if request.client else "unknown")
     now = int(time.time())
+    uh = _url_hash(payload.url)
     with _get_db() as conn:
+        # 3. 去重：同 url_hash 存在则更新，不存在则插入
         conn.execute(
             """
             INSERT INTO failures
                 (url_hash, url, platform, error, count, retries,
                  first_seen, last_seen, received_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(url_hash) DO UPDATE SET
+                error=excluded.error,
+                platform=excluded.platform,
+                count=excluded.count,
+                retries=excluded.retries,
+                last_seen=excluded.last_seen,
+                received_at=excluded.received_at
             """,
             (
-                _url_hash(payload.url),
+                uh,
                 payload.url,
                 payload.platform,
                 payload.error,
@@ -173,13 +305,12 @@ async def report(
             ),
         )
     # 日志脱敏：只记 hash + platform，不记完整 url
-    log.info("[report] platform=%s url_hash=%s", payload.platform, _url_hash(payload.url))
+    log.info("[report] platform=%s url_hash=%s", payload.platform, uh)
     return {"status": "ok"}
 
 
 @app.get("/api/failures")
 async def list_failures(
-    request: Request,
     authorization: str | None = Header(None),
     limit: int = Query(default=50, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
@@ -208,7 +339,7 @@ async def list_failures(
 
 @app.get("/", response_class=HTMLResponse)
 async def index(authorization: str | None = Header(None)):
-    """简单 HTML 页面展示最近失败（需 key，浏览器用 ?token= 或 Header 插件）。"""
+    """简单 HTML 页面展示最近失败（需 key）。"""
     _check_auth(authorization)
     with _get_db() as conn:
         rows = conn.execute(

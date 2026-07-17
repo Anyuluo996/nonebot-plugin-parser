@@ -217,7 +217,7 @@ async def aggregate_search(
     parser: "BaseParser",
     keyword: str,
     platforms: list[PlatformName],
-    per_service_limit: int = DEFAULT_PER_SERVICE_LIMIT,
+    per_service_limit: int | None = None,
     global_limit: int = DEFAULT_GLOBAL_LIMIT,
 ) -> list[SearchItem]:
     """并发搜索多个服务并合并结果。
@@ -230,13 +230,20 @@ async def aggregate_search(
         parser: 任意已实例化的 ``BaseParser``,仅用其 ``request`` 封装发 HTTP。
         keyword: 搜索关键词。
         platforms: 要搜索的服务列表。
-        per_service_limit: 单服务搜索返回条数上限。
+        per_service_limit: 单服务搜索返回条数上限。``None``（默认）时自动计算:
+            指定单服务 = ``global_limit``（搜够全部）;
+            多服务并发 = 均摊 + 冗余（单服务失败由其他补齐）。
         global_limit: 合并后全局保留条数上限。
 
     Returns:
         合并去重后的 ``SearchItem`` 列表（按平台顺序排列）。
         全部服务失败/无结果时返回空列表（由上层决定是否提示）。
     """
+    # 单服务直接搜够 global_limit; 多服务并发时均摊并加冗余,以便单点失败由其他补齐
+    if per_service_limit is None:
+        n = max(1, len(platforms))
+        per_service_limit = global_limit if n == 1 else max(DEFAULT_PER_SERVICE_LIMIT, global_limit // n + 2)
+
     # 运行时按名字解析函数引用（而非用模块级 _SEARCHERS 字典的快照）,
     # 以便测试用 unittest.mock.patch 替换 search_netease/qqmusic/kugou 生效。
     import sys

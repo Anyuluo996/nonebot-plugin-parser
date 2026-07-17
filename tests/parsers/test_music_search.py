@@ -232,6 +232,50 @@ async def test_aggregate_search_dedup():
     assert len(merged) == 1
 
 
+@pytest.mark.asyncio
+async def test_aggregate_search_single_service_default_limit():
+    """指定单服务(par网易云 等)时, 默认 per_service_limit=global_limit=10, 搜够全部。
+
+    验证: 不显式传 per_service_limit 时, 单服务场景应向 search_* 请求 10 条,
+    而非默认的 5 条 —— 保证指定服务点歌也能展示 10 首候选。
+    """
+    from nonebot_plugin_parser.music_search import aggregate_search
+
+    parser = MagicMock()
+    # 捕获 search_netease 实际被调用时的 limit 参数
+    captured_limit = {}
+
+    async def _fake_netease(_p, _kw, limit):
+        captured_limit["limit"] = limit
+        return [SearchItem("netease", str(i), f"歌{i}", "a") for i in range(limit)]  # type: ignore[arg-type]
+
+    with patch("nonebot_plugin_parser.music_search.search_netease", new=_fake_netease):
+        await aggregate_search(parser, "kw", ["netease"])  # 单服务, 不传 per_service_limit
+
+    assert captured_limit.get("limit") == 10, "单服务默认应搜够 global_limit(10)"
+
+
+@pytest.mark.asyncio
+async def test_aggregate_search_multi_service_default_limit():
+    """默认三服务并发时, per_service_limit 自动均摊+冗余(>=5)。"""
+    from nonebot_plugin_parser.music_search import aggregate_search
+
+    parser = MagicMock()
+    captured_limits: list[int] = []
+
+    async def _fake(_p, _kw, limit):
+        captured_limits.append(limit)
+        return []
+
+    with patch("nonebot_plugin_parser.music_search.search_netease", new=_fake), patch(
+        "nonebot_plugin_parser.music_search.search_qqmusic", new=_fake
+    ), patch("nonebot_plugin_parser.music_search.search_kugou", new=_fake):
+        await aggregate_search(parser, "kw", ["netease", "qqmusic", "kugou"])
+
+    # 三服务并发: global_limit(10)//3 + 2 = 5, 与单服务的 10 不同
+    assert all(l == 5 for l in captured_limits), f"多服务默认应均摊+冗余, got {captured_limits}"
+
+
 def test_search_item_display():
     """SearchItem.display 文本格式。"""
     from nonebot_plugin_parser.music_search import SearchItem

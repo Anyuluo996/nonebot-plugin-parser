@@ -31,9 +31,7 @@ if TYPE_CHECKING:
 PlatformName = Literal["netease", "qqmusic", "kugou"]
 """点歌支持的音乐服务标识"""
 
-# 默认聚合后保留的全局候选上限
-DEFAULT_GLOBAL_LIMIT = 10
-# 默认单服务搜索返回条数（略高于 global_limit/3,以便单点失败时其他服务补齐）
+# 每个服务固定搜索返回条数: 三服务全成功时合计 15 首(全部展示, 不截断)
 DEFAULT_PER_SERVICE_LIMIT = 5
 
 # 网易云公开 Web 搜索接口（无需登录/加密）
@@ -139,7 +137,8 @@ async def search_qqmusic(
     try:
         async with Client() as client:
             resp = await client.search.general_search(keyword, page=1, num=limit)
-        items_list = resp.song.items if resp.song else []
+        # qqmusic_api 的 num 参数实测不生效(固定返回 30 条),这里显式截断到 limit
+        items_list = (resp.song.items if resp.song else [])[:limit]
     except Exception as e:
         logger.debug(f"QQ 音乐搜索失败,静默跳过: {e!r}")
         return []
@@ -217,33 +216,28 @@ async def aggregate_search(
     parser: "BaseParser",
     keyword: str,
     platforms: list[PlatformName],
-    per_service_limit: int | None = None,
-    global_limit: int = DEFAULT_GLOBAL_LIMIT,
+    per_service_limit: int = DEFAULT_PER_SERVICE_LIMIT,
 ) -> list[SearchItem]:
     """并发搜索多个服务并合并结果。
 
     单服务失败（异常或返回空）被静默忽略,不向调用方暴露失败原因。
-    合并顺序按 ``platforms`` 给定的顺序（默认 ``par点歌`` 时为 网易云 → QQ → 酷狗）,
-    最后截断到 ``global_limit`` 条。
+    合并顺序按 ``platforms`` 给定的顺序（默认 ``par点歌`` 时为 网易云 → QQ → 酷狗）。
+
+    每个服务固定搜 ``per_service_limit`` 条,全部展示不截断:
+    - 三服务全成功: 3 × 5 = 最多 15 条（去重后实际可能更少）
+    - 单服务（``par网易云`` 等）: 5 条
+    - 单服务失败: 由其他服务补齐,不向用户暴露失败
 
     Args:
         parser: 任意已实例化的 ``BaseParser``,仅用其 ``request`` 封装发 HTTP。
         keyword: 搜索关键词。
         platforms: 要搜索的服务列表。
-        per_service_limit: 单服务搜索返回条数上限。``None``（默认）时自动计算:
-            指定单服务 = ``global_limit``（搜够全部）;
-            多服务并发 = 均摊 + 冗余（单服务失败由其他补齐）。
-        global_limit: 合并后全局保留条数上限。
+        per_service_limit: 每个服务搜索返回条数,默认 5。
 
     Returns:
         合并去重后的 ``SearchItem`` 列表（按平台顺序排列）。
         全部服务失败/无结果时返回空列表（由上层决定是否提示）。
     """
-    # 单服务直接搜够 global_limit; 多服务并发时均摊并加冗余,以便单点失败由其他补齐
-    if per_service_limit is None:
-        n = max(1, len(platforms))
-        per_service_limit = global_limit if n == 1 else max(DEFAULT_PER_SERVICE_LIMIT, global_limit // n + 2)
-
     # 运行时按名字解析函数引用（而非用模块级 _SEARCHERS 字典的快照）,
     # 以便测试用 unittest.mock.patch 替换 search_netease/qqmusic/kugou 生效。
     import sys
@@ -272,6 +266,4 @@ async def aggregate_search(
                 continue
             seen.add(key)
             merged.append(it)
-            if len(merged) >= global_limit:
-                return merged
     return merged

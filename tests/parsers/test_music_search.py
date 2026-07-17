@@ -152,9 +152,7 @@ async def test_aggregate_search_single_failure_fallback():
         "nonebot_plugin_parser.music_search.search_kugou",
         new=AsyncMock(return_value=kugou_items),
     ):
-        merged = await aggregate_search(
-            parser, "kw", ["netease", "qqmusic", "kugou"], per_service_limit=5, global_limit=10
-        )
+        merged = await aggregate_search(parser, "kw", ["netease", "qqmusic", "kugou"])
     # QQ 失败静默, 网易云 + 酷狗 2 条都在
     assert len(merged) == 2
     platforms = [it.platform for it in merged]
@@ -184,31 +182,50 @@ async def test_aggregate_search_all_fail_empty():
 
 
 @pytest.mark.asyncio
-async def test_aggregate_search_global_limit_truncation():
-    """合并后截断到 global_limit。"""
+async def test_aggregate_search_all_three_services_present_no_truncation():
+    """三服务全成功时各 5 条全部展示, 不截断, 三个平台都出现。
+
+    回归测试: 修复前 per_service_limit=5 + global_limit=10 导致网易云+QQ 已凑满 10,
+    酷狗被完全截掉; 修复后去掉 global_limit 截断, 15 条全部展示。
+    """
     from nonebot_plugin_parser.music_search import SearchItem, aggregate_search
 
     parser = MagicMock()
-    netease_items = [SearchItem("netease", str(i), f"歌{i}", "a") for i in range(5)]  # type: ignore[arg-type]
-    qq_items = [SearchItem("qqmusic", str(i), f"Q{i}", "b") for i in range(5)]  # type: ignore[arg-type]
-    kugou_items = [SearchItem("kugou", str(i), f"K{i}", "c") for i in range(5)]  # type: ignore[arg-type]
-    with patch(
-        "nonebot_plugin_parser.music_search.search_netease",
-        new=AsyncMock(return_value=netease_items),
-    ), patch(
-        "nonebot_plugin_parser.music_search.search_qqmusic",
-        new=AsyncMock(return_value=qq_items),
-    ), patch(
-        "nonebot_plugin_parser.music_search.search_kugou",
-        new=AsyncMock(return_value=kugou_items),
-    ):
-        merged = await aggregate_search(
-            parser, "kw", ["netease", "qqmusic", "kugou"], per_service_limit=5, global_limit=7
-        )
-    assert len(merged) == 7
-    # 顺序按平台: 网易云 5 条先, 然后 QQ 前 2 条
-    assert merged[0].platform == "netease"
-    assert merged[6].platform == "qqmusic"
+    netease = [SearchItem("netease", f"n{i}", f"歌{i}", "a") for i in range(5)]  # type: ignore[arg-type]
+    qq = [SearchItem("qqmusic", f"q{i}", f"Q{i}", "b") for i in range(5)]  # type: ignore[arg-type]
+    kugou = [SearchItem("kugou", f"k{i}", f"K{i}", "c") for i in range(5)]  # type: ignore[arg-type]
+    with patch("nonebot_plugin_parser.music_search.search_netease", new=AsyncMock(return_value=netease)), patch(
+        "nonebot_plugin_parser.music_search.search_qqmusic", new=AsyncMock(return_value=qq)
+    ), patch("nonebot_plugin_parser.music_search.search_kugou", new=AsyncMock(return_value=kugou)):
+        merged = await aggregate_search(parser, "kw", ["netease", "qqmusic", "kugou"])
+
+    # 3 × 5 = 15 条全部展示, 不截断
+    assert len(merged) == 15
+    # 三个平台都出现, 顺序: 网易云 5 → QQ 5 → 酷狗 5
+    platforms_present = {it.platform for it in merged}
+    assert platforms_present == {"netease", "qqmusic", "kugou"}
+    assert [it.platform for it in merged[:5]] == ["netease"] * 5
+    assert [it.platform for it in merged[5:10]] == ["qqmusic"] * 5
+    assert [it.platform for it in merged[10:]] == ["kugou"] * 5
+
+
+@pytest.mark.asyncio
+async def test_aggregate_search_single_service_returns_5():
+    """指定单服务(par网易云 等)默认搜 5 条(与三服务时每服务条数一致)。"""
+    from nonebot_plugin_parser.music_search import SearchItem, aggregate_search
+
+    parser = MagicMock()
+    captured_limit = {}
+
+    async def _fake_netease(_p, _kw, limit):
+        captured_limit["limit"] = limit
+        return [SearchItem("netease", str(i), f"歌{i}", "a") for i in range(limit)]  # type: ignore[arg-type]
+
+    with patch("nonebot_plugin_parser.music_search.search_netease", new=_fake_netease):
+        merged = await aggregate_search(parser, "kw", ["netease"])
+
+    assert captured_limit.get("limit") == 5, "单服务默认 per_service_limit=5"
+    assert len(merged) == 5
 
 
 @pytest.mark.asyncio
@@ -231,49 +248,6 @@ async def test_aggregate_search_dedup():
         merged = await aggregate_search(parser, "kw", ["netease", "qqmusic", "kugou"])
     assert len(merged) == 1
 
-
-@pytest.mark.asyncio
-async def test_aggregate_search_single_service_default_limit():
-    """指定单服务(par网易云 等)时, 默认 per_service_limit=global_limit=10, 搜够全部。
-
-    验证: 不显式传 per_service_limit 时, 单服务场景应向 search_* 请求 10 条,
-    而非默认的 5 条 —— 保证指定服务点歌也能展示 10 首候选。
-    """
-    from nonebot_plugin_parser.music_search import aggregate_search
-
-    parser = MagicMock()
-    # 捕获 search_netease 实际被调用时的 limit 参数
-    captured_limit = {}
-
-    async def _fake_netease(_p, _kw, limit):
-        captured_limit["limit"] = limit
-        return [SearchItem("netease", str(i), f"歌{i}", "a") for i in range(limit)]  # type: ignore[arg-type]
-
-    with patch("nonebot_plugin_parser.music_search.search_netease", new=_fake_netease):
-        await aggregate_search(parser, "kw", ["netease"])  # 单服务, 不传 per_service_limit
-
-    assert captured_limit.get("limit") == 10, "单服务默认应搜够 global_limit(10)"
-
-
-@pytest.mark.asyncio
-async def test_aggregate_search_multi_service_default_limit():
-    """默认三服务并发时, per_service_limit 自动均摊+冗余(>=5)。"""
-    from nonebot_plugin_parser.music_search import aggregate_search
-
-    parser = MagicMock()
-    captured_limits: list[int] = []
-
-    async def _fake(_p, _kw, limit):
-        captured_limits.append(limit)
-        return []
-
-    with patch("nonebot_plugin_parser.music_search.search_netease", new=_fake), patch(
-        "nonebot_plugin_parser.music_search.search_qqmusic", new=_fake
-    ), patch("nonebot_plugin_parser.music_search.search_kugou", new=_fake):
-        await aggregate_search(parser, "kw", ["netease", "qqmusic", "kugou"])
-
-    # 三服务并发: global_limit(10)//3 + 2 = 5, 与单服务的 10 不同
-    assert all(l == 5 for l in captured_limits), f"多服务默认应均摊+冗余, got {captured_limits}"
 
 
 def test_search_item_display():

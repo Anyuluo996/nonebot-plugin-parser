@@ -255,7 +255,9 @@ async def aggregate_search(
     merged: list[SearchItem] = []
     seen: set[tuple[str, str, str]] = set()  # (platform, song_id, name) 粗去重
     for items in results:
-        if isinstance(items, Exception):
+        # isinstance(BaseException): 让 pyright 收窄掉 gather(return_exceptions=True)
+        # 的所有异常分支(Exception + KeyboardInterrupt/SystemExit), 避免联合类型不可迭代报错
+        if isinstance(items, BaseException):
             # 该服务异常,静默跳过(logger.debug 已在各 search_* 内记录,
             # 这里是 gather 层兜底,防止单服务异常炸整个点歌)
             logger.debug(f"aggregate_search: 某服务异常被静默跳过: {items!r}")

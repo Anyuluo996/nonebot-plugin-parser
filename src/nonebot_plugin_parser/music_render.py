@@ -76,7 +76,7 @@ def _get_font(size: int) -> ImageFont.FreeTypeFont:
 def _text_width(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont) -> int:
     """测量文本宽度（兼容 Pillow < 10 的 getsize 与 >= 10 的 getbbox）。"""
     bbox = draw.textbbox((0, 0), text, font=font)
-    return bbox[2] - bbox[0]
+    return int(bbox[2] - bbox[0])
 
 
 def _truncate(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, max_width: int) -> str:

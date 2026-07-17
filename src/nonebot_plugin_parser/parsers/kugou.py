@@ -26,6 +26,35 @@ class KuGouParser(BaseParser):
 
     platform: ClassVar[Platform] = Platform(name=PlatformEnum.KUGOU, display_name="酷狗音乐")
 
+    async def _parse_by_hash(self, song_hash: str, share_url: str):
+        """统一解析流程（已知 song hash）：详情 → 播放地址 → 歌词 + 封面。
+
+        供 ``_parse_kugou``（链接解析）和点歌选择（``music_order``）复用,
+        行为与原内联实现完全一致。
+        """
+        detail = await kugou_api.get_song_detail(self, song_hash)
+        if not detail:
+            raise IgnoreException("未找到该歌曲")
+
+        audio_url = await kugou_api.get_play_url(self, song_hash)
+        if not audio_url:
+            raise IgnoreException("无法获取音频下载地址（可能 VIP/无版权/被风控）")
+
+        lyric = await kugou_api.get_lyric(self, song_hash, duration=detail.get("duration", 0))
+
+        cover_image = None
+        if detail.get("pic_url"):
+            cover_image = self.create_cover_image_task(detail["pic_url"])
+
+        return self.result(
+            title=detail["name"],
+            author=self.create_author(detail["author"]),
+            url=share_url,
+            contents=[self.create_audio_content(audio_url, duration=detail.get("duration", 0))],
+            cover_image=cover_image,
+            extra={"lyric": lyric},
+        )
+
     @handle(
         "kugou.com",
         # 匹配到 URL 末尾，避免 share/song.html?chain= 被截断在 .html 处
@@ -54,25 +83,4 @@ class KuGouParser(BaseParser):
         if not song_hash:
             raise IgnoreException("无法从酷狗链接提取歌曲 hash")
 
-        detail = await kugou_api.get_song_detail(self, song_hash)
-        if not detail:
-            raise IgnoreException("未找到该歌曲")
-
-        audio_url = await kugou_api.get_play_url(self, song_hash)
-        if not audio_url:
-            raise IgnoreException("无法获取音频下载地址（可能 VIP/无版权/被风控）")
-
-        lyric = await kugou_api.get_lyric(self, song_hash, duration=detail.get("duration", 0))
-
-        cover_image = None
-        if detail.get("pic_url"):
-            cover_image = self.create_cover_image_task(detail["pic_url"])
-
-        return self.result(
-            title=detail["name"],
-            author=self.create_author(detail["author"]),
-            url=share_url,
-            contents=[self.create_audio_content(audio_url, duration=detail.get("duration", 0))],
-            cover_image=cover_image,
-            extra={"lyric": lyric},
-        )
+        return await self._parse_by_hash(song_hash, share_url=share_url)

@@ -1,7 +1,7 @@
 # 国内服务器构建若 docker.io 拉不动，先手动拉镜像源再 tag：
 #   docker pull docker.m.daocloud.io/library/python:3.12-slim
 #   docker tag docker.m.daocloud.io/library/python:3.12-slim python:3.12-slim
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # 非 root 用户
 RUN useradd -r -u 1000 -m -d /home/app appuser

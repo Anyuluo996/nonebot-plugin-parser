@@ -169,3 +169,27 @@ async def test_download_file_retries_after_redirected_567(tmp_path):
     assert downloader.client.calls == 4
     assert path.exists()
     assert path.read_bytes() == b"helloworld"
+
+
+def test_bypass_proxy_default_direct(monkeypatch):
+    """默认 parser_douyin_cdn_via_proxy=False：抖音 CDN 域名绕过代理（直连）"""
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.download import _bypass_proxy
+
+    monkeypatch.setattr(pconfig, "parser_douyin_cdn_via_proxy", False)
+    # 抖音 CDN 域名 → 直连（绕过代理）
+    assert _bypass_proxy("https://p5-sign.douyinpic.com/cover.webp") is True
+    assert _bypass_proxy("https://aweme.snssdk.com/aweme/v1/play/?video_id=x") is True
+    # 非抖音域名 → 不绕过（走代理）
+    assert _bypass_proxy("https://example.com/video.mp4") is False
+
+
+def test_bypass_proxy_when_via_proxy(monkeypatch):
+    """parser_douyin_cdn_via_proxy=True：抖音 CDN 域名改走代理"""
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.download import _bypass_proxy
+
+    monkeypatch.setattr(pconfig, "parser_douyin_cdn_via_proxy", True)
+    # 抖音 CDN 域名 → 不绕过（走代理）
+    assert _bypass_proxy("https://p5-sign.douyinpic.com/cover.webp") is False
+    assert _bypass_proxy("https://aweme.snssdk.com/aweme/v1/play/?video_id=x") is False

@@ -51,8 +51,11 @@ _CURL_ONLY_DOMAINS: frozenset[str] = frozenset(
     }
 )
 
-# 不走代理的域名（抖音 CDN 在国内，走代理反而容易 TLS 握手失败）
-_NO_PROXY_DOMAINS: frozenset[str] = frozenset(
+# 抖音相关 CDN 域名（国内 CDN，走代理反而容易 TLS 握手失败）。
+# 默认这些域名直连；当配置 parser_douyin_cdn_via_proxy=True 时改走 parser_proxy
+#（适用于直连抖音 CDN 不通的部署环境）。将来若有非抖音的直连域名，加到
+# _NO_PROXY_ALWAYS 即可，_bypass_proxy 会自动让它们始终直连。
+_DOUYIN_CDN_DOMAINS: frozenset[str] = frozenset(
     {
         "snssdk.com",
         "qtaeixd.com",
@@ -70,6 +73,13 @@ _NO_PROXY_DOMAINS: frozenset[str] = frozenset(
         "qrstuvwxyzab.com",
     }
 )
+
+# 默认不走代理的域名（当前仅抖音 CDN）。单一数据源，避免维护两份相同列表。
+_NO_PROXY_DOMAINS: frozenset[str] = _DOUYIN_CDN_DOMAINS
+
+# 即使 parser_douyin_cdn_via_proxy=True 也始终直连的域名（非抖音）。
+# 当前为空；将来若有非抖音的直连白名单域名，加到这里即可，_bypass_proxy 会自动生效。
+_NO_PROXY_ALWAYS: frozenset[str] = frozenset()
 _REDIRECT_STATUSES: frozenset[int] = frozenset({301, 302, 303, 307, 308})
 
 
@@ -114,7 +124,14 @@ def _use_curl(url: str) -> bool:
 
 
 def _bypass_proxy(url: str) -> bool:
-    """判断该 URL 是否应绕过代理（抖音等国内 CDN）"""
+    """判断该 URL 是否应绕过代理（抖音等国内 CDN）
+
+    当配置 ``parser_douyin_cdn_via_proxy=True`` 时，抖音 CDN 域名不再绕过代理，
+    改走 ``parser_proxy``（适用于直连抖音 CDN 不通的部署环境）。
+    """
+    if pconfig.douyin_cdn_via_proxy:
+        # 抖音 CDN 改走代理：仅始终直连白名单（非抖音）保留直连
+        return _match_domain(url, _NO_PROXY_ALWAYS)
     return _match_domain(url, _NO_PROXY_DOMAINS)
 
 
@@ -126,6 +143,7 @@ async def _download_by_curl(
 ) -> Path:
     """使用 curl_cffi 下载文件（模拟浏览器绕过检测），支持重试"""
     from curl_cffi.requests import AsyncSession
+    from curl_cffi.const import CurlOpt, CurlIpResolve
 
     max_size_bytes = pconfig.max_size * 1024 * 1024
     impersonate = "chrome110"
@@ -144,6 +162,10 @@ async def _download_by_curl(
             async with AsyncSession(
                 impersonate=impersonate,
                 timeout=DOWNLOAD_TIMEOUT,  # type: ignore[arg-type]
+                # 强制 IPv4：部分部署环境无 IPv6 出口但 DNS 返回 AAAA 记录，
+                # curl 默认优先尝试 IPv6 会先踩坑（超时后回退 IPv4，徒增延迟甚至 reset）。
+                # 实测对走代理路径无影响，纯兜底。
+                curl_options={CurlOpt.IPRESOLVE: CurlIpResolve.V4},
             ) as session:
                 # 流式下载：边读边累计大小，超限立即中止，避免把整个大文件载入内存
                 resp = await session.get(

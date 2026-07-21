@@ -53,7 +53,7 @@ _CURL_ONLY_DOMAINS: frozenset[str] = frozenset(
 
 # 抖音相关 CDN 域名（国内 CDN，走代理反而容易 TLS 握手失败）。
 # 默认这些域名直连；当配置 parser_douyin_cdn_via_proxy=True 时改走 parser_proxy
-#（适用于直连抖音 CDN 不通的部署环境）。将来若有非抖音的直连域名，加到
+# （适用于直连抖音 CDN 不通的部署环境）。将来若有非抖音的直连域名，加到
 # _NO_PROXY_ALWAYS 即可，_bypass_proxy 会自动让它们始终直连。
 _DOUYIN_CDN_DOMAINS: frozenset[str] = frozenset(
     {
@@ -142,8 +142,8 @@ async def _download_by_curl(
     max_retries: int = 3,
 ) -> Path:
     """使用 curl_cffi 下载文件（模拟浏览器绕过检测），支持重试"""
-    from curl_cffi.requests import AsyncSession
     from curl_cffi.const import CurlOpt, CurlIpResolve
+    from curl_cffi.requests import AsyncSession
 
     max_size_bytes = pconfig.max_size * 1024 * 1024
     impersonate = "chrome110"

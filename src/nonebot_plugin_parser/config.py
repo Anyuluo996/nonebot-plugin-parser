@@ -65,6 +65,13 @@ class Config(BaseModel):
     推荐 SUPERUSER 指令 ``dycookie <整条 Cookie>`` 热更新（持久化, 无需重启）,
     ``dycookie查看`` 核对当前生效值。
     """
+    parser_douyin_cdn_via_proxy: bool = False
+    """抖音 CDN 域名（douyinpic.com / snssdk.com 等）下载是否走代理。
+
+    默认 False（直连，适合国内可直连抖音 CDN 的机器）。若部署机器直连抖音 CDN
+    不通（如海外 / 受网络限制的服务器，表现为下载超时或 Connection reset），
+    设为 True 让这些域名改走 ``parser_proxy`` 代理。
+    """
     parser_need_upload: bool = False
     """是否需要上传音频文件"""
     parser_use_base64: bool = False
@@ -262,6 +269,11 @@ class Config(BaseModel):
         if self.parser_douyin_cookie is None:
             return None
         return self.parser_douyin_cookie.strip() or None
+
+    @property
+    def douyin_cdn_via_proxy(self) -> bool:
+        """抖音 CDN 域名是否走代理下载"""
+        return self.parser_douyin_cdn_via_proxy
 
     @property
     def need_upload(self) -> bool:

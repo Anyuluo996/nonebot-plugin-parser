@@ -271,16 +271,16 @@ async def _netease_login(matcher: Matcher, parser: BaseParser):
     import asyncio
 
     import qrcode
-    from httpx import Cookies
 
     from ..parsers.netease import credential as netease_cred
 
     await matcher.send("正在生成网易云登录二维码…")
     try:
-        # 1. 获取 unikey
+        # 1. 获取 unikey（必须带 type=1，否则返回 400 参数错误）
         resp = await parser.request(
             "https://music.163.com/api/login/qrcode/unikey",
             method="POST",
+            params={"type": 1},
             headers={"Referer": "https://music.163.com/"},
             raise_for_status=False,
         )
@@ -301,16 +301,15 @@ async def _netease_login(matcher: Matcher, parser: BaseParser):
             await asyncio.sleep(1.5)
             resp = await parser.request(
                 "https://music.163.com/api/login/qrcode/client/login",
-                params={"key": unikey},
+                params={"key": unikey, "type": 1},
                 headers={"Referer": "https://music.163.com/"},
                 raise_for_status=False,
             )
             data = resp.json()
             code = data.get("code")
             if code == 803:
-                # 登录成功：Set-Cookie 在 resp.cookies，拼成完整 cookie 串
-                cookies: Cookies = resp.cookies
-                cookie_str = "; ".join(f"{k}={v}" for k, v in cookies.items())
+                # 登录成功：公开 API 的 cookie 在响应体 cookie 字段（非 Set-Cookie 头）
+                cookie_str = data.get("cookie", "")
                 if "MUSIC_U" not in cookie_str:
                     await matcher.finish("登录响应异常（未拿到 MUSIC_U），请重试")
                     return

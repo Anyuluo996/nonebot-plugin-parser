@@ -12,6 +12,7 @@ from ..download import DOWNLOADER
 from ..constants import IOS_HEADER, COMMON_HEADER, ANDROID_HEADER, COMMON_TIMEOUT
 from ..constants import DOWNLOAD_TIMEOUT as DOWNLOAD_TIMEOUT
 from ..constants import PlatformEnum as PlatformEnum
+from ..exception import TipException as TipException
 from ..exception import ParseException
 from ..exception import IgnoreException as IgnoreException
 from ..exception import DownloadException as DownloadException

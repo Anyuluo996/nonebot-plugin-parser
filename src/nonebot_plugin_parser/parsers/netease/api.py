@@ -1,12 +1,15 @@
-"""网易云音乐 SDK（直连官方公开接口，无需加密、无需登录、无需外部容器）。
+"""网易云音乐 SDK（直连官方公开接口，无需加密、无需外部容器）。
 
 三个接口均来自网易云公开 Web 端，已实测稳定：
 - 歌曲详情：GET /api/song/detail/?ids=[{id}] → 标题/歌手/封面URL/时长
-- 播放地址：GET /song/media/outer/url?id={id}.mp3 → 302 重定向到真实音频地址
-  （这是关键：绕过了 weapi/eapi 的 AES+RSA 加密，公开外链直接给真实地址）
+- 播放地址：
+  - 匿名：GET /song/media/outer/url?id={id}.mp3 → 302 重定向到真实音频地址
+    （绕过 weapi/eapi 的 AES+RSA 加密，公开外链直接给真实地址）
+  - 登录态：GET /api/song/enhance/player/url?ids=[{id}]&br=320000 → 可拿 VIP 曲目
 - 歌词：GET /api/song/lyric?id={id}&lv=1 → LRC 文本
 
-VIP/无版权曲目在「播放地址」接口会被 403/重定向到错误页，本 SDK 据此判定不可播。
+VIP/无版权曲目在匿名「播放地址」接口会被 403/重定向到错误页，本 SDK 据此判定不可播；
+传 cookie（含 MUSIC_U）后走 enhance/player/url 接口，VIP 曲目有权限即可返回真实地址。
 """
 
 from typing import TYPE_CHECKING
@@ -16,6 +19,8 @@ if TYPE_CHECKING:
 
 _DETAIL_API = "https://music.163.com/api/song/detail/"
 _OUTER_URL = "https://music.163.com/song/media/outer/url?id={song_id}.mp3"
+# 登录态专用：带 cookie 可解析 VIP/付费曲目（公开 GET 接口，无需 weapi 加密）
+_ENHANCE_URL_API = "https://music.163.com/api/song/enhance/player/url"
 _LYRIC_API = "https://music.163.com/api/song/lyric"
 
 # 网易云请求需要的头（Referer 防盗链）
@@ -48,12 +53,29 @@ async def get_song_detail(parser: "BaseParser", song_id: str) -> dict:
     }
 
 
-async def get_song_url(parser: "BaseParser", song_id: str) -> str | None:
+async def get_song_url(parser: "BaseParser", song_id: str, cookie: str | None = None) -> str | None:
     """获取真实音频地址。
 
-    通过 ``/song/media/outer/url`` 外链接口，跟随重定向拿到最终 CDN 地址。
-    若歌曲 VIP/无版权，网易云会 302 到错误页或返回 403，此时返回 None。
+    - 有 ``cookie``（含 MUSIC_U 登录态）：走 ``enhance/player/url`` 接口，可解析 VIP 曲目。
+    - 无 cookie：走 ``outer/url`` 公开外链 302 重定向，仅免费曲目可播。
+
+    VIP/无版权曲目匿名访问时网易云会 302 到错误页或返回 403，此时返回 None。
     """
+    if cookie:
+        # 登录态：enhance/player/url 返回 JSON，data[0].url 即真实地址
+        resp = await parser.request(
+            _ENHANCE_URL_API,
+            params={"ids": f"[{song_id}]", "br": 320000},
+            headers={**_NETEASE_HEADERS, "Cookie": cookie},
+            raise_for_status=False,
+        )
+        if resp.status_code == 200:
+            data = (resp.json() or {}).get("data") or []
+            if data and data[0].get("url"):
+                return data[0]["url"]
+        return None
+
+    # 匿名：outer/url 外链 302 重定向到真实 CDN 地址
     url = _OUTER_URL.format(song_id=song_id)
     resp = await parser.request(
         url,

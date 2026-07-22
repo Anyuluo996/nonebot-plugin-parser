@@ -1,7 +1,7 @@
 """网易云音乐登录凭证持久化。
 
-登录态（``MUSIC_U`` 等 cookie）由 ``par网易云登录`` 扫码指令获得，序列化到本地
-JSON 文件，下次启动及后续解析自动加载，无需重复扫码。
+登录态（``MUSIC_U`` 等 cookie）由 ``par网易云登录`` 手动导入（浏览器 F12 复制），
+序列化到本地 JSON 文件，下次启动及后续解析自动加载，无需重复导入。
 
 存储位置复用 ``nonebot_plugin_localstore`` 提供的插件数据目录（``config._data_dir``），
 与 QQ 音乐凭证（``qqmusic_credential.json``）同目录。

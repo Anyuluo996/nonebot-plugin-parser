@@ -94,7 +94,8 @@ class YouTubeParser(BaseParser):
             "browseId": channel_id,
         }
 
-        response = await self.request(url, method="POST", json=payload)
+        # YouTube 国内不可直连，显式走配置代理（与 ytdlp 下载器代理来源一致）
+        response = await self.request(url, method="POST", json=payload, proxy=pconfig.proxy)
 
         browse = meta.decoder.decode(response.content)
         return self.create_author(browse.name, browse.avatar_url, browse.description)

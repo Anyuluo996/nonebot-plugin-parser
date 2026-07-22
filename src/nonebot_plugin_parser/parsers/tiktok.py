@@ -3,6 +3,7 @@ from typing import ClassVar
 
 from .base import BaseParser, PlatformEnum, handle
 from .data import Author, Platform, VideoContent
+from ..config import pconfig
 from ..download import DOWNLOADER, YTDLP_DOWNLOADER
 
 
@@ -15,7 +16,8 @@ class TikTokParser(BaseParser):
         url, prefix = f"https://{searched.group(0)}", searched.group(1)
 
         if prefix in ("vt", "vm"):
-            url = await self.get_redirect_url(url)
+            # TikTok 国内不可直连，短链重定向显式走配置代理（与 ytdlp 下载器一致）
+            url = await self.get_redirect_url(url, proxy=pconfig.proxy)
 
         # 获取视频信息
         video_info = await YTDLP_DOWNLOADER.extract_video_info(url)

@@ -136,7 +136,7 @@ class BaseParser:
         json: Any | None = None,
         cookies: Any | None = None,
         follow_redirects: bool = False,
-        trust_env: bool = True,
+        trust_env: bool = False,
         raise_for_status: bool = True,
         timeout: Any | None = None,
         proxy: Any | None = None,
@@ -152,10 +152,17 @@ class BaseParser:
             params/content/data/json: 透传给 httpx 的请求体/查询参数。
             cookies: 透传给 httpx 的 cookies。
             follow_redirects: 是否跟随重定向，默认 False。
-            trust_env: 是否读取环境变量代理等配置，默认 True。
+            trust_env: 是否读取环境变量代理等配置，默认 False。
+
+                国内平台（B 站、抖音、微博等）默认直连，避免被容器层 ``HTTP_PROXY`` /
+                ``HTTPS_PROXY`` 环境变量错误地经代理（代理通常只面向境外站点）。
+                需要走代理的平台（Pixiv/YouTube 等）请通过 ``proxy`` 显式传入，或
+                临时传 ``trust_env=True`` 兜底。
             raise_for_status: 是否对 >= 400 的响应抛错，默认 True。
             timeout: 覆盖默认超时。
             proxy: httpx 代理（Proxy 对象或 URL 字符串），默认 None。
+
+                与 ``trust_env`` 独立：传了 ``proxy`` 即走该代理，不受 ``trust_env`` 影响。
 
         Returns:
             httpx.Response
@@ -191,17 +198,27 @@ class BaseParser:
     async def get_redirect_url(
         url: str,
         headers: dict[str, str] | None = None,
+        proxy: Any | None = None,
     ) -> str:
-        """获取重定向后的 URL, 单次重定向"""
+        """获取重定向后的 URL, 单次重定向
+
+        Args:
+            proxy: httpx 代理（Proxy 对象或 URL 字符串）。默认 None 直连。
+                海外平台（如 TikTok）的短链重定向需显式传入，国内平台无需传。
+        """
         from httpx import AsyncClient
 
         headers = headers or COMMON_HEADER.copy()
-        async with AsyncClient(
-            headers=headers,
-            verify=False,
-            follow_redirects=False,
-            timeout=COMMON_TIMEOUT,
-        ) as client:
+        client_kwargs: dict[str, Any] = {
+            "headers": headers,
+            "verify": False,
+            "follow_redirects": False,
+            "trust_env": False,
+            "timeout": COMMON_TIMEOUT,
+        }
+        if proxy is not None:
+            client_kwargs["proxy"] = proxy
+        async with AsyncClient(**client_kwargs) as client:
             response = await client.get(url)
             if response.status_code >= 400:
                 response.raise_for_status()
@@ -211,17 +228,26 @@ class BaseParser:
     async def get_final_url(
         url: str,
         headers: dict[str, str] | None = None,
+        proxy: Any | None = None,
     ) -> str:
-        """获取重定向后的 URL, 允许多次重定向"""
+        """获取重定向后的 URL, 允许多次重定向
+
+        Args:
+            proxy: httpx 代理（Proxy 对象或 URL 字符串）。默认 None 直连。
+        """
         from httpx import AsyncClient
 
         headers = headers or COMMON_HEADER.copy()
-        async with AsyncClient(
-            headers=headers,
-            verify=False,
-            follow_redirects=True,
-            timeout=COMMON_TIMEOUT,
-        ) as client:
+        client_kwargs: dict[str, Any] = {
+            "headers": headers,
+            "verify": False,
+            "follow_redirects": True,
+            "trust_env": False,
+            "timeout": COMMON_TIMEOUT,
+        }
+        if proxy is not None:
+            client_kwargs["proxy"] = proxy
+        async with AsyncClient(**client_kwargs) as client:
             response = await client.get(url)
             if response.status_code >= 400:
                 response.raise_for_status()

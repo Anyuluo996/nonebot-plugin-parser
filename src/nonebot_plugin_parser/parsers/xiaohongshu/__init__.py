@@ -102,7 +102,6 @@ class XiaoHongShuParser(BaseParser):
             headers=self.ios_headers,
             follow_redirects=True,
             cookies=Cookies(),
-            trust_env=False,
         )
         html = response.text
 

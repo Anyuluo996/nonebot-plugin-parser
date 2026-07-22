@@ -18,6 +18,8 @@ import base64
 import hashlib
 from typing import TYPE_CHECKING
 
+from ..config import pconfig
+
 if TYPE_CHECKING:
     from .base import BaseParser
 
@@ -142,9 +144,19 @@ async def get_play_url(parser: "BaseParser", song_hash: str, quality: str = "128
         import json as _json
         import asyncio as _asyncio
 
+        # 酷狗在国内，默认不走代理（与 NGA 一致）；用户显式配置了代理才走，
+        # 避免被容器层 HTTP_PROXY/HTTPS_PROXY 环境变量错误地经代理。
+        proxy_url = pconfig.proxy
+        proxies = {"https": proxy_url, "http": proxy_url} if proxy_url else {"https": "", "http": ""}
+
         async def _do_request():
             async with AsyncSession(impersonate="chrome110", timeout=15, verify=False) as session:
-                return await session.get(_PLAY_URL_API, params=params, headers=headers)
+                return await session.get(
+                    _PLAY_URL_API,
+                    params=params,
+                    headers=headers,
+                    proxies=proxies,  # type: ignore[arg-type]
+                )
 
         try:
             resp = await _asyncio.wait_for(_do_request(), timeout=15)

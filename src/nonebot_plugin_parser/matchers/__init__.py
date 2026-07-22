@@ -260,37 +260,130 @@ async def _():
 
 # ==================== 音乐平台登录态管理 ====================
 # 命令名 = <prefix>+平台登录/登出, 启动时按配置的 prefix 动态生成。
-# 网易云: 手动 cookie 导入（扫码被 8821 风控封禁）；QQ 音乐: 扫码登录；酷狗: 开发中。
+# 网易云: 扫码(走自建API)+ cookie 导入双模式；QQ 音乐: 扫码登录；酷狗: 开发中。
 # VIP 过滤与登录态联动：已登录的平台搜索结果不再过滤付费曲（见 music_search）。
+
+
+def _now_ms() -> int:
+    """当前毫秒时间戳（网易云 API 要求 timestamp 参数防缓存）。"""
+    import time
+
+    return int(time.time() * 1000)
+
+
 async def _netease_login(matcher: Matcher, args: Message):
-    """网易云手动 cookie 导入登录。
+    """网易云登录（双模式）。
 
-    扫码登录（codekey 流程）已被网易云 8821 风控封禁（message="请切换其他
-    登录方式"，redirectUrl=anquanhuanjingfengxian 安全环境风险），无论换 IP/UA
-    均拦在「确认登录」环节。改为手动 cookie 导入，与抖音 ``dycookie`` 同模式。
-
-    用法: par网易云登录 <整条 Cookie>
-      浏览器登录 music.163.com → F12 → Network → 任一请求 → Request Headers →
-      Cookie 整行复制（必须含 MUSIC_U）。
+    - 带参数：手动 cookie 导入（浏览器 F12 复制，必须含 MUSIC_U）
+    - 不带参数：扫码登录（需配置 ``parser_ncm_api`` 自建 NeteaseCloudMusicApi 服务地址，
+      服务端做 weapi 加密绕过直连 8821 风控）
     """
     from ..parsers.netease import credential as netease_cred
 
     value = args.extract_plain_text().strip()
-    if not value:
+
+    if value:
+        # ===== cookie 导入模式 =====
+        if "MUSIC_U" not in value:
+            await matcher.finish("❌ Cookie 中未找到 MUSIC_U，请确认从已登录的网易云页面复制完整 Cookie")
+            return
+        netease_cred.save_credential(value)
+        logger.info(f"网易云: 已保存手动导入 cookie（{len(value)} 字符）")
+        await matcher.finish(f"✅ 已保存网易云 Cookie（{len(value)} 字符），VIP 歌曲现可解析")
+        return
+
+    # ===== 扫码登录模式 =====
+    api_base = pconfig.ncm_api
+    if not api_base:
         await matcher.finish(
-            "用法: par网易云登录 <整条 Cookie>\n"
-            "浏览器登录 music.163.com → F12 → Network → 任一请求 → Cookie 整行复制\n"
-            "（必须含 MUSIC_U，不含则视为无效）"
+            "扫码登录需配置自建 API 服务（环境变量 PARSER_NCM_API）。\n或使用手动导入：par网易云登录 <整条 Cookie>"
         )
         return
+    await _netease_qr_login(matcher, api_base)
 
-    if "MUSIC_U" not in value:
-        await matcher.finish("❌ Cookie 中未找到 MUSIC_U，请确认从已登录的网易云页面复制完整 Cookie")
-        return
 
-    netease_cred.save_credential(value)
-    logger.info(f"网易云: 已保存手动导入 cookie（{len(value)} 字符）")
-    await matcher.finish(f"✅ 已保存网易云 Cookie（{len(value)} 字符），VIP 歌曲现可解析")
+async def _netease_qr_login(matcher: Matcher, api_base: str):
+    """走自建 NeteaseCloudMusicApi 服务的扫码登录。
+
+    三步：``qr/key`` → ``qr/create``(返回 base64 二维码图片) → 轮询 ``qr/check`` 拿 cookie。
+    服务端做 weapi 加密，绕过直连 music.163.com 被 8821 风控的问题。
+    """
+    import base64
+    import asyncio
+
+    from ..parsers.netease import credential as netease_cred
+
+    parser = get_parser_by_type(NCMParser)
+    api_base = api_base.rstrip("/")
+
+    await matcher.send("正在生成网易云登录二维码…")
+    logger.info(f"网易云扫码登录: 使用 API 服务 {api_base}")
+    try:
+        # 1. 获取 unikey（响应结构：{"data":{"unikey":"..."},"code":200}）
+        resp = await parser.request(
+            f"{api_base}/login/qr/key",
+            params={"timestamp": _now_ms()},
+            raise_for_status=False,
+        )
+        body = resp.json()
+        unikey = body.get("unikey") or body.get("data", {}).get("unikey")
+        if not unikey:
+            logger.warning(f"网易云扫码: 未拿到 unikey, status={resp.status_code}, body={resp.text[:200]}")
+            await matcher.finish("获取登录 key 失败，请检查 API 服务是否正常")
+            return
+
+        # 2. 生成二维码（qrimg=true 直接返回 base64 PNG，无需 qrcode 库）
+        resp = await parser.request(
+            f"{api_base}/login/qr/create",
+            params={"key": unikey, "qrimg": "true", "timestamp": _now_ms()},
+            raise_for_status=False,
+        )
+        qr_data = (resp.json() or {}).get("data") or {}
+        qr_img = qr_data.get("qrimg", "")
+        if not qr_img or not qr_img.startswith("data:image"):
+            logger.warning(f"网易云扫码: 未拿到二维码图片, body={resp.text[:200]}")
+            await matcher.finish("生成二维码失败，请检查 API 服务")
+            return
+        png_bytes = base64.b64decode(qr_img.split(",", 1)[1])
+        await UniMessage(UniHelper.img_seg(png_bytes)).send()
+        await UniMessage("请用网易云音乐 App 扫描上图登录（180 秒内有效）").send()
+
+        # 3. 轮询登录状态（响应结构：{"code":801/802/803,"message":"...","cookie":"..."}）
+        scanned_notified = False
+        for _ in range(120):
+            await asyncio.sleep(1.5)
+            resp = await parser.request(
+                f"{api_base}/login/qr/check",
+                params={"key": unikey, "timestamp": _now_ms()},
+                raise_for_status=False,
+            )
+            data = resp.json()
+            code = data.get("code")
+            logger.debug(f"网易云扫码轮询: code={code}")
+            if code == 803:
+                cookie_str = data.get("cookie", "")
+                if "MUSIC_U" not in cookie_str:
+                    logger.warning(f"网易云扫码: 803 但无 MUSIC_U, cookie={cookie_str[:100]}")
+                    await matcher.finish("登录响应异常（未拿到 MUSIC_U），请重试")
+                    return
+                netease_cred.save_credential(cookie_str)
+                logger.info("网易云扫码登录: 成功，已保存凭证")
+                await matcher.finish("✅ 网易云扫码登录成功，VIP 歌曲现可解析")
+                return
+            if code == 800:
+                logger.info("网易云扫码: 二维码已过期")
+                await matcher.finish("二维码已过期，请重新执行登录指令")
+                return
+            if code == 802 and not scanned_notified:
+                logger.info("网易云扫码: 已扫码，等待手机确认")
+                await matcher.send("📱 已检测到扫码，请在手机上点击「确认登录」")
+                scanned_notified = True
+            # 801/802 继续轮询；未知码也继续（自建服务一般不触发 8821）
+        logger.info("网易云扫码登录: 180s 未完成")
+        await matcher.finish("登录超时（180s 内未完成扫码），请重试")
+    except Exception as e:
+        logger.exception("网易云扫码登录异常")
+        await matcher.finish(f"登录未完成: {e}")
 
 
 async def _qqmusic_login(matcher: Matcher):

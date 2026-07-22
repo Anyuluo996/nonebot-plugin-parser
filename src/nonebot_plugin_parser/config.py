@@ -34,7 +34,11 @@ class Config(BaseModel):
     parser_pixivR18: bool = False
     """是否解析 R18 内容"""
     parser_ncm_api: str | None = None
-    """[已弃用] 网易云音乐 API 地址，网易云现已直连官方接口，无需配置"""
+    """网易云扫码登录用的自建 NeteaseCloudMusicApi 服务地址（如 http://10.126.126.2:4500）。
+
+    配置后 ``par网易云登录``（不带参数）走扫码登录，服务端做 weapi 加密绕过直连风控。
+    留空时扫码不可用，请用 ``par网易云登录 <cookie>`` 手动导入。
+    """
     parser_proxy: str | None = None
     """代理"""
     parser_douyin_ttwid: str | None = None

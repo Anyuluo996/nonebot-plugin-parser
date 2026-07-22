@@ -258,116 +258,39 @@ async def _():
         await UniMessage(msg).send()
 
 
-# ==================== 音乐平台扫码登录 ====================
+# ==================== 音乐平台登录态管理 ====================
 # 命令名 = <prefix>+平台登录/登出, 启动时按配置的 prefix 动态生成。
-# 网易云/QQ 音乐登录后 VIP 歌曲可解析；酷狗登录功能开发中。
+# 网易云: 手动 cookie 导入（扫码被 8821 风控封禁）；QQ 音乐: 扫码登录；酷狗: 开发中。
 # VIP 过滤与登录态联动：已登录的平台搜索结果不再过滤付费曲（见 music_search）。
-async def _netease_login(matcher: Matcher, parser: BaseParser):
-    """网易云扫码登录（公开 GET 接口，无需第三方库/加密）。
+async def _netease_login(matcher: Matcher, args: Message):
+    """网易云手动 cookie 导入登录。
 
-    三步：unikey → 二维码图片(用 codekey 构造 URL) → 轮询 client/login 拿 cookie。
+    扫码登录（codekey 流程）已被网易云 8821 风控封禁（message="请切换其他
+    登录方式"，redirectUrl=anquanhuanjingfengxian 安全环境风险），无论换 IP/UA
+    均拦在「确认登录」环节。改为手动 cookie 导入，与抖音 ``dycookie`` 同模式。
+
+    用法: par网易云登录 <整条 Cookie>
+      浏览器登录 music.163.com → F12 → Network → 任一请求 → Request Headers →
+      Cookie 整行复制（必须含 MUSIC_U）。
     """
-    import io
-    import asyncio
-
-    import qrcode
-
     from ..parsers.netease import credential as netease_cred
 
-    await matcher.send("正在生成网易云登录二维码…")
-    logger.info("网易云登录: 开始生成二维码")
-    try:
-        # 1. 获取 unikey（必须带 type=1，否则返回 400 参数错误）
-        resp = await parser.request(
-            "https://music.163.com/api/login/qrcode/unikey",
-            method="POST",
-            params={"type": 1},
-            headers={"Referer": "https://music.163.com/"},
-            raise_for_status=False,
+    value = args.extract_plain_text().strip()
+    if not value:
+        await matcher.finish(
+            "用法: par网易云登录 <整条 Cookie>\n"
+            "浏览器登录 music.163.com → F12 → Network → 任一请求 → Cookie 整行复制\n"
+            "（必须含 MUSIC_U，不含则视为无效）"
         )
-        unikey = resp.json().get("unikey")
-        if not unikey:
-            logger.warning(f"网易云登录: 未拿到 unikey (status={resp.status_code})")
-            await matcher.finish("获取登录 key 失败，请稍后重试")
-            return
-        logger.info(f"网易云登录: 获取 unikey 成功 (len={len(unikey)})")
+        return
 
-        # 2. 用 codekey 构造登录 URL 并生成二维码图片
-        login_url = f"https://music.163.com/login?codekey={unikey}"
-        buf = io.BytesIO()
-        qrcode.make(login_url).save(buf)
-        await UniMessage(UniHelper.img_seg(buf.getvalue())).send()
-        await UniMessage("请用网易云音乐 App 扫描上图登录（请尽快扫，二维码 180 秒内有效）").send()
+    if "MUSIC_U" not in value:
+        await matcher.finish("❌ Cookie 中未找到 MUSIC_U，请确认从已登录的网易云页面复制完整 Cookie")
+        return
 
-        # 3. 轮询登录状态（1.5s 间隔，180s 超时）
-        # 已知码：800=过期, 801=等待扫码, 802=已扫码待确认, 803=成功
-        # 未知码（如 8821 风控）：首次 warning 容错，连续 2 次判定为被拒并终止
-        unknown_code: int | None = None
-        unknown_count = 0
-        scanned_notified = False  # 802 只提示一次「请在手机确认」
-        for _ in range(120):
-            await asyncio.sleep(1.5)
-            resp = await parser.request(
-                "https://music.163.com/api/login/qrcode/client/login",
-                params={"key": unikey, "type": 1},
-                headers={"Referer": "https://music.163.com/"},
-                raise_for_status=False,
-            )
-            data = resp.json()
-            code = data.get("code")
-            # 高频轮询状态打到 debug，避免淹没日志
-            logger.debug(f"网易云登录轮询: code={code}")
-            if code == 803:
-                # 登录成功：cookie 优先取 Set-Cookie 响应头（官方接口行为），
-                # 兜底取响应体 cookie 字段（第三方库封装格式）
-                cookie_str = "; ".join(f"{k}={v}" for k, v in resp.cookies.items())
-                if "MUSIC_U" not in cookie_str:
-                    cookie_str = data.get("cookie", "")
-                if "MUSIC_U" not in cookie_str:
-                    logger.warning(
-                        "网易云登录: 803 响应未含 MUSIC_U, "
-                        f"Set-Cookie keys={list(resp.cookies.keys())}, "
-                        f"body cookie={'有' if data.get('cookie') else '无'}"
-                    )
-                    await matcher.finish("登录响应异常（未拿到 MUSIC_U），请重试")
-                    return
-                netease_cred.save_credential(cookie_str)
-                logger.info("网易云登录: 扫码成功，已保存凭证")
-                await matcher.finish("✅ 网易云登录成功，VIP 歌曲现可解析")
-                return
-            if code == 800:
-                logger.info("网易云登录: 二维码已过期")
-                await matcher.finish("二维码已过期，请重新执行登录指令")
-                return
-            if code == 801:
-                # 等待扫码，继续轮询
-                continue
-            if code == 802:
-                # 已扫码，等待手机确认（只提示一次，避免刷屏）
-                if not scanned_notified:
-                    logger.info("网易云登录: 已扫码，等待手机确认")
-                    await matcher.send("📱 已检测到扫码，请在手机上点击「确认登录」")
-                    scanned_notified = True
-                continue
-            # 未知码（8821 等）：首次记录并容错一次，连续出现则判定被拒/风控
-            if code != unknown_code:
-                unknown_code = code
-                unknown_count = 1
-                logger.warning(f"网易云登录: 出现未知轮询码 code={code}, message={data.get('message')!r}")
-                continue
-            unknown_count += 1
-            if unknown_count >= 2:
-                logger.warning(f"网易云登录: 未知码 code={code} 连续 {unknown_count} 次，判定为登录被拒/风控拦截")
-                await matcher.finish(
-                    f"⚠️ 登录被服务端拒绝（code={code}），可能触发风控。\n"
-                    "请稍后重试，或更换网络环境（如切换到手机热点）后再试。"
-                )
-                return
-        logger.info("网易云登录: 180s 内未完成扫码")
-        await matcher.finish("登录超时（180s 内未完成扫码），请重试")
-    except Exception as e:
-        logger.exception("网易云登录异常")
-        await matcher.finish(f"登录未完成: {e}")
+    netease_cred.save_credential(value)
+    logger.info(f"网易云: 已保存手动导入 cookie（{len(value)} 字符）")
+    await matcher.finish(f"✅ 已保存网易云 Cookie（{len(value)} 字符），VIP 歌曲现可解析")
 
 
 async def _qqmusic_login(matcher: Matcher):
@@ -415,8 +338,8 @@ def _register_music_login_commands() -> None:
     prefix = pconfig.parse_prefix or "par"
 
     def _make_netease_login():
-        async def _h(matcher: Matcher):
-            await _netease_login(matcher, get_parser_by_type(NCMParser))
+        async def _h(matcher: Matcher, args: Message = CommandArg()):
+            await _netease_login(matcher, args)
 
         return _h
 

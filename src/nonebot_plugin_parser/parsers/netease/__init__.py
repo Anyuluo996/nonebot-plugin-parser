@@ -25,7 +25,7 @@ class NCMParser(BaseParser):
     async def _parse_by_song_id(self, song_id: str, share_url: str):
         """统一解析流程：详情 → 播放地址 → 歌词 + 封面。
 
-        匿名仅能解析免费歌曲；若已扫码登录（凭证持久化，见 :mod:`.credential`），
+        匿名仅能解析免费歌曲；若已导入登录态（凭证持久化，见 :mod:`.credential`），
         则带 cookie 走 enhance/player/url 接口，可解析 VIP 曲目。
         """
         detail = await netease_api.get_song_detail(self, song_id)
@@ -36,7 +36,7 @@ class NCMParser(BaseParser):
         audio_url = await netease_api.get_song_url(self, song_id, cookie=cookie)
         if not audio_url:
             if not cookie:
-                raise TipException("该曲为 VIP 歌曲，发送「par网易云登录」扫码后可解析")
+                raise TipException("该曲为 VIP 歌曲，发送「par网易云登录」导入 Cookie 后可解析")
             raise TipException("无法获取音频（账号无该曲权限或无版权）")
 
         contents = [self.create_audio_content(audio_url, duration=detail["duration"])]

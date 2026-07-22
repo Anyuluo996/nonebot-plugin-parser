@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import json
 
+from nonebot import logger
+
 from ...config import _data_dir
 
 _CRED_FILE = _data_dir / "qqmusic_credential.json"
@@ -44,19 +46,22 @@ def load_credential():
         return None
     try:
         data = json.loads(_CRED_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as e:
+        logger.warning(f"QQ音乐凭证读取失败(JSON损坏),降级匿名: {e!r}")
         return None
     if not data.get("musickey"):
         return None
     try:
         cred = Credential(**{k: data.get(k) for k in _PERSIST_FIELDS if k in data})
-    except Exception:
+    except Exception as e:
+        logger.warning(f"QQ音乐凭证字段缺失,无法构造 Credential: {e!r}")
         return None
     # is_expired() 按 musickey_create_time + key_expires_in 判断，缺省值(0)会误判过期
     try:
         if cred.is_expired():
             return None
-    except Exception:
+    except Exception as e:
+        logger.warning(f"QQ音乐凭证过期检查异常,视为不可用: {e!r}")
         return None
     return cred
 

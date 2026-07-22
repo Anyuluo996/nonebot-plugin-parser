@@ -14,6 +14,8 @@ VIP/无版权曲目在匿名「播放地址」接口会被 403/重定向到错�
 
 from typing import TYPE_CHECKING
 
+from nonebot import logger
+
 if TYPE_CHECKING:
     from ..base import BaseParser
 
@@ -69,10 +71,14 @@ async def get_song_url(parser: "BaseParser", song_id: str, cookie: str | None = 
             headers={**_NETEASE_HEADERS, "Cookie": cookie},
             raise_for_status=False,
         )
-        if resp.status_code == 200:
-            data = (resp.json() or {}).get("data") or []
-            if data and data[0].get("url"):
-                return data[0]["url"]
+        if resp.status_code != 200:
+            logger.warning(f"netease enhance/player/url 返回 {resp.status_code}")
+            return None
+        data = (resp.json() or {}).get("data") or []
+        if data and data[0].get("url"):
+            return data[0]["url"]
+        # 200 但无 url：VIP 无权限或无版权（设计性失败）
+        logger.debug(f"netease enhance/player/url data 无 url: code={data[0].get('code') if data else '空'}")
         return None
 
     # 匿名：outer/url 外链 302 重定向到真实 CDN 地址
@@ -88,6 +94,7 @@ async def get_song_url(parser: "BaseParser", song_id: str, cookie: str | None = 
     if resp.status_code == 200 and "audio" in content_type:
         return str(resp.url)
     # 有些情况网易云返回 200 但内容是 html 错误页（VIP 提示），content-type 不是 audio
+    logger.debug(f"netease outer/url 未返回音频, status={resp.status_code}, ct={content_type}")
     return None
 
 

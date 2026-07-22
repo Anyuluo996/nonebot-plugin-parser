@@ -18,6 +18,8 @@ import base64
 import hashlib
 from typing import TYPE_CHECKING
 
+from nonebot import logger
+
 from ..config import pconfig
 
 if TYPE_CHECKING:
@@ -62,9 +64,11 @@ async def get_song_detail(parser: "BaseParser", song_hash: str) -> dict:
         raise_for_status=False,
     )
     if resp.status_code != 200:
+        logger.warning(f"酷狗详情接口返回 {resp.status_code}")
         return {}
     data = resp.json()
     if not data or data.get("errcode") != 0:
+        logger.warning(f"酷狗详情 errcode={data.get('errcode') if data else '空'}")
         return {}
     return {
         "name": data.get("songName", "") or "未知歌曲",
@@ -160,24 +164,44 @@ async def get_play_url(parser: "BaseParser", song_hash: str, quality: str = "128
 
         try:
             resp = await _asyncio.wait_for(_do_request(), timeout=15)
-        except Exception:
+        except Exception as exc:
+            logger.warning(f"酷狗 get_play_url(curl_cffi) 异常: {exc!r}")
             return None
-        if resp.headers.get("ssa-code") or resp.status_code != 200:
+        if resp.headers.get("ssa-code"):
+            logger.debug(f"酷狗 play 接口(curl_cffi)命中 SSA 风控, ssa-code={resp.headers.get('ssa-code')}")
+            return None
+        if resp.status_code != 200:
+            logger.warning(f"酷狗 play 接口(curl_cffi)返回 {resp.status_code}")
             return None
         try:
             data = _json.loads(resp.text)
         except _json.JSONDecodeError:
+            logger.warning(f"酷狗 play 响应(curl_cffi)非 JSON: {resp.text[:200]!r}")
             return None
         if data.get("errcode") not in (None, 0, "0"):
+            logger.debug(f"酷狗 play errcode={data.get('errcode')} (VIP/无版权)")
             return None
         return _extract_url(data)
 
     # 回退：httpx（大概率被 SSA 拦截）
-    resp = await parser.request(_PLAY_URL_API, params=params, headers=headers, raise_for_status=False)
-    if resp.headers.get("ssa-code") or resp.status_code != 200:
+    try:
+        resp = await parser.request(_PLAY_URL_API, params=params, headers=headers, raise_for_status=False)
+    except Exception as exc:
+        logger.warning(f"酷狗 get_play_url(httpx) 异常: {exc!r}")
         return None
-    data = resp.json()
+    if resp.headers.get("ssa-code"):
+        logger.debug(f"酷狗 play 接口(httpx)命中 SSA 风控, ssa-code={resp.headers.get('ssa-code')}")
+        return None
+    if resp.status_code != 200:
+        logger.warning(f"酷狗 play 接口(httpx)返回 {resp.status_code}")
+        return None
+    try:
+        data = resp.json()
+    except Exception as exc:
+        logger.warning(f"酷狗 play 响应(httpx)非 JSON: {exc!r}")
+        return None
     if data.get("errcode") not in (None, 0, "0"):
+        logger.debug(f"酷狗 play errcode={data.get('errcode')} (VIP/无版权)")
         return None
     return _extract_url(data)
 
@@ -223,6 +247,7 @@ async def get_lyric(parser: "BaseParser", song_hash: str, duration: int = 0) -> 
         raise_for_status=False,
     )
     if resp.status_code != 200:
+        logger.warning(f"酷狗歌词搜索接口返回 {resp.status_code}")
         return ""
     candidates = (resp.json().get("candidates")) or []
     if not candidates:
@@ -247,11 +272,17 @@ async def get_lyric(parser: "BaseParser", song_hash: str, duration: int = 0) -> 
         raise_for_status=False,
     )
     if resp.status_code != 200:
+        logger.warning(f"酷狗歌词下载接口返回 {resp.status_code}")
         return ""
-    content = resp.json().get("content")
+    try:
+        content = resp.json().get("content")
+    except Exception as exc:
+        logger.warning(f"酷狗歌词下载响应非 JSON: {exc!r}")
+        return ""
     if not content:
         return ""
     try:
         return base64.b64decode(content).decode("utf-8", errors="ignore")
-    except Exception:
+    except Exception as e:
+        logger.warning(f"酷狗歌词 base64 解码失败: {e!r}")
         return ""

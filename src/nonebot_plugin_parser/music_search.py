@@ -144,6 +144,7 @@ async def search_netease(
             raise_for_status=False,
         )
         if resp.status_code != 200:
+            logger.warning(f"网易云搜索返回 {resp.status_code}")
             return []
         songs = (resp.json().get("result") or {}).get("songs") or []
     except Exception as e:
@@ -240,9 +241,11 @@ async def search_kugou(parser: "BaseParser", keyword: str, limit: int = DEFAULT_
             raise_for_status=False,
         )
         if resp.status_code != 200:
+            logger.warning(f"酷狗搜索返回 {resp.status_code}")
             return []
         data = resp.json()
         if data.get("errcode") not in (None, 0, "0"):
+            logger.warning(f"酷狗搜索 errcode={data.get('errcode')}")
             return []
         info = (data.get("data") or {}).get("info") or []
     except Exception as e:

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 
+from nonebot import logger
+
 from ...config import _data_dir
 
 _CRED_FILE = _data_dir / "netease_credential.json"
@@ -26,7 +28,8 @@ def load_credential() -> str | None:
         return None
     try:
         data = json.loads(_CRED_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except (OSError, json.JSONDecodeError) as e:
+        logger.warning(f"网易云凭证读取失败,降级匿名: {e!r}")
         return None
     cookie = data.get("cookie") or ""
     if not cookie or "MUSIC_U" not in cookie:

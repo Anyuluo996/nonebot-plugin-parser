@@ -308,8 +308,11 @@ async def _netease_login(matcher: Matcher, parser: BaseParser):
             data = resp.json()
             code = data.get("code")
             if code == 803:
-                # 登录成功：公开 API 的 cookie 在响应体 cookie 字段（非 Set-Cookie 头）
-                cookie_str = data.get("cookie", "")
+                # 登录成功：cookie 优先取 Set-Cookie 响应头（官方接口行为），
+                # 兜底取响应体 cookie 字段（第三方库封装格式）
+                cookie_str = "; ".join(f"{k}={v}" for k, v in resp.cookies.items())
+                if "MUSIC_U" not in cookie_str:
+                    cookie_str = data.get("cookie", "")
                 if "MUSIC_U" not in cookie_str:
                     await matcher.finish("登录响应异常（未拿到 MUSIC_U），请重试")
                     return

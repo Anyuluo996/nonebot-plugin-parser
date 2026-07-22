@@ -170,7 +170,6 @@ class WeiBoParser(BaseParser):
             headers=headers,
             follow_redirects=False,
             cookies=Cookies(),
-            trust_env=False,
             raise_for_status=False,
         )
         if response.status_code != 200:

@@ -14,7 +14,7 @@ import re
 from typing import ClassVar
 
 from . import kugou_api
-from .base import Platform, BaseParser, PlatformEnum, IgnoreException, handle
+from .base import Platform, BaseParser, PlatformEnum, TipException, IgnoreException, handle
 
 _HASH_RE = re.compile(r"hash=([a-zA-Z0-9]+)")
 # 页面内嵌 JSON 中的 hash 字段（share/song.html?chain= 格式不重定向，hash 在 body 里）
@@ -38,7 +38,8 @@ class KuGouParser(BaseParser):
 
         audio_url = await kugou_api.get_play_url(self, song_hash)
         if not audio_url:
-            raise IgnoreException("无法获取音频下载地址（可能 VIP/无版权/被风控）")
+            # 点歌场景已过滤 VIP，能走到这里的通常是链接解析命中付费曲
+            raise TipException("该曲为 VIP/付费歌曲（酷狗登录功能开发中）")
 
         lyric = await kugou_api.get_lyric(self, song_hash, duration=detail.get("duration", 0))
 

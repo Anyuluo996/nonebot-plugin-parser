@@ -4,7 +4,7 @@
 - 长链 y.qq.com/n/ryqq/songDetail/数字、y.qq.com/n/ryqq/v2/songDetail/数字
 - 短链 c*.y.qq.com/base/fcgi-bin/u?__=xxx（需重定向解析）
 
-免费歌曲无需任何配置即可解析；VIP/付费歌曲需先用 ``qqmusic登录`` 扫码登录
+免费歌曲无需任何配置即可解析；VIP/付费歌曲需先用 ``parqq登录`` 扫码登录
 （凭证持久化到本地，见 :mod:`parsers.qqmusic.credential`）。
 """
 
@@ -13,7 +13,7 @@ from typing import ClassVar
 
 from . import api as qqmusic_api
 from . import credential as qqmusic_credential
-from ..base import Platform, BaseParser, PlatformEnum, IgnoreException, handle
+from ..base import Platform, BaseParser, PlatformEnum, TipException, IgnoreException, handle
 
 _QQ_SONGID_RE = re.compile(r"songDetail/(?:\?songmid=|)(?P<song_id>\w+)")
 
@@ -39,10 +39,8 @@ class QQMusicParser(BaseParser):
         )
         if not audio_url:
             if not credential:
-                tip = "（可能 VIP/付费曲目，可用「qqmusic登录」扫码后重试）"
-            else:
-                tip = "（账号无该曲权限或无版权）"
-            raise IgnoreException(f"无法获取音频下载地址{tip}")
+                raise TipException("该曲为 VIP/付费歌曲，发送「parqq登录」扫码后可解析")
+            raise TipException("无法获取音频（账号无该曲权限或无版权）")
 
         contents = [self.create_audio_content(audio_url, duration=detail["duration"])]
 

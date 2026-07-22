@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from nonebot import logger
+
 if TYPE_CHECKING:
     from qqmusic_api import Credential
 
@@ -86,6 +88,7 @@ async def get_play_url(
             cdn_dispatch = await client.song.get_cdn_dispatch()
             cdn = cdn_dispatch.sip[0] if cdn_dispatch.sip else ""
             if not cdn:
+                logger.warning("QQ音乐 get_cdn_dispatch 无可用 CDN")
                 return None
 
             # 每个音质单独 try：命中可放音质即返回，全部失败/异常则回退到下一音质。
@@ -95,7 +98,8 @@ async def get_play_url(
                         [SongFileInfo(mid=song_mid, media_mid=media_mid, file_type=file_type)],
                         credential=credential,
                     )
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"QQ音乐 get_song_urls({file_type}) 异常: {e!r}")
                     continue
                 for item in urls.data:
                     if item.result == 0 and item.purl:
@@ -113,5 +117,6 @@ async def get_lyric(parser: "BaseParser", song_mid: str) -> str:
         async with Client() as client:
             resp = await client.lyric.get_lyric(song_mid)
             return resp.lyric or ""
-    except Exception:
+    except Exception as e:
+        logger.warning(f"QQ音乐歌词获取失败: {e!r}")
         return ""

@@ -275,6 +275,7 @@ async def _netease_login(matcher: Matcher, parser: BaseParser):
     from ..parsers.netease import credential as netease_cred
 
     await matcher.send("正在生成网易云登录二维码…")
+    logger.info("网易云登录: 开始生成二维码")
     try:
         # 1. 获取 unikey（必须带 type=1，否则返回 400 参数错误）
         resp = await parser.request(
@@ -286,8 +287,10 @@ async def _netease_login(matcher: Matcher, parser: BaseParser):
         )
         unikey = resp.json().get("unikey")
         if not unikey:
+            logger.warning(f"网易云登录: 未拿到 unikey (status={resp.status_code})")
             await matcher.finish("获取登录 key 失败，请稍后重试")
             return
+        logger.info(f"网易云登录: 获取 unikey 成功 (len={len(unikey)})")
 
         # 2. 用 codekey 构造登录 URL 并生成二维码图片
         login_url = f"https://music.163.com/login?codekey={unikey}"
@@ -307,6 +310,8 @@ async def _netease_login(matcher: Matcher, parser: BaseParser):
             )
             data = resp.json()
             code = data.get("code")
+            # 高频轮询状态打到 debug，避免淹没日志
+            logger.debug(f"网易云登录轮询: code={code}")
             if code == 803:
                 # 登录成功：cookie 优先取 Set-Cookie 响应头（官方接口行为），
                 # 兜底取响应体 cookie 字段（第三方库封装格式）
@@ -314,18 +319,27 @@ async def _netease_login(matcher: Matcher, parser: BaseParser):
                 if "MUSIC_U" not in cookie_str:
                     cookie_str = data.get("cookie", "")
                 if "MUSIC_U" not in cookie_str:
+                    logger.warning(
+                        "网易云登录: 803 响应未含 MUSIC_U, "
+                        f"Set-Cookie keys={list(resp.cookies.keys())}, "
+                        f"body cookie={'有' if data.get('cookie') else '无'}"
+                    )
                     await matcher.finish("登录响应异常（未拿到 MUSIC_U），请重试")
                     return
                 netease_cred.save_credential(cookie_str)
+                logger.info("网易云登录: 扫码成功，已保存凭证")
                 await matcher.finish("✅ 网易云登录成功，VIP 歌曲现可解析")
                 return
             if code in (800, 802):
                 # 800=二维码过期/失效，802=等待确认（理论上 802 应继续轮询，此处容错）
                 if code == 800:
+                    logger.info("网易云登录: 二维码已过期")
                     await matcher.finish("二维码已过期，请重新执行登录指令")
                     return
+        logger.info("网易云登录: 180s 内未完成扫码")
         await matcher.finish("登录超时（180s 内未完成扫码），请重试")
     except Exception as e:
+        logger.exception("网易云登录异常")
         await matcher.finish(f"登录未完成: {e}")
 
 
@@ -343,6 +357,7 @@ async def _qqmusic_login(matcher: Matcher):
     from ..parsers.qqmusic import credential as qq_cred
 
     await matcher.send("正在生成 QQ 音乐登录二维码…")
+    logger.info("QQ音乐登录: 开始生成二维码")
     try:
         async with Client() as client:
             session = QRCodeLoginSession(
@@ -357,8 +372,10 @@ async def _qqmusic_login(matcher: Matcher):
             cred = await session.wait_qrcode_login()
             qq_cred.save_credential(cred)
     except Exception as e:
+        logger.exception("QQ音乐登录异常")
         await matcher.finish(f"登录未完成: {e}")
         return
+    logger.info(f"QQ音乐登录: 成功 (musicid={cred.musicid})")
     await matcher.finish(f"✅ QQ 音乐登录成功 (musicid={cred.musicid})，VIP 歌曲现可解析")
 
 
@@ -396,6 +413,7 @@ async def _netease_logout(matcher: Matcher):
     from ..parsers.netease import credential as netease_cred
 
     if netease_cred.clear_credential():
+        logger.info("网易云: 已清除登录态")
         await matcher.finish("已清除网易云登录态，后续仅能解析免费歌曲")
     await matcher.finish("当前未保存网易云登录态")
 
@@ -410,6 +428,7 @@ async def _qqmusic_logout(matcher: Matcher):
     from ..parsers.qqmusic import credential as qq_cred
 
     if qq_cred.clear_credential():
+        logger.info("QQ音乐: 已清除登录态")
         await matcher.finish("已清除 QQ 音乐登录态，后续仅能解析免费歌曲")
     await matcher.finish("当前未保存 QQ 音乐登录态")
 

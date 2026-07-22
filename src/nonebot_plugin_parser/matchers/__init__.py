@@ -258,15 +258,82 @@ async def _():
         await UniMessage(msg).send()
 
 
-# ==================== QQ 音乐扫码登录 ====================
-# QQ 音乐解析免费歌曲开箱即用；VIP/付费歌曲需登录态（凭证持久化到本地）。
-@on_command("qqmusic登录", block=True, permission=SUPERUSER).handle()
+# ==================== 音乐平台扫码登录 ====================
+# 命令名 = <prefix>+平台登录/登出, 启动时按配置的 prefix 动态生成。
+# 网易云/QQ 音乐登录后 VIP 歌曲可解析；酷狗登录功能开发中。
+# VIP 过滤与登录态联动：已登录的平台搜索结果不再过滤付费曲（见 music_search）。
+async def _netease_login(matcher: Matcher, parser: BaseParser):
+    """网易云扫码登录（公开 GET 接口，无需第三方库/加密）。
+
+    三步：unikey → 二维码图片(用 codekey 构造 URL) → 轮询 client/login 拿 cookie。
+    """
+    import io
+    import asyncio
+
+    import qrcode
+    from httpx import Cookies
+
+    from ..parsers.netease import credential as netease_cred
+
+    await matcher.send("正在生成网易云登录二维码…")
+    try:
+        # 1. 获取 unikey
+        resp = await parser.request(
+            "https://music.163.com/api/login/qrcode/unikey",
+            method="POST",
+            headers={"Referer": "https://music.163.com/"},
+            raise_for_status=False,
+        )
+        unikey = resp.json().get("unikey")
+        if not unikey:
+            await matcher.finish("获取登录 key 失败，请稍后重试")
+            return
+
+        # 2. 用 codekey 构造登录 URL 并生成二维码图片
+        login_url = f"https://music.163.com/login?codekey={unikey}"
+        buf = io.BytesIO()
+        qrcode.make(login_url).save(buf)
+        await UniMessage(UniHelper.img_seg(buf.getvalue())).send()
+        await UniMessage("请用网易云音乐 App 扫描上图登录（请尽快扫，二维码 180 秒内有效）").send()
+
+        # 3. 轮询登录状态（1.5s 间隔，180s 超时）
+        for _ in range(120):
+            await asyncio.sleep(1.5)
+            resp = await parser.request(
+                "https://music.163.com/api/login/qrcode/client/login",
+                params={"key": unikey},
+                headers={"Referer": "https://music.163.com/"},
+                raise_for_status=False,
+            )
+            data = resp.json()
+            code = data.get("code")
+            if code == 803:
+                # 登录成功：Set-Cookie 在 resp.cookies，拼成完整 cookie 串
+                cookies: Cookies = resp.cookies
+                cookie_str = "; ".join(f"{k}={v}" for k, v in cookies.items())
+                if "MUSIC_U" not in cookie_str:
+                    await matcher.finish("登录响应异常（未拿到 MUSIC_U），请重试")
+                    return
+                netease_cred.save_credential(cookie_str)
+                await matcher.finish("✅ 网易云登录成功，VIP 歌曲现可解析")
+                return
+            if code in (800, 802):
+                # 800=二维码过期/失效，802=等待确认（理论上 802 应继续轮询，此处容错）
+                if code == 800:
+                    await matcher.finish("二维码已过期，请重新执行登录指令")
+                    return
+        await matcher.finish("登录超时（180s 内未完成扫码），请重试")
+    except Exception as e:
+        await matcher.finish(f"登录未完成: {e}")
+
+
 async def _qqmusic_login(matcher: Matcher):
-    """SUPERUSER: 触发 QQ 音乐扫码登录，登录态持久化后 VIP 歌曲可解析。"""
+    """QQ 音乐扫码登录（依赖 qqmusic-api-python）。"""
     from ..parsers import _QQMUSIC_AVAILABLE
 
     if not _QQMUSIC_AVAILABLE:
         await matcher.finish("qqmusic-api-python 未安装，该指令不可用。请先 `pip install qqmusic-api-python`")
+        return
     from qqmusic_api import Client
     from qqmusic_api.models.login import QRLoginType
     from qqmusic_api.modules.login_utils import QRCodeLoginSession
@@ -293,18 +360,59 @@ async def _qqmusic_login(matcher: Matcher):
     await matcher.finish(f"✅ QQ 音乐登录成功 (musicid={cred.musicid})，VIP 歌曲现可解析")
 
 
-@on_command("qqmusic登出", block=True, permission=SUPERUSER).handle()
+def _register_music_login_commands() -> None:
+    """动态注册音乐平台登录/登出命令（命令名 = <prefix>+别名）。
+
+    与点歌命令（``par点歌``/``par网易云``）同源，复用 ``parse_prefix``。
+    用闭包工厂生成 handler，避免循环变量陷阱并保持 nonebot 依赖注入签名。
+    """
+    prefix = pconfig.parse_prefix or "par"
+
+    def _make_netease_login():
+        async def _h(matcher: Matcher):
+            await _netease_login(matcher, get_parser_by_type(NCMParser))
+
+        return _h
+
+    def _make_netease_logout():
+        async def _h(matcher: Matcher):
+            await _netease_logout(matcher)
+
+        return _h
+
+    # 网易云：网易云/wyy 两个别名（与点歌别名一致）
+    for _alias in ("网易云", "wyy"):
+        on_command(f"{prefix}{_alias}登录", block=True, permission=SUPERUSER).handle()(_make_netease_login())
+        on_command(f"{prefix}{_alias}登出", block=True, permission=SUPERUSER).handle()(_make_netease_logout())
+
+    # QQ 音乐：仅 qq 别名（与点歌别名一致）
+    on_command(f"{prefix}qq登录", block=True, permission=SUPERUSER).handle()(_qqmusic_login)
+    on_command(f"{prefix}qq登出", block=True, permission=SUPERUSER).handle()(_qqmusic_logout)
+
+
+async def _netease_logout(matcher: Matcher):
+    from ..parsers.netease import credential as netease_cred
+
+    if netease_cred.clear_credential():
+        await matcher.finish("已清除网易云登录态，后续仅能解析免费歌曲")
+    await matcher.finish("当前未保存网易云登录态")
+
+
 async def _qqmusic_logout(matcher: Matcher):
     """SUPERUSER: 清除已保存的 QQ 音乐登录态。"""
     from ..parsers import _QQMUSIC_AVAILABLE
 
     if not _QQMUSIC_AVAILABLE:
         await matcher.finish("qqmusic-api-python 未安装，该指令不可用。请先 `pip install qqmusic-api-python`")
+        return
     from ..parsers.qqmusic import credential as qq_cred
 
     if qq_cred.clear_credential():
         await matcher.finish("已清除 QQ 音乐登录态，后续仅能解析免费歌曲")
     await matcher.finish("当前未保存 QQ 音乐登录态")
+
+
+_register_music_login_commands()
 
 
 # ==================== 抖音 ttwid 凭据管理 ====================

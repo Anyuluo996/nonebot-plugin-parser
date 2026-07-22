@@ -1,6 +1,6 @@
 """QQ 音乐登录凭证持久化。
 
-登录态（``Credential``）由 ``qqmusic登录`` 扫码指令获得，序列化到本地 JSON 文件，
+登录态（``Credential``）由 ``parqq登录`` 扫码指令获得，序列化到本地 JSON 文件，
 下次启动及后续解析自动加载，无需重复扫码。
 
 存储位置复用 ``nonebot_plugin_localstore`` 提供的插件数据目录（``config._data_dir``）。

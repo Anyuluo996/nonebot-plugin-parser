@@ -11,7 +11,8 @@ import re
 from typing import ClassVar
 
 from . import api as netease_api
-from ..base import Platform, BaseParser, PlatformEnum, IgnoreException, handle
+from . import credential as netease_credential
+from ..base import Platform, BaseParser, PlatformEnum, TipException, IgnoreException, handle
 
 _NETEASE_SONG_RE = re.compile(r"music\.163\.com.*?(?:/song(?:\?|/)|[?&]id=)(?P<song_id>\d+)")
 
@@ -22,14 +23,21 @@ class NCMParser(BaseParser):
     platform: ClassVar[Platform] = Platform(name=PlatformEnum.NETEASE, display_name="网易云音乐")
 
     async def _parse_by_song_id(self, song_id: str, share_url: str):
-        """统一解析流程：详情 → 播放地址 → 歌词 + 封面。"""
+        """统一解析流程：详情 → 播放地址 → 歌词 + 封面。
+
+        匿名仅能解析免费歌曲；若已扫码登录（凭证持久化，见 :mod:`.credential`），
+        则带 cookie 走 enhance/player/url 接口，可解析 VIP 曲目。
+        """
         detail = await netease_api.get_song_detail(self, song_id)
         if not detail:
             raise IgnoreException("未找到该歌曲")
 
-        audio_url = await netease_api.get_song_url(self, song_id)
+        cookie = netease_credential.load_credential()
+        audio_url = await netease_api.get_song_url(self, song_id, cookie=cookie)
         if not audio_url:
-            raise IgnoreException("无法获取音频下载地址（可能为 VIP/无版权）")
+            if not cookie:
+                raise TipException("该曲为 VIP 歌曲，发送「par网易云登录」扫码后可解析")
+            raise TipException("无法获取音频（账号无该曲权限或无版权）")
 
         contents = [self.create_audio_content(audio_url, duration=detail["duration"])]
 

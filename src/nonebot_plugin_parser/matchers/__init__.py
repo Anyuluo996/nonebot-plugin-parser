@@ -300,6 +300,11 @@ async def _netease_login(matcher: Matcher, parser: BaseParser):
         await UniMessage("请用网易云音乐 App 扫描上图登录（请尽快扫，二维码 180 秒内有效）").send()
 
         # 3. 轮询登录状态（1.5s 间隔，180s 超时）
+        # 已知码：800=过期, 801=等待扫码, 802=已扫码待确认, 803=成功
+        # 未知码（如 8821 风控）：首次 warning 容错，连续 2 次判定为被拒并终止
+        unknown_code: int | None = None
+        unknown_count = 0
+        scanned_notified = False  # 802 只提示一次「请在手机确认」
         for _ in range(120):
             await asyncio.sleep(1.5)
             resp = await parser.request(
@@ -330,12 +335,34 @@ async def _netease_login(matcher: Matcher, parser: BaseParser):
                 logger.info("网易云登录: 扫码成功，已保存凭证")
                 await matcher.finish("✅ 网易云登录成功，VIP 歌曲现可解析")
                 return
-            if code in (800, 802):
-                # 800=二维码过期/失效，802=等待确认（理论上 802 应继续轮询，此处容错）
-                if code == 800:
-                    logger.info("网易云登录: 二维码已过期")
-                    await matcher.finish("二维码已过期，请重新执行登录指令")
-                    return
+            if code == 800:
+                logger.info("网易云登录: 二维码已过期")
+                await matcher.finish("二维码已过期，请重新执行登录指令")
+                return
+            if code == 801:
+                # 等待扫码，继续轮询
+                continue
+            if code == 802:
+                # 已扫码，等待手机确认（只提示一次，避免刷屏）
+                if not scanned_notified:
+                    logger.info("网易云登录: 已扫码，等待手机确认")
+                    await matcher.send("📱 已检测到扫码，请在手机上点击「确认登录」")
+                    scanned_notified = True
+                continue
+            # 未知码（8821 等）：首次记录并容错一次，连续出现则判定被拒/风控
+            if code != unknown_code:
+                unknown_code = code
+                unknown_count = 1
+                logger.warning(f"网易云登录: 出现未知轮询码 code={code}, message={data.get('message')!r}")
+                continue
+            unknown_count += 1
+            if unknown_count >= 2:
+                logger.warning(f"网易云登录: 未知码 code={code} 连续 {unknown_count} 次，判定为登录被拒/风控拦截")
+                await matcher.finish(
+                    f"⚠️ 登录被服务端拒绝（code={code}），可能触发风控。\n"
+                    "请稍后重试，或更换网络环境（如切换到手机热点）后再试。"
+                )
+                return
         logger.info("网易云登录: 180s 内未完成扫码")
         await matcher.finish("登录超时（180s 内未完成扫码），请重试")
     except Exception as e:

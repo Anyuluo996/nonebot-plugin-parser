@@ -66,6 +66,9 @@ def register_parser_matcher():
 # 缓存结果
 _RESULT_CACHE = LimitedSizeDict[str, ParseResult](max_size=50)
 
+# 合并转发发送失败时，降级为逐条直发的上限条数，避免数百节点刷屏
+_MAX_FALLBACK_NODES = 20
+
 
 def _get_cached_result(cache_key: str) -> ParseResult | None:
     result = _RESULT_CACHE.get(cache_key)
@@ -106,12 +109,19 @@ async def _send_parse_result(result: ParseResult) -> None:
             if len(nodes) <= 1:
                 # 不是合并转发或仅单节点, 重发无意义, 抛出原异常
                 raise
-            logger.warning(f"合并转发发送失败({send_err!r}), 降级为逐条直接发送 {len(nodes)} 条")
-            for node_msg in nodes:
+            # 降级直发上限：避免数百节点刷屏（如 opus 长文图文字段落）
+            fallback_nodes = nodes[:_MAX_FALLBACK_NODES]
+            logger.warning(f"合并转发发送失败({send_err!r}), 降级为逐条直接发送 {len(fallback_nodes)}/{len(nodes)} 条")
+            for node_msg in fallback_nodes:
                 try:
                     await node_msg.send()
                 except Exception:
                     logger.warning(f"降级发送单条消息失败, 跳过该条: {send_err!r}")
+            if len(nodes) > _MAX_FALLBACK_NODES:
+                try:
+                    await UniMessage(f"（合并转发失败，仅显示前 {_MAX_FALLBACK_NODES} 条，共 {len(nodes)} 条）").send()
+                except Exception:
+                    logger.warning("降级提示发送失败，跳过")
 
 
 async def parser_handler(

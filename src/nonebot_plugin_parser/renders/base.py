@@ -179,6 +179,31 @@ class ImageRenderer(BaseRenderer):
 
         return await asyncio.to_thread(_do_split)
 
+    async def render_contents(self, result: ParseResult) -> AsyncGenerator[UniMessage[Any], None]:
+        """ImageRenderer 系：graphics（文字段落 + 内嵌图）已渲染进卡片图，不再二次发出。
+
+        只处理独立的 ``result.contents``（视频/音频/图片，这些不渲染进卡片图）。
+        避免文字段落被当作独立消息重复发出（opus 长图文刷屏根因：397 个 str 段落
+        构建合并转发 → NapCat 拒绝 → 降级逐条直发刷屏）。
+
+        用临时清空 graphics 复用基类 render_contents，避免复制 contents 的分发逻辑。
+        DefaultRenderer（纯文本模式）不继承 ImageRenderer，仍需 render_contents 发 graphics，
+        不受此覆盖影响。
+        """
+        saved_graphics = result.graphics
+        repost = result.repost
+        saved_repost_graphics = repost.graphics if repost else None
+        result.graphics = []
+        if repost:
+            repost.graphics = []
+        try:
+            async for message in super().render_contents(result):
+                yield message
+        finally:
+            result.graphics = saved_graphics
+            if repost:
+                repost.graphics = saved_repost_graphics  # type: ignore[assignment]
+
     async def cache_or_render_image(self, result: ParseResult) -> tuple[Any, bytes]:
         """获取缓存图片，返回 (图片段, 原始 bytes)。
 

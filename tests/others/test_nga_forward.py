@@ -66,11 +66,12 @@ async def test_multi_image_forward(monkeypatch):
     from nonebot_plugin_alconna.uniseg import Reference
 
     from nonebot_plugin_parser.helper import UniHelper
-    from nonebot_plugin_parser.renders.nga import MAX_IMAGE_HEIGHT, Renderer
+    from nonebot_plugin_parser.renders.nga import Renderer
+    from nonebot_plugin_parser.renders.base import MAX_LONG_IMAGE_HEIGHT
 
     renderer = Renderer()
     monkeypatch.setattr(
-        renderer, "render_image", lambda result: _async_return(_png_bytes(720, MAX_IMAGE_HEIGHT * 2 + 100))
+        renderer, "render_image", lambda result: _async_return(_png_bytes(720, MAX_LONG_IMAGE_HEIGHT * 2 + 100))
     )
     monkeypatch.setattr(type(renderer), "append_url", property(lambda self: False))
 
@@ -89,10 +90,13 @@ async def test_multi_image_forward_with_url(monkeypatch):
     from nonebot_plugin_alconna.uniseg import Reference
 
     from nonebot_plugin_parser.helper import UniHelper
-    from nonebot_plugin_parser.renders.nga import MAX_IMAGE_HEIGHT, Renderer
+    from nonebot_plugin_parser.renders.nga import Renderer
+    from nonebot_plugin_parser.renders.base import MAX_LONG_IMAGE_HEIGHT
 
     renderer = Renderer()
-    monkeypatch.setattr(renderer, "render_image", lambda result: _async_return(_png_bytes(720, MAX_IMAGE_HEIGHT + 100)))
+    monkeypatch.setattr(
+        renderer, "render_image", lambda result: _async_return(_png_bytes(720, MAX_LONG_IMAGE_HEIGHT + 100))
+    )
     monkeypatch.setattr(type(renderer), "append_url", property(lambda self: True))
 
     messages = [m async for m in renderer.render_messages(_FakeResult())]

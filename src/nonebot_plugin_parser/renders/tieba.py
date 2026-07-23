@@ -71,9 +71,8 @@ class Renderer(ImageRenderer):
         长图切片逻辑（MAX_LONG_IMAGE_HEIGHT）复用基类 ImageRenderer._split_long_image。
         单图直接发送；多图（≥2 张）合并转发，避免逐条刷屏。
         """
-        image_seg = await self.cache_or_render_image(result)
+        image_seg, image_raw = await self.cache_or_render_image(result)
 
-        image_raw = image_seg.raw or (image_seg.path.read_bytes() if image_seg.path else b"")
         slices = await self._split_long_image(image_raw)
         if len(slices) > 1:
             logger.debug(f"贴吧长图切片: {len(slices)} 张 (每张 ≤{MAX_LONG_IMAGE_HEIGHT}px)")

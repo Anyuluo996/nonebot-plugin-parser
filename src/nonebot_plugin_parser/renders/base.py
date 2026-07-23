@@ -123,10 +123,9 @@ class ImageRenderer(BaseRenderer):
 
     @override
     async def render_messages(self, result: ParseResult):
-        image_seg = await self.cache_or_render_image(result)
+        image_seg, image_raw = await self.cache_or_render_image(result)
 
         # 切片长图，避免单图超高触发 NapCat rich media transfer failed
-        image_raw = image_seg.raw or (image_seg.path.read_bytes() if image_seg.path else b"")
         slices = await self._split_long_image(image_raw)
         if len(slices) > 1:
             logger.debug(f"长图切片: {len(slices)} 张 (每张 ≤{MAX_LONG_IMAGE_HEIGHT}px)")
@@ -180,16 +179,26 @@ class ImageRenderer(BaseRenderer):
 
         return await asyncio.to_thread(_do_split)
 
-    async def cache_or_render_image(self, result: ParseResult):
-        """获取缓存图片"""
+    async def cache_or_render_image(self, result: ParseResult) -> tuple[Any, bytes]:
+        """获取缓存图片，返回 (图片段, 原始 bytes)。
+
+        原始 bytes 供长图切片复用，避免从 Image 段反解（其 raw/path 类型含 str|BytesIO，
+        反解既不安全也丢类型）。图片段的构建逻辑与重构前保持一致：
+        use_base64=True 时走 raw bytes，否则走文件路径。
+        """
         if result.render_image is None:
             image_raw = await self.render_image(result)
             image_path = await self.save_img(image_raw)
             result.render_image = image_path
             if pconfig.use_base64:
-                return UniHelper.img_seg(image_raw)
+                return UniHelper.img_seg(image_raw), image_raw
+            return UniHelper.img_seg(image_path), image_raw
 
-        return UniHelper.img_seg(result.render_image)
+        # 走缓存路径：从已落盘文件读回 bytes 供切片，图片段仍按 use_base64 决定
+        image_raw = result.render_image.read_bytes()
+        if pconfig.use_base64:
+            return UniHelper.img_seg(image_raw), image_raw
+        return UniHelper.img_seg(result.render_image), image_raw
 
     @classmethod
     async def save_img(cls, raw: bytes) -> Path:

@@ -87,9 +87,8 @@ class Renderer(ImageRenderer):
         # 知乎问题页的文字与图片已全部渲染进长图（主楼 graphics + 回答 content），
         # 不再调用 render_contents 重复发送，避免主楼内容以文字消息二次发出。
         # 长图切片逻辑（MAX_LONG_IMAGE_HEIGHT）复用基类 ImageRenderer._split_long_image。
-        image_seg = await self.cache_or_render_image(result)
+        image_seg, image_raw = await self.cache_or_render_image(result)
 
-        image_raw = image_seg.raw or (image_seg.path.read_bytes() if image_seg.path else b"")
         slices = await self._split_long_image(image_raw)
         if len(slices) > 1:
             logger.debug(f"知乎长图切片: {len(slices)} 张 (每张 ≤{MAX_LONG_IMAGE_HEIGHT}px)")

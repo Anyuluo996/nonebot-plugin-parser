@@ -1,11 +1,15 @@
-"""验证 NGA 长图切片逻辑（纯 Pillow，但需 lazy import 触发插件初始化）"""
+"""验证长图切片逻辑（纯 Pillow，但需 lazy import 触发插件初始化）。
+
+切片方法原为 NGA 私有实现，现已提升到基类 ImageRenderer._split_long_image，
+供所有渲染器（NGA/贴吧/知乎/B站等）复用。这里直接测基类。
+"""
 
 import io
 
 import pytest
 from PIL import Image
 
-MAX_IMAGE_HEIGHT = 4000
+MAX_LONG_IMAGE_HEIGHT = 4000
 
 
 def _make_long_png(width: int, height: int) -> bytes:
@@ -22,17 +26,17 @@ def _make_long_png(width: int, height: int) -> bytes:
 @pytest.mark.asyncio
 async def test_split_long_image():
     """超高长图应被正确切片"""
-    from nonebot_plugin_parser.renders.nga import Renderer
+    from nonebot_plugin_parser.renders.base import ImageRenderer
 
     raw = _make_long_png(720, 9500)
-    slices = await Renderer._split_long_image(raw)
-    assert len(slices) == 3, f"9500/{MAX_IMAGE_HEIGHT} 应切 3 片, 实际 {len(slices)}"
+    slices = await ImageRenderer._split_long_image(raw)
+    assert len(slices) == 3, f"9500/{MAX_LONG_IMAGE_HEIGHT} 应切 3 片, 实际 {len(slices)}"
     total_h = 0
     for i, s in enumerate(slices):
         im = Image.open(io.BytesIO(s))
         w, h = im.size
         assert w == 720
-        assert h <= MAX_IMAGE_HEIGHT, f"片{i} 超高: {h}"
+        assert h <= MAX_LONG_IMAGE_HEIGHT, f"片{i} 超高: {h}"
         total_h += h
     assert total_h == 9500, f"拼接高度 {total_h} != 9500"
 
@@ -40,10 +44,10 @@ async def test_split_long_image():
 @pytest.mark.asyncio
 async def test_no_split_when_short():
     """不超高的图原样返回单元素"""
-    from nonebot_plugin_parser.renders.nga import Renderer
+    from nonebot_plugin_parser.renders.base import ImageRenderer
 
     raw = _make_long_png(720, 2000)
-    slices = await Renderer._split_long_image(raw)
+    slices = await ImageRenderer._split_long_image(raw)
     assert len(slices) == 1
     assert slices[0] == raw
 
@@ -51,10 +55,10 @@ async def test_no_split_when_short():
 @pytest.mark.asyncio
 async def test_split_boundary_exact():
     """高度正好等于阈值: 不切片"""
-    from nonebot_plugin_parser.renders.nga import Renderer
+    from nonebot_plugin_parser.renders.base import ImageRenderer
 
-    raw = _make_long_png(720, MAX_IMAGE_HEIGHT)
-    slices = await Renderer._split_long_image(raw)
+    raw = _make_long_png(720, MAX_LONG_IMAGE_HEIGHT)
+    slices = await ImageRenderer._split_long_image(raw)
     assert len(slices) == 1
 
 

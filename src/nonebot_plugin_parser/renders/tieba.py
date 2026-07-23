@@ -1,8 +1,9 @@
+from typing import Any
 from typing_extensions import override
 
 from nonebot import logger, require
 
-from .base import UniMessage, ParseResult, ImageRenderer
+from .base import MAX_LONG_IMAGE_HEIGHT, UniHelper, UniMessage, ParseResult, ImageRenderer
 
 # 优先用 htmlrender（容器/默认渲染栈已安装），回退到 htmlkit
 try:
@@ -65,11 +66,33 @@ class Renderer(ImageRenderer):
     @override
     async def render_messages(self, result: ParseResult):
         """贴吧的文字与图片已全部渲染进长图（主楼 graphics + 回复楼层 images），
-        不再调用 render_contents 重复发送，避免主楼内容以文字消息二次发出。"""
+
+        不再调用 render_contents 重复发送，避免主楼内容以文字消息二次发出。
+        长图切片逻辑（MAX_LONG_IMAGE_HEIGHT）复用基类 ImageRenderer._split_long_image。
+        单图直接发送；多图（≥2 张）合并转发，避免逐条刷屏。
+        """
         image_seg = await self.cache_or_render_image(result)
 
-        msg = UniMessage(image_seg)
+        image_raw = image_seg.raw or (image_seg.path.read_bytes() if image_seg.path else b"")
+        slices = await self._split_long_image(image_raw)
+        if len(slices) > 1:
+            logger.debug(f"贴吧长图切片: {len(slices)} 张 (每张 ≤{MAX_LONG_IMAGE_HEIGHT}px)")
+
+        url_text = ""
         if self.append_url:
             urls = (result.display_url, result.repost_display_url)
-            msg += "\n".join(url for url in urls if url)
-        yield msg
+            url_text = "\n".join(url for url in urls if url)
+
+        if len(slices) == 1:
+            # 单图：直接发送（URL 追加为文本）
+            msg: UniMessage[Any] = UniMessage(image_seg)
+            if url_text:
+                msg += url_text
+            yield msg
+        else:
+            # 多图：合并转发，URL 作为末尾文本节点
+            segs = [UniHelper.img_seg(piece) for piece in slices]
+            nodes: list[Any] = list(segs)
+            if url_text:
+                nodes.append(url_text)
+            yield UniMessage(UniHelper.construct_forward_message(nodes))

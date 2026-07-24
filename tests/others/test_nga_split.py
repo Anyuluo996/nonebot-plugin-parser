@@ -62,5 +62,25 @@ async def test_split_boundary_exact():
     assert len(slices) == 1
 
 
+@pytest.mark.asyncio
+async def test_split_merges_short_tail():
+    """最后一片过矮（残片）时并入倒数第二片，避免发出小空白图。
+
+    如 8100px → [0-4000, 4000-8100]，而非 [0-4000, 4000-8000, 8000-8100(100px)]。
+    """
+    from nonebot_plugin_parser.renders.base import ImageRenderer
+
+    raw = _make_long_png(720, 8100)  # 残片 100px < 800 阈值
+    slices = await ImageRenderer._split_long_image(raw)
+    assert len(slices) == 2, f"矮残片应并入，期望 2 片，实际 {len(slices)}"
+    total_h = sum(Image.open(io.BytesIO(s)).size[1] for s in slices)
+    assert total_h == 8100, f"拼接高度 {total_h} != 8100"
+    # 倒数第二片含残片，会略超 MAX_LONG_IMAGE_HEIGHT
+    h1 = Image.open(io.BytesIO(slices[0])).size[1]
+    h2 = Image.open(io.BytesIO(slices[1])).size[1]
+    assert h1 == 4000, f"首片应 4000，实际 {h1}"
+    assert h2 == 4100, f"末片应含残片 4100，实际 {h2}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

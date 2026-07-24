@@ -71,7 +71,7 @@ async def test_multi_image_forward(monkeypatch):
 
     renderer = Renderer()
     monkeypatch.setattr(
-        renderer, "render_image", lambda result: _async_return(_png_bytes(720, MAX_LONG_IMAGE_HEIGHT * 2 + 100))
+        renderer, "render_image", lambda result: _async_return(_png_bytes(720, MAX_LONG_IMAGE_HEIGHT * 2 + 1500))
     )
     monkeypatch.setattr(type(renderer), "append_url", property(lambda self: False))
 
@@ -80,7 +80,7 @@ async def test_multi_image_forward(monkeypatch):
     segs = list(messages[0])
     assert len(segs) == 1
     assert isinstance(segs[0], Reference), "多图应为合并转发 Reference"
-    # extract_forward_nodes 展开为逐节点消息，3 片图 → 3 条
+    # extract_forward_nodes 展开为逐节点消息，3 片图 → 3 条（残片 1500px ≥ 800 不合并）
     assert len(UniHelper.extract_forward_nodes(messages[0])) == 3
 
 
@@ -95,7 +95,7 @@ async def test_multi_image_forward_with_url(monkeypatch):
 
     renderer = Renderer()
     monkeypatch.setattr(
-        renderer, "render_image", lambda result: _async_return(_png_bytes(720, MAX_LONG_IMAGE_HEIGHT + 100))
+        renderer, "render_image", lambda result: _async_return(_png_bytes(720, MAX_LONG_IMAGE_HEIGHT + 1500))
     )
     monkeypatch.setattr(type(renderer), "append_url", property(lambda self: True))
 
@@ -103,7 +103,7 @@ async def test_multi_image_forward_with_url(monkeypatch):
     assert len(messages) == 1
     segs = list(messages[0])
     assert isinstance(segs[0], Reference)
-    # 2 片图 + 1 个 URL 文本节点 = 3 个节点
+    # 2 片图（残片 1500px ≥ 800 不合并）+ 1 个 URL 文本节点 = 3 个节点
     assert len(UniHelper.extract_forward_nodes(messages[0])) == 3
 
 

@@ -157,21 +157,40 @@ class ImageRenderer(BaseRenderer):
     async def _split_long_image(raw: bytes) -> list[bytes]:
         """长图按 MAX_LONG_IMAGE_HEIGHT 垂直切片，返回各片 bytes；不超高时原样返回单元素列表。
 
+        切片后若最后一片过矮（残片，如分页余下的几十像素），并入倒数第二片，
+        避免发出一张几乎空白的小图。倒数第二片会略超 MAX_LONG_IMAGE_HEIGHT，
+        但 QQ NT 单图上限约 4000-5000px，仍有余量。
+
         Pillow 的 open/crop/save 是同步 CPU 操作，用 to_thread 避免阻塞事件循环。
         """
         import asyncio
 
         from PIL import Image
 
+        # 残片高度阈值：低于此值的最后一片并入前一片
+        _MIN_TAIL_HEIGHT = 800
+
         def _do_split() -> list[bytes]:
             img = Image.open(io.BytesIO(raw))
             width, height = img.size
             if height <= MAX_LONG_IMAGE_HEIGHT:
                 return [raw]
-            pieces: list[bytes] = []
-            for top in range(0, height, MAX_LONG_IMAGE_HEIGHT):
+            # 计算切片边界，把矮残片并入前一片
+            boundaries: list[tuple[int, int]] = []
+            top = 0
+            while top < height:
                 bottom = min(top + MAX_LONG_IMAGE_HEIGHT, height)
-                piece = img.crop((0, top, width, bottom))
+                boundaries.append((top, bottom))
+                top = bottom
+            # 最后一片过矮且前面有片 → 并入
+            if len(boundaries) >= 2 and (boundaries[-1][1] - boundaries[-1][0]) < _MIN_TAIL_HEIGHT:
+                prev_top, _ = boundaries[-2]
+                last_bottom = boundaries[-1][1]
+                boundaries[-2] = (prev_top, last_bottom)
+                boundaries.pop()
+            pieces: list[bytes] = []
+            for t, b in boundaries:
+                piece = img.crop((0, t, width, b))
                 buf = io.BytesIO()
                 piece.save(buf, format="PNG")
                 pieces.append(buf.getvalue())

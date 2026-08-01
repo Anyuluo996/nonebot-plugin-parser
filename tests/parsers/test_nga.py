@@ -1,5 +1,6 @@
 """测试NGA解析器"""
 
+import httpx
 import pytest
 from nonebot import logger
 
@@ -7,6 +8,7 @@ from nonebot import logger
 @pytest.mark.asyncio
 async def test_nga_parse():
     """测试NGA帖子解析：主楼 + 前 4 楼回复，渲染成图片"""
+    from nonebot_plugin_parser.exception import ParseException
     from nonebot_plugin_parser.parsers.nga import NGAParser
 
     url = "https://bbs.nga.cn/read.php?tid=47058130"
@@ -17,8 +19,11 @@ async def test_nga_parse():
 
     assert searched, "URL应该能被NGA解析器匹配"
 
-    # 测试解析
-    result = await parser.parse(keyword, searched)
+    # 测试解析（NGA 接口偶发返回截断 JSON / 风控，解析阶段失败时 skip，与快手等测试一致）
+    try:
+        result = await parser.parse(keyword, searched)
+    except (ParseException, httpx.HTTPError) as e:
+        pytest.skip(f"NGA 解析失败（接口截断/风控/网络），跳过: {e!r}")
 
     # ── 主楼断言 ──
     assert result.title, "应该能提取标题"

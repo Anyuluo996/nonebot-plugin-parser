@@ -64,6 +64,7 @@ ALLOWED_DOMAINS: frozenset[str] = frozenset(
         # xiaohongshu
         "xiaohongshu.com",
         "xhslink.com",
+        "xhslink.cn",
         # kuaishou
         "kuaishou.com",
         "chenzhongtech.com",

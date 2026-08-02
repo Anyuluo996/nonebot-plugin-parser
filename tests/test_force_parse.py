@@ -371,12 +371,89 @@ def test_is_enabled_all_disabled_but_force_prefix_still_allowed(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_force_prefix_still_reaches_parser_handler_when_all_platforms_disabled(monkeypatch):
+async def test_force_prefix_blocked_when_all_platforms_disabled_and_unauthorized(monkeypatch):
+    """新语义: 平台被群管关闭后, 未授权用户用前缀强制解析会被拒绝(堵上绕过漏洞)。"""
     from nonebot.matcher import current_event
 
     from nonebot_plugin_parser.config import pconfig
     from nonebot_plugin_parser.parsers import Platform, ParseResult
     from nonebot_plugin_parser.matchers import parser_handler
+    from nonebot_plugin_parser.constants import PlatformEnum
+    from nonebot_plugin_parser.exception import TipException
+    from nonebot_plugin_parser.matchers.rule import (
+        PSR_SEARCHED_KEY,
+        PSR_FORCE_PARSE_KEY,
+        KeyPatternList,
+        KeywordRegexRule,
+    )
+    from nonebot_plugin_parser.matchers.filter import _DISABLED_PLATFORMS_DICT, is_enabled, get_group_key
+
+    class MockScene:
+        is_private = False
+
+    class MockUser:
+        id = "8888"  # 未授权用户
+
+    class MockSession:
+        scene = MockScene()
+        scope = "qq"
+        scene_path = "force-handler-group"
+        user = MockUser()
+
+    class FakeParser:
+        platform = Platform(name="bilibili", display_name="哔哩哔哩")
+
+        def __init__(self):
+            self.calls: list[tuple[str, str]] = []
+
+        async def parse(self, keyword: str, searched):
+            self.calls.append((keyword, searched.group(0)))
+            return ParseResult(platform=self.platform, title="ok")
+
+    session = MockSession()
+    group_key = get_group_key(session)
+    original_disabled = _DISABLED_PLATFORMS_DICT.get(group_key)
+    fake_parser = FakeParser()
+
+    async def fake_reaction(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(pconfig, "parser_force_prefix", "bot")
+    monkeypatch.setattr("nonebot_plugin_parser.matchers.get_parser", lambda keyword: fake_parser)
+    monkeypatch.setattr("nonebot_plugin_parser.helper.UniHelper.message_reaction", fake_reaction)
+    _DISABLED_PLATFORMS_DICT[group_key] = {platform.value for platform in PlatformEnum}
+
+    message = _text_message("bot https://www.bilibili.com/video/BV1xx411c7mD")
+    rule = KeywordRegexRule(KeyPatternList(("bilibili", r"bilibili\.com/video/([A-Za-z0-9]+)")))
+    state = {}
+
+    token = current_event.set(object())
+    try:
+        assert is_enabled(message, session) is True
+        assert await rule(message, _FakeEvent(None), state) is True
+        assert state[PSR_FORCE_PARSE_KEY] is True
+        with pytest.raises(TipException, match="强制解析权限"):
+            await parser_handler(state[PSR_SEARCHED_KEY], session, state)
+    finally:
+        current_event.reset(token)
+        if original_disabled is None:
+            _DISABLED_PLATFORMS_DICT.pop(group_key, None)
+        else:
+            _DISABLED_PLATFORMS_DICT[group_key] = original_disabled
+
+    # 未授权: parser 未被调用
+    assert fake_parser.calls == []
+
+
+@pytest.mark.asyncio
+async def test_force_prefix_allowed_when_all_platforms_disabled_but_authorized(monkeypatch):
+    """新语义: 平台被群管关闭后, 被「强制解析」授权的用户仍能用前缀强制解析。"""
+    from nonebot.matcher import current_event
+
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.parsers import Platform, ParseResult
+    from nonebot_plugin_parser.matchers import parser_handler
+    from nonebot_plugin_parser.matchers import auth
     from nonebot_plugin_parser.constants import PlatformEnum
     from nonebot_plugin_parser.matchers.rule import (
         PSR_SEARCHED_KEY,
@@ -389,10 +466,14 @@ async def test_force_prefix_still_reaches_parser_handler_when_all_platforms_disa
     class MockScene:
         is_private = False
 
+    class MockUser:
+        id = "7777"  # 将被授权
+
     class MockSession:
         scene = MockScene()
         scope = "qq"
-        scene_path = "force-handler-group"
+        scene_path = "force-auth-group"
+        user = MockUser()
 
     class FakeParser:
         platform = Platform(name="bilibili", display_name="哔哩哔哩")
@@ -436,6 +517,9 @@ async def test_force_prefix_still_reaches_parser_handler_when_all_platforms_disa
     monkeypatch.setattr("nonebot_plugin_parser.helper.UniHelper.message_reaction", fake_reaction)
     _DISABLED_PLATFORMS_DICT[group_key] = {platform.value for platform in PlatformEnum}
 
+    # 授权该用户强制解析(本群)
+    assert auth.grant("7777", [auth.FORCE_PARSE], group_key=group_key) is True
+
     message = _text_message("bot https://www.bilibili.com/video/BV1xx411c7mD")
     rule = KeywordRegexRule(KeyPatternList(("bilibili", r"bilibili\.com/video/([A-Za-z0-9]+)")))
     state = {}
@@ -452,7 +536,10 @@ async def test_force_prefix_still_reaches_parser_handler_when_all_platforms_disa
             _DISABLED_PLATFORMS_DICT.pop(group_key, None)
         else:
             _DISABLED_PLATFORMS_DICT[group_key] = original_disabled
+        # 清理授权
+        auth.revoke("7777", group_key=group_key)
 
     assert fake_parser.calls == [("bilibili", "bilibili.com/video/BV1xx411c7mD")]
     assert sent == ["sent"]
     assert len(fake_renderer.results) == 1
+

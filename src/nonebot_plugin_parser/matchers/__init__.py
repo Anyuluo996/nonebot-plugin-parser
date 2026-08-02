@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from ..download import LoginQrHandle
 
 from . import auth
-from .rule import SUPER_PRIVATE, PSR_FORCE_PARSE_KEY, Searched, SearchResult, on_keyword_regex
+from .rule import PSR_FORCE_PARSE_KEY, Searched, SearchResult, on_keyword_regex
 from ..utils import LimitedSizeDict
 from .filter import get_group_key, is_tg_authorized, is_platform_enabled
 from ..config import gconfig, pconfig
@@ -273,7 +273,7 @@ if YTDLP_DOWNLOADER is not None:
             await UniMessage(UniHelper.file_seg(audio_path)).send()
 
 
-@on_command("blogin", block=True, permission=SUPER_PRIVATE).handle()
+@on_command("blogin", block=True, permission=auth.private_authorized(auth.BILI_LOGIN)).handle()
 async def _():
     parser = get_parser_by_type(BilibiliParser)
     qrcode = await parser.login_with_qrcode()
@@ -374,13 +374,19 @@ def _register_music_login_commands() -> None:
         return _h
 
     # 网易云：网易云/wyy 两个别名（与点歌别名一致）
+    _netease_perm = auth.super_or_authorized(auth.NETEASE_LOGIN)
     for _alias in ("网易云", "wyy"):
-        on_command(f"{prefix}{_alias}登录", block=True, permission=SUPERUSER).handle()(_make_netease_login())
-        on_command(f"{prefix}{_alias}登出", block=True, permission=SUPERUSER).handle()(_make_netease_logout())
+        on_command(f"{prefix}{_alias}登录", block=True, permission=_netease_perm).handle()(_make_netease_login())
+        on_command(f"{prefix}{_alias}登出", block=True, permission=_netease_perm).handle()(_make_netease_logout())
+        auth.register_command_item(f"{prefix}{_alias}登录", auth.NETEASE_LOGIN)
+        auth.register_command_item(f"{prefix}{_alias}登出", auth.NETEASE_LOGIN)
 
     # QQ 音乐：仅 qq 别名（与点歌别名一致）
-    on_command(f"{prefix}qq登录", block=True, permission=SUPERUSER).handle()(_qqmusic_login)
-    on_command(f"{prefix}qq登出", block=True, permission=SUPERUSER).handle()(_qqmusic_logout)
+    _qq_perm = auth.super_or_authorized(auth.QQ_LOGIN)
+    on_command(f"{prefix}qq登录", block=True, permission=_qq_perm).handle()(_qqmusic_login)
+    on_command(f"{prefix}qq登出", block=True, permission=_qq_perm).handle()(_qqmusic_logout)
+    auth.register_command_item(f"{prefix}qq登录", auth.QQ_LOGIN)
+    auth.register_command_item(f"{prefix}qq登出", auth.QQ_LOGIN)
 
 
 async def _netease_logout(matcher: Matcher):
@@ -413,9 +419,9 @@ _register_music_login_commands()
 # ==================== 抖音 ttwid 凭据管理 ====================
 # 抖音图文/实况照片需登录态 ttwid + a_bogus 签名配套才放行。
 # 除 .env 兜底外，SUPERUSER 可通过指令热更新 ttwid，无需重启。
-@on_command("dyttwid", block=True, permission=SUPERUSER).handle()
+@on_command("dyttwid", block=True, permission=auth.super_or_authorized(auth.DY_TTWID)).handle()
 async def _douyin_set_ttwid(matcher: Matcher, args: Message = CommandArg()):
-    """SUPERUSER: 写入抖音登录态 ttwid（持久化，热更新，覆盖上一次的值）。
+    """SUPERUSER 或被授权用户: 写入抖音登录态 ttwid（持久化，热更新，覆盖上一次的值）。
 
     用法: dyttwid <ttwid 值>   —— 从浏览器登录抖音后复制 ``ttwid`` Cookie。
     优先级高于 .env 的 ``parser_douyin_ttwid``，写入后立即生效。
@@ -429,9 +435,9 @@ async def _douyin_set_ttwid(matcher: Matcher, args: Message = CommandArg()):
     await matcher.finish(f"✅ 已保存抖音 ttwid（{len(value)} 字符），图文/实况照片解析立即生效")
 
 
-@on_command("dyttwid查看", block=True, permission=SUPERUSER).handle()
+@on_command("dyttwid查看", block=True, permission=auth.super_or_authorized(auth.DY_TTWID)).handle()
 async def _douyin_show_ttwid(matcher: Matcher):
-    """SUPERUSER: 查看当前生效的抖音 ttwid（排查设置是否成功）。"""
+    """SUPERUSER 或被授权用户: 查看当前生效的抖音 ttwid（排查设置是否成功）。"""
     from ..parsers.douyin import ttwid as dy_ttwid
 
     persisted = dy_ttwid.load_ttwid()
@@ -445,9 +451,9 @@ async def _douyin_show_ttwid(matcher: Matcher):
     await matcher.finish("当前未配置抖音 ttwid（指令和 .env 均为空）")
 
 
-@on_command("dycookie", block=True, permission=SUPERUSER).handle()
+@on_command("dycookie", block=True, permission=auth.super_or_authorized(auth.DY_COOKIE)).handle()
 async def _douyin_set_cookie(matcher: Matcher, args: Message = CommandArg()):
-    """SUPERUSER: 写入抖音完整登录态 Cookie（持久化，热更新，覆盖上一次的值）。
+    """SUPERUSER 或被授权用户: 写入抖音完整登录态 Cookie（持久化，热更新，覆盖上一次的值）。
 
     用法: dycookie <整条 Cookie> —— 从浏览器 F12 → Network → www.douyin.com →
     Request Headers → Cookie 整行复制（含 sessionid/sid_guard/odin_tt/ttwid 等）。
@@ -465,9 +471,9 @@ async def _douyin_set_cookie(matcher: Matcher, args: Message = CommandArg()):
     await matcher.finish(f"✅ 已保存抖音 Cookie（{len(value)} 字符），图文/实况照片解析立即生效")
 
 
-@on_command("dycookie查看", block=True, permission=SUPERUSER).handle()
+@on_command("dycookie查看", block=True, permission=auth.super_or_authorized(auth.DY_COOKIE)).handle()
 async def _douyin_show_cookie(matcher: Matcher):
-    """SUPERUSER: 查看当前生效的抖音凭据（排查设置是否成功）。"""
+    """SUPERUSER 或被授权用户: 查看当前生效的抖音凭据（排查设置是否成功）。"""
     from ..parsers.douyin import ttwid as dy_ttwid
 
     # 优先显示完整 cookie（若已配置）
@@ -575,114 +581,146 @@ def _format_items(items: list[str]) -> str:
     return "、".join(items) if items else "全部受控项"
 
 
-@on_command("par授权", block=True, permission=SUPERUSER).handle()
-async def _par_grant(matcher: Matcher, session: Session = UniSession(), args: Message = CommandArg()):
-    """SUPERUSER: 授权用户使用受控项(本群)。用法: par授权 @用户 [受控项...]
+def _parse_items(rest: str) -> list[str] | None:
+    """把授权命令的「受控项」文本归一化为语义键列表。
 
-    不写受控项 = 授权全部。本群生效(私聊场景视为全局授权)。
+    每个输入项通过 auth.resolve_item 归一化; 任意一项无法识别则返回 None(触发用法提示)。
+    空输入返回 [](语义=授权/撤销全部)。
     """
-    user_id, rest = _extract_target_user(args)
-    if not user_id:
-        await matcher.finish("用法: par授权 @用户 [受控项...]\n(不写受控项=授权全部,如:par授权 @用户 强制解析)")
-    items = rest.split() if rest.strip() else []
-
-    group_key = None if session.scene.is_private else get_group_key(session)
-    scope = "全局" if group_key is None else "本群"
-    if auth.grant(user_id, items, group_key):
-        await matcher.finish(f"✅ 已{scope}授权 {user_id} 使用 {_format_items(items)}")
-    await matcher.finish(f"{user_id} 的{scope}授权未变化(已是该配置)")
-
-
-@on_command("par全局授权", block=True, permission=SUPERUSER).handle()
-async def _par_grant_global(matcher: Matcher, args: Message = CommandArg()):
-    """SUPERUSER: 全局授权用户(跨群生效)。用法: par全局授权 @用户 [受控项...]"""
-    user_id, rest = _extract_target_user(args)
-    if not user_id:
-        await matcher.finish("用法: par全局授权 @用户 [受控项...]\n(不写受控项=授权全部)")
-    items = rest.split() if rest.strip() else []
-
-    if auth.grant(user_id, items, group_key=None):
-        await matcher.finish(f"✅ 已全局授权 {user_id} 使用 {_format_items(items)}")
-    await matcher.finish(f"{user_id} 的全局授权未变化(已是该配置)")
+    parts = rest.split() if rest.strip() else []
+    if not parts:
+        return []  # 空 = 全部
+    items: list[str] = []
+    for raw in parts:
+        resolved = auth.resolve_item(raw)
+        if resolved is None:
+            return None  # 有无法识别的项, 让调用方报错
+        if resolved not in items:
+            items.append(resolved)
+    return items
 
 
-@on_command("par取消授权", block=True, permission=SUPERUSER).handle()
-async def _par_revoke(matcher: Matcher, session: Session = UniSession(), args: Message = CommandArg()):
-    """SUPERUSER: 撤销用户的授权(全局 + 本群)。用法: par取消授权 @用户 [受控项...]
+def _register_admin_commands() -> None:
+    """注册授权/黑名单管理命令, 命令名跟随 parser_force_prefix(空前缀回退 par)。
 
-    不写受控项 = 撤销该用户全部授权。
+    受控项参数用语义键(不含前缀), 通过 auth.resolve_item 归一化:
+    用户可输入 ``强制解析`` / ``qq登录`` / ``parqq登录`` 等任意形态, 均映射回语义键。
     """
-    user_id, rest = _extract_target_user(args)
-    if not user_id:
-        await matcher.finish("用法: par取消授权 @用户 [受控项...]\n(不写受控项=撤销全部)")
-    items = rest.split() if rest.strip() else None
+    prefix = pconfig.parse_prefix or "par"
 
-    changed_global = auth.revoke(user_id, items, group_key=None)
-    # 群组授权: 私聊触发无群组上下文, 只清全局; 群聊触发时同时清本群。
-    group_key = None if session.scene.is_private else get_group_key(session)
-    changed_group = auth.revoke(user_id, items, group_key=group_key) if group_key else False
+    @on_command(f"{prefix}授权", block=True, permission=SUPERUSER).handle()
+    async def _par_grant(matcher: Matcher, session: Session = UniSession(), args: Message = CommandArg()):
+        """SUPERUSER: 授权用户使用受控项(本群)。用法: <prefix>授权 @用户 [受控项...]
 
-    if changed_global or changed_group:
-        await matcher.finish(f"✅ 已撤销 {user_id} 的授权({', '.join(items) if items else '全部'})")
-    await matcher.finish(f"{user_id} 没有可撤销的授权")
+        不写受控项 = 授权全部。本群生效(私聊场景视为全局授权)。
+        受控项用语义键(如 强制解析/qq登录/网易云登录/dyttwid/dycookie/bilibili登录),
+        也接受带前缀的真实命令名(如 parqq登录)。
+        """
+        user_id, rest = _extract_target_user(args)
+        if not user_id:
+            await matcher.finish(
+                f"用法: {prefix}授权 @用户 [受控项...]\n(不写=授权全部; 受控项: {', '.join(auth.DELEGABLE_ITEMS)})"
+            )
+        items = _parse_items(rest)
+        if items is None:
+            await matcher.finish(f"未识别的受控项, 可用: {', '.join(auth.DELEGABLE_ITEMS)}")
 
+        group_key = None if session.scene.is_private else get_group_key(session)
+        scope = "全局" if group_key is None else "本群"
+        if auth.grant(user_id, items, group_key):
+            await matcher.finish(f"✅ 已{scope}授权 {user_id} 使用 {_format_items(items)}")
+        await matcher.finish(f"{user_id} 的{scope}授权未变化(已是该配置)")
 
-@on_command("par授权查看", block=True, permission=SUPERUSER).handle()
-async def _par_grants_view(matcher: Matcher, session: Session = UniSession()):
-    """SUPERUSER: 查看授权名单(全局 + 本群)。"""
-    lines: list[str] = []
-    global_grants = auth.list_grants(group_key=None)
-    if global_grants:
-        lines.append("【全局授权】")
-        for uid, items in global_grants.items():
-            lines.append(f"  {uid}: {_format_items(items)}")
-    else:
-        lines.append("【全局授权】(空)")
+    @on_command(f"{prefix}全局授权", block=True, permission=SUPERUSER).handle()
+    async def _par_grant_global(matcher: Matcher, args: Message = CommandArg()):
+        """SUPERUSER: 全局授权用户(跨群生效)。用法: <prefix>全局授权 @用户 [受控项...]"""
+        user_id, rest = _extract_target_user(args)
+        if not user_id:
+            await matcher.finish(f"用法: {prefix}全局授权 @用户 [受控项...]\n(不写=授权全部)")
+        items = _parse_items(rest)
+        if items is None:
+            await matcher.finish(f"未识别的受控项, 可用: {', '.join(auth.DELEGABLE_ITEMS)}")
 
-    if not session.scene.is_private:
-        group_key = get_group_key(session)
-        group_grants = auth.list_grants(group_key=group_key)
-        lines.append(f"【本群授权】({group_key})")
-        if group_grants:
-            for uid, items in group_grants.items():
+        if auth.grant(user_id, items, group_key=None):
+            await matcher.finish(f"✅ 已全局授权 {user_id} 使用 {_format_items(items)}")
+        await matcher.finish(f"{user_id} 的全局授权未变化(已是该配置)")
+
+    @on_command(f"{prefix}取消授权", block=True, permission=SUPERUSER).handle()
+    async def _par_revoke(matcher: Matcher, session: Session = UniSession(), args: Message = CommandArg()):
+        """SUPERUSER: 撤销用户的授权(全局 + 本群)。用法: <prefix>取消授权 @用户 [受控项...]
+
+        不写受控项 = 撤销该用户全部授权。
+        """
+        user_id, rest = _extract_target_user(args)
+        if not user_id:
+            await matcher.finish(f"用法: {prefix}取消授权 @用户 [受控项...]\n(不写=撤销全部)")
+        items = _parse_items(rest)  # 取消授权允许空(=撤销全部)
+
+        changed_global = auth.revoke(user_id, items, group_key=None)
+        # 群组授权: 私聊触发无群组上下文, 只清全局; 群聊触发时同时清本群。
+        group_key = None if session.scene.is_private else get_group_key(session)
+        changed_group = auth.revoke(user_id, items, group_key=group_key) if group_key else False
+
+        if changed_global or changed_group:
+            await matcher.finish(f"✅ 已撤销 {user_id} 的授权({', '.join(items) if items else '全部'})")
+        await matcher.finish(f"{user_id} 没有可撤销的授权")
+
+    @on_command(f"{prefix}授权查看", block=True, permission=SUPERUSER).handle()
+    async def _par_grants_view(matcher: Matcher, session: Session = UniSession()):
+        """SUPERUSER: 查看授权名单(全局 + 本群)。"""
+        lines: list[str] = []
+        global_grants = auth.list_grants(group_key=None)
+        if global_grants:
+            lines.append("【全局授权】")
+            for uid, items in global_grants.items():
                 lines.append(f"  {uid}: {_format_items(items)}")
         else:
-            lines.append("  (空)")
+            lines.append("【全局授权】(空)")
 
-    await matcher.finish("\n".join(lines))
+        if not session.scene.is_private:
+            group_key = get_group_key(session)
+            group_grants = auth.list_grants(group_key=group_key)
+            lines.append(f"【本群授权】({group_key})")
+            if group_grants:
+                for uid, items in group_grants.items():
+                    lines.append(f"  {uid}: {_format_items(items)}")
+            else:
+                lines.append("  (空)")
+
+        await matcher.finish("\n".join(lines))
+
+    @on_command(f"{prefix}拉黑", block=True, permission=SUPERUSER).handle()
+    async def _par_ban(matcher: Matcher, args: Message = CommandArg()):
+        """SUPERUSER: 全局拉黑用户(不解析/不响应功能指令)。用法: <prefix>拉黑 @用户"""
+        user_id, _ = _extract_target_user(args)
+        if not user_id:
+            await matcher.finish(f"用法: {prefix}拉黑 @用户")
+        if user_id in set(gconfig.superusers):
+            await matcher.finish("不可拉黑 SUPERUSER")
+        if auth.add_blacklist(user_id):
+            await matcher.finish(f"✅ 已拉黑 {user_id}(全局封禁: 不解析/不响应功能指令)")
+        await matcher.finish(f"{user_id} 已在黑名单中")
+
+    @on_command(f"{prefix}解除拉黑", block=True, permission=SUPERUSER).handle()
+    async def _par_unban(matcher: Matcher, args: Message = CommandArg()):
+        """SUPERUSER: 解除全局拉黑。用法: <prefix>解除拉黑 @用户"""
+        user_id, _ = _extract_target_user(args)
+        if not user_id:
+            await matcher.finish(f"用法: {prefix}解除拉黑 @用户")
+        if auth.remove_blacklist(user_id):
+            await matcher.finish(f"✅ 已解除 {user_id} 的拉黑")
+        await matcher.finish(f"{user_id} 不在黑名单中")
+
+    @on_command(f"{prefix}黑名单", block=True, permission=SUPERUSER).handle()
+    async def _par_blacklist_view(matcher: Matcher):
+        """SUPERUSER: 查看全局黑名单。"""
+        blacklist = auth.get_blacklist()
+        if not blacklist:
+            await matcher.finish("当前黑名单为空")
+        await matcher.finish("全局黑名单:\n" + "\n".join(blacklist))
 
 
-@on_command("par拉黑", block=True, permission=SUPERUSER).handle()
-async def _par_ban(matcher: Matcher, args: Message = CommandArg()):
-    """SUPERUSER: 全局拉黑用户(不解析/不响应功能指令)。用法: par拉黑 @用户"""
-    user_id, _ = _extract_target_user(args)
-    if not user_id:
-        await matcher.finish("用法: par拉黑 @用户")
-    if user_id in set(gconfig.superusers):
-        await matcher.finish("不可拉黑 SUPERUSER")
-    if auth.add_blacklist(user_id):
-        await matcher.finish(f"✅ 已拉黑 {user_id}(全局封禁: 不解析/不响应功能指令)")
-    await matcher.finish(f"{user_id} 已在黑名单中")
-
-
-@on_command("par解除拉黑", block=True, permission=SUPERUSER).handle()
-async def _par_unban(matcher: Matcher, args: Message = CommandArg()):
-    """SUPERUSER: 解除全局拉黑。用法: par解除拉黑 @用户"""
-    user_id, _ = _extract_target_user(args)
-    if not user_id:
-        await matcher.finish("用法: par解除拉黑 @用户")
-    if auth.remove_blacklist(user_id):
-        await matcher.finish(f"✅ 已解除 {user_id} 的拉黑")
-    await matcher.finish(f"{user_id} 不在黑名单中")
-
-
-@on_command("par黑名单", block=True, permission=SUPERUSER).handle()
-async def _par_blacklist_view(matcher: Matcher):
-    """SUPERUSER: 查看全局黑名单。"""
-    blacklist = auth.get_blacklist()
-    if not blacklist:
-        await matcher.finish("当前黑名单为空")
-    await matcher.finish("全局黑名单:\n" + "\n".join(blacklist))
+_register_admin_commands()
 
 
 # 模块级 2FA 密码等待状态：{user_id: LoginQrHandle}

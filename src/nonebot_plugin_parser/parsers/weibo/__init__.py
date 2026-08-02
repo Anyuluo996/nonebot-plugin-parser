@@ -3,6 +3,7 @@ from time import time
 from uuid import uuid4
 from typing import ClassVar
 
+import msgspec
 from bs4 import Tag, BeautifulSoup
 from httpx import Cookies
 
@@ -181,7 +182,13 @@ class WeiBoParser(BaseParser):
         if "application/json" not in ctype:
             raise ParseException(f"获取数据失败 content-type is not application/json (got: {ctype})")
 
-        weibo_data = common.decoder.decode(response.content).data
+        # 先判 ok：上游对已删除/锁定/风控返回 {"ok":0,"msg":"该微博不存在"...}，
+        # 此响应缺 `data` 字段，直接 decode 会抛 msgspec.ValidationError（实现细节泄漏）。
+        try:
+            weibo_data = common.decoder.decode(response.content).data
+        except msgspec.ValidationError as e:
+            # 兜底：ok=0 的错误信封或缺字段均转成语义化 ParseException
+            raise ParseException(f"微博数据解析失败（可能已被删除/锁定/风控）: {e}") from e
 
         return self._collect_result(weibo_data)
 

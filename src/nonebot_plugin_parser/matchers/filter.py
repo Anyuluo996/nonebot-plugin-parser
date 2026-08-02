@@ -6,6 +6,7 @@ from nonebot.rule import to_me
 from nonebot.params import CommandArg
 from nonebot.matcher import Matcher
 from nonebot.adapters import Message
+from nonebot.exception import MatcherException
 from nonebot.permission import SUPERUSER
 from nonebot_plugin_uninfo import ADMIN, OWNER, Session, UniSession
 from nonebot_plugin_alconna.uniseg import UniMsg
@@ -261,11 +262,10 @@ async def enable_parser(matcher: Matcher, session: Session = UniSession(), args:
                 del _DISABLED_PLATFORMS_DICT[group_key]
                 save_disabled_platforms()
             await matcher.finish("解析已开启")
+    except MatcherException:
+        # NoneBot 控制流异常（Finished/Rejected/Paused 等）必须放行, 不能吞成"发生错误"
+        raise
     except Exception as e:
-        from nonebot.exception import FinishedException
-
-        if isinstance(e, FinishedException):
-            raise  # 重新抛出 FinishedException
         logger.exception(f"[开启解析] 发生异常: {e}")
         await matcher.finish(f"发生错误: {e}")
 
@@ -305,11 +305,10 @@ async def disable_parser(matcher: Matcher, session: Session = UniSession(), args
             _DISABLED_PLATFORMS_DICT[group_key] = _ALL_PLATFORMS.copy()
             save_disabled_platforms()
             await matcher.finish("解析已关闭")
+    except MatcherException:
+        # NoneBot 控制流异常（Finished/Rejected/Paused 等）必须放行, 不能吞成"发生错误"
+        raise
     except Exception as e:
-        from nonebot.exception import FinishedException
-
-        if isinstance(e, FinishedException):
-            raise  # 重新抛出 FinishedException
         logger.exception(f"[关闭解析] 发生异常: {e}")
         await matcher.finish(f"发生错误: {e}")
 

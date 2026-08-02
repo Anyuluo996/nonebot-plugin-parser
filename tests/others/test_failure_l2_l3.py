@@ -195,3 +195,76 @@ async def test_report_http_error_returns_false(monkeypatch):
     monkeypatch.setattr(fr.httpx, "AsyncClient", _FakeClient)
     ok = await fr.report_failure_record({"url": "u1", "platform": "p"})
     assert ok is False
+
+
+# ── 回归：失败重试计数不应双倍递增（修复 #1.1）──────────────────────
+
+
+@pytest.mark.asyncio
+async def test_retry_one_failure_increments_retries_by_one(monkeypatch, tmp_path):
+    """单次重试失败后 retries 应 +1，而非 +2（历史 bug：mark_retried 与 _retry_one
+    对同一 dict 引用各 +1，导致重试预算被腰斩）。
+
+    修复后 get_retryable_failures 返回浅拷贝，_retry_one 不再手动递增。
+    """
+    import asyncio
+    import importlib
+
+    import nonebot_plugin_parser.failure_store as fs
+
+    importlib.reload(fs)
+    fs._FAILURES_PATH = tmp_path / "parse_failures.json"
+    fs._failures = fs._load_or_initialize()
+    fs.record_failure("https://example.com/x", "test", "initial err")
+
+    # 让 _retry_one 内部 wait_for 抛超时（模拟解析失败）
+    async def _slow_parse(*a, **kw):
+        await asyncio.sleep(100)  # 超过 _PER_RETRY_TIMEOUT=60
+
+    class _FakeParser:
+        @staticmethod
+        def search_url(url):
+            import re
+
+            return ("test", re.search(r"example", url))
+
+        parse = _slow_parse
+
+    monkeypatch.setattr(
+        "nonebot_plugin_parser.failure_retry._find_parser_for_url",
+        lambda url: _FakeParser(),
+    )
+    # 缩短超时加速测试
+    monkeypatch.setattr("nonebot_plugin_parser.failure_retry._PER_RETRY_TIMEOUT", 0.1)
+    # 关闭上报避免网络
+    from nonebot_plugin_parser.config import Config
+
+    monkeypatch.setattr(Config, "failure_report_enabled", property(lambda self: False))
+
+    from nonebot_plugin_parser import failure_retry
+
+    pending = fs.get_retryable_failures(max_retries=3)
+    assert len(pending) == 1
+    await failure_retry._retry_one(pending[0])
+
+    # 关键断言：一次失败 retries 应为 1（而非历史的 2）
+    rec = fs.get_failures()[0]
+    assert rec["retries"] == 1, f"单次失败 retries 应 +1, 实际 {rec['retries']}(历史双倍计数 bug 重现)"
+
+
+def test_get_retryable_failures_returns_copy(tmp_path):
+    """get_retryable_failures 返回浅拷贝，与 _failures 内部对象解耦。"""
+    import importlib
+
+    import nonebot_plugin_parser.failure_store as fs
+
+    importlib.reload(fs)
+    fs._FAILURES_PATH = tmp_path / "parse_failures.json"
+    fs._failures = fs._load_or_initialize()
+    fs.record_failure("u1", "p1", "e1")
+
+    pending = fs.get_retryable_failures(max_retries=3)
+    assert pending[0]["url"] == "u1"
+    # 修改拷贝不应影响内部 _failures
+    pending[0]["retries"] = 999
+    assert fs.get_failures()[0]["retries"] == 0

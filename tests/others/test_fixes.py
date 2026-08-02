@@ -11,7 +11,7 @@
 
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -104,13 +104,9 @@ async def test_curl_stream_download_success(tmp_path, monkeypatch):
     session = FakeCurlSession([(200, [b"hello", b"world"])])
 
     # _download_by_curl 内部 `from curl_cffi.requests import AsyncSession`
-    monkeypatch.setattr(
-        "curl_cffi.requests.AsyncSession", lambda *a, **k: session
-    )
+    monkeypatch.setattr("curl_cffi.requests.AsyncSession", lambda *a, **k: session)
 
-    result = await _download_by_curl(
-        "https://example.com/file.bin", file_path, {"User-Agent": "test"}, max_retries=0
-    )
+    result = await _download_by_curl("https://example.com/file.bin", file_path, {"User-Agent": "test"}, max_retries=0)
     assert result == file_path
     assert file_path.read_bytes() == b"helloworld"
 
@@ -130,15 +126,11 @@ async def test_curl_stream_respects_max_size(tmp_path, monkeypatch):
 
     import curl_cffi.requests
 
-    monkeypatch.setattr(
-        "curl_cffi.requests.AsyncSession", lambda *a, **k: session
-    )
+    monkeypatch.setattr("curl_cffi.requests.AsyncSession", lambda *a, **k: session)
 
     file_path = tmp_path / "large.bin"
     with pytest.raises(IgnoreException):
-        await _download_by_curl(
-            "https://example.com/large.bin", file_path, {}, max_retries=0
-        )
+        await _download_by_curl("https://example.com/large.bin", file_path, {}, max_retries=0)
     # 超限应删除半成品文件
     assert not file_path.exists()
 
@@ -150,15 +142,11 @@ async def test_curl_ignore_exception_not_retried_as_download(tmp_path, monkeypat
     from nonebot_plugin_parser.exception import IgnoreException
 
     session = FakeCurlSession([(200, [])])  # 空内容
-    monkeypatch.setattr(
-        "curl_cffi.requests.AsyncSession", lambda *a, **k: session
-    )
+    monkeypatch.setattr("curl_cffi.requests.AsyncSession", lambda *a, **k: session)
 
     file_path = tmp_path / "empty.bin"
     with pytest.raises(IgnoreException):
-        await _download_by_curl(
-            "https://example.com/empty.bin", file_path, {}, max_retries=3
-        )
+        await _download_by_curl("https://example.com/empty.bin", file_path, {}, max_retries=3)
     # 只应调用 1 次（IgnoreException 不重试）
     assert session.calls == 1
 
@@ -173,17 +161,11 @@ async def test_curl_567_retries_then_succeeds(tmp_path, monkeypatch):
 
     monkeypatch.setattr("asyncio.sleep", _no_sleep)  # 跳过重试等待
 
-    session = FakeCurlSession(
-        [(567, []), (567, []), (200, [b"ok"])]
-    )
-    monkeypatch.setattr(
-        "curl_cffi.requests.AsyncSession", lambda *a, **k: session
-    )
+    session = FakeCurlSession([(567, []), (567, []), (200, [b"ok"])])
+    monkeypatch.setattr("curl_cffi.requests.AsyncSession", lambda *a, **k: session)
 
     file_path = tmp_path / "retry.bin"
-    result = await _download_by_curl(
-        "https://example.com/retry.bin", file_path, {}, max_retries=3
-    )
+    result = await _download_by_curl("https://example.com/retry.bin", file_path, {}, max_retries=3)
     assert session.calls == 3
     assert result.read_bytes() == b"ok"
 
@@ -195,15 +177,11 @@ async def test_curl_non200_raises_download_exception(tmp_path, monkeypatch):
     from nonebot_plugin_parser.exception import DownloadException
 
     session = FakeCurlSession([(404, [])])
-    monkeypatch.setattr(
-        "curl_cffi.requests.AsyncSession", lambda *a, **k: session
-    )
+    monkeypatch.setattr("curl_cffi.requests.AsyncSession", lambda *a, **k: session)
 
     file_path = tmp_path / "notfound.bin"
     with pytest.raises(DownloadException):
-        await _download_by_curl(
-            "https://example.com/404.bin", file_path, {}, max_retries=0
-        )
+        await _download_by_curl("https://example.com/404.bin", file_path, {}, max_retries=0)
 
 
 # --------------------------------------------------------------------------- #
@@ -215,9 +193,7 @@ async def test_run_subprocess_success():
     from nonebot_plugin_parser.utils import _run_subprocess
 
     # echo 在 Windows 是 cmd 内置，用 python 跨平台
-    returncode, stdout, stderr = await _run_subprocess(
-        ["python", "-c", "print('hello')"], timeout=10
-    )
+    returncode, stdout, stderr = await _run_subprocess(["python", "-c", "print('hello')"], timeout=10)
     assert returncode == 0
     assert b"hello" in stdout
 
@@ -229,9 +205,7 @@ async def test_run_subprocess_timeout_kills_process():
 
     # 启一个会一直运行的进程（sleep 10s），超时设很短
     with pytest.raises(asyncio.TimeoutError):
-        await _run_subprocess(
-            ["python", "-c", "import time; time.sleep(10)"], timeout=0.5
-        )
+        await _run_subprocess(["python", "-c", "import time; time.sleep(10)"], timeout=0.5)
 
 
 @pytest.mark.asyncio
@@ -239,9 +213,7 @@ async def test_run_subprocess_nonzero_returncode():
     """返回码非 0 时调用方（exec_ffmpeg_cmd）应抛 RuntimeError。"""
     from nonebot_plugin_parser.utils import _run_subprocess
 
-    returncode, stdout, stderr = await _run_subprocess(
-        ["python", "-c", "import sys; sys.exit(1)"], timeout=10
-    )
+    returncode, stdout, stderr = await _run_subprocess(["python", "-c", "import sys; sys.exit(1)"], timeout=10)
     assert returncode == 1
 
 
@@ -505,3 +477,169 @@ async def test_telegram_video_content_has_cover(tmp_path, monkeypatch):
     resolved = await content.get_cover_path()
     assert resolved == thumb
     assert resolved.exists()
+
+
+# --------------------------------------------------------------------------- #
+# 回归：get_renderer 实例缓存（#2.1）
+# --------------------------------------------------------------------------- #
+def test_get_renderer_caches_instance_per_platform():
+    """同 platform 连续调用 get_renderer 应返回同一实例（修复每次解析都新建）。"""
+    from nonebot_plugin_parser.renders import _RENDERER_CACHE, get_renderer, get_global_renderer
+
+    _RENDERER_CACHE.clear()
+    # bilibili 无专用渲染器 → 回退全局单例
+    r1 = get_renderer("bilibili")
+    r2 = get_renderer("bilibili")
+    assert r1 is r2, "同 platform 第二次调用应命中缓存"
+    assert "bilibili" in _RENDERER_CACHE
+
+    # 不同 platform 各自独立缓存
+    r3 = get_renderer("bilibili")
+    r4 = get_renderer("douyin")
+    assert r3 is not r4 or r3 is get_global_renderer()  # 不同 key 缓存项
+
+
+# --------------------------------------------------------------------------- #
+# 回归：formatted_datetime 方法化（#3.1）
+# --------------------------------------------------------------------------- #
+def test_formatted_datetime_is_method_with_fmt_param():
+    """formatted_datetime 应是普通方法，支持自定义 fmt（历史误用 @property 带参无法传 fmt）。"""
+    from nonebot_plugin_parser.parsers.data import ParseResult, Platform
+
+    r = ParseResult(platform=Platform("test", "test"), timestamp=1577836800)  # 2020-01-01 UTC
+    # 默认格式
+    default_str = r.formatted_datetime()
+    assert isinstance(default_str, str)
+    assert default_str == r.formatted_datetime("%Y-%m-%d %H:%M:%S")
+    # 自定义 fmt（property 带参时这行会抛 TypeError）
+    year = r.formatted_datetime("%Y")
+    assert isinstance(year, str)
+
+
+def test_formatted_datetime_none_when_no_timestamp():
+    from nonebot_plugin_parser.parsers.data import ParseResult, Platform
+
+    r = ParseResult(platform=Platform("test", "test"), timestamp=None)
+    assert r.formatted_datetime() is None
+
+
+def test_no_legacy_formartted_property():
+    """旧拼写 formartted_datetime 不应再作为属性存在（避免回归）。"""
+    from nonebot_plugin_parser.parsers.data import ParseResult, Platform
+
+    r = ParseResult(platform=Platform("test", "test"), timestamp=1577836800)
+    # 旧误用：property 访问
+    assert not hasattr(r, "formartted_datetime"), "旧拼写 formartted_datetime 应已删除"
+    # 新方法可调用
+    assert callable(getattr(r, "formatted_datetime", None))
+
+
+# --------------------------------------------------------------------------- #
+# 回归：enable/disable_parser 不吞 NoneBot 控制流异常（#1.2）
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_enable_parser_reraises_matcher_exception(monkeypatch):
+    """MatcherException（如 RejectedException）应原样上抛，不被吞成「发生错误」。
+
+    历史代码用 except Exception + isinstance(FinishedException) 重抛，
+    漏掉 RejectedException/PausedException 等控制流异常。
+    """
+    from nonebot.exception import RejectedException
+
+    from nonebot_plugin_parser.matchers import filter as filter_mod
+
+    # 构造一个伪 matcher，finish 抛 RejectedException（matcher.reject 等场景）
+    class _Matcher:
+        async def finish(self, *a, **kw):
+            raise RejectedException("reject")
+
+        async def send(self, *a, **kw):
+            pass
+
+    # 让 enable_parser 内部不报业务错误，直接走到 matcher.finish("解析已开启")
+    # （finish 由伪 matcher 抛 RejectedException）
+    matcher = _Matcher()
+
+    # 模拟私聊场景（platform_name 为空 → 走 else 分支 → finish("解析已开启")）
+    class _Scene:
+        is_private = True
+
+    class _Session:
+        scope = "test"
+        scene_path = "test"
+        scene = _Scene()
+
+    # patch get_group_key 不会被调用（私聊），但保留以防万一
+    # 调用 enable_parser 的 handler（绕过 NoneBot 装饰器）
+    _empty_args = type("A", (), {"extract_plain_text": lambda self: ""})()
+    with pytest.raises(RejectedException):
+        await filter_mod.enable_parser(matcher, _Session(), args=_empty_args)
+
+
+# --------------------------------------------------------------------------- #
+# 回归：get_redirect_url 区分 3xx 缺 Location（#1.5）
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_get_redirect_url_3xx_without_location_raises(monkeypatch):
+    """3xx 响应缺 Location 头应抛 ParseException，而非静默返回原 url 误导上层。"""
+    from nonebot_plugin_parser.exception import ParseException
+    from nonebot_plugin_parser.parsers.base import BaseParser
+
+    class _FakeResp:
+        status_code = 302
+        headers: ClassVar[dict] = {}  # 无 Location
+
+        def raise_for_status(self):
+            pass
+
+    class _FakeClient:
+        def __init__(self, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url):
+            return _FakeResp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+
+    with pytest.raises(ParseException, match="缺少 Location"):
+        await BaseParser.get_redirect_url("https://example.com/x")
+
+
+@pytest.mark.asyncio
+async def test_get_redirect_url_2xx_returns_location_or_url(monkeypatch):
+    """2xx 响应有 Location 头（非常规但可能）返回 Location，否则返回原 url。"""
+    from nonebot_plugin_parser.parsers.base import BaseParser
+
+    class _FakeResp:
+        status_code = 200
+        headers: ClassVar[dict] = {}
+
+        def raise_for_status(self):
+            pass
+
+    class _FakeClient:
+        def __init__(self, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url):
+            return _FakeResp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+    result = await BaseParser.get_redirect_url("https://example.com/x")
+    assert result == "https://example.com/x"

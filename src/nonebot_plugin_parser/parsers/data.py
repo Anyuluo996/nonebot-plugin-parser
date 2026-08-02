@@ -292,9 +292,14 @@ class ParseResult:
     def dynamic_contents(self) -> list[DynamicContent]:
         return [cont for cont in self.contents if isinstance(cont, DynamicContent)]
 
-    @property
-    def formartted_datetime(self, fmt: str = "%Y-%m-%d %H:%M:%S") -> str | None:
-        """格式化时间戳"""
+    def formatted_datetime(self, fmt: str = "%Y-%m-%d %H:%M:%S") -> str | None:
+        """格式化时间戳。
+
+        普通方法（非 property）—— 调用方需带括号 ``result.formatted_datetime()``。
+        历史上误用 ``@property`` 但签名带 ``fmt`` 参数, 导致无法自定义格式且
+        调用方只能拿到默认格式; 同时方法名拼写错误 ``formartted`` 已修正为
+        ``formatted``。模板调用点已同步改为 ``result.formatted_datetime()``。
+        """
         return datetime.fromtimestamp(self.timestamp).strftime(fmt) if self.timestamp is not None else None
 
     async def cover_path(self) -> Path | None:

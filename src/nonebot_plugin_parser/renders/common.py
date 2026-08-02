@@ -308,7 +308,7 @@ class CommonRenderer(ImageRenderer):
         # 文字区域
         text_x = self.PADDING + self.AVATAR_SIZE + self.AVATAR_TEXT_GAP
         name_height = self.fontset.name.line_height
-        time_str = ctx.result.formartted_datetime
+        time_str = ctx.result.formatted_datetime()
         time_height = (self.NAME_TIME_GAP + self.fontset.extra.line_height) if time_str else 0
         text_height = name_height + time_height
 

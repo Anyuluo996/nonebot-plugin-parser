@@ -25,6 +25,11 @@ _REFERRER_MAP: dict[str, str] = {
     "img.nga.178.com": "https://nga.178.com/",
 }
 
+# 单次解析内并发下载上限。贴吧/NGA 长帖可能一次解析几十张内嵌图,
+# 无限流会瞬间对同一域名打几十个并发 HTTP, 触发平台限流(567)并占满 fd。
+# 单线程 asyncio 下 Semaphore 不需要锁; auto_task 创建的下载协程都会经过它。
+_DOWNLOAD_SEM = asyncio.Semaphore(8)
+
 
 # curl 专用域名（httpx 会被检测拦截或受代理环境变量影响导致 TLS 握手失败）
 _CURL_ONLY_DOMAINS: frozenset[str] = frozenset(
@@ -519,11 +524,17 @@ class StreamDownloader:
         *,
         ext_headers: dict[str, str] | None = None,
     ) -> list[Path]:
-        """download image files by urls with stream, ignore errors"""
-        paths_or_errs = await asyncio.gather(
-            *[self.download_img(url, ext_headers=ext_headers) for url in urls],
-            return_exceptions=True,
-        )
+        """download image files by urls with stream, ignore errors
+
+        并发受 ``_DOWNLOAD_SEM`` 限制（默认 8），避免一次解析几十张图时
+        瞬间打爆目标域名 / 占满文件描述符。
+        """
+
+        async def _one(url: str) -> Path:
+            async with _DOWNLOAD_SEM:
+                return await self.download_img(url, ext_headers=ext_headers)
+
+        paths_or_errs = await asyncio.gather(*[_one(url) for url in urls], return_exceptions=True)
         return [p for p in paths_or_errs if isinstance(p, Path)]
 
     @auto_task

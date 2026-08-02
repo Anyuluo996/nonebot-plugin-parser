@@ -223,6 +223,14 @@ class BaseParser:
             response = await client.get(url)
             if response.status_code >= 400:
                 response.raise_for_status()
+            # 重定向响应(3xx)缺 Location 头时, 不应静默返回原 url 让上层抛
+            # "无法重定向"（误导）。区分两种情况：3xx 无 Location 是上游异常,
+            # 2xx 无 Location 是正常无重定向。
+            if response.status_code in (301, 302, 303, 307, 308):
+                location = response.headers.get("Location")
+                if not location:
+                    raise ParseException(f"重定向响应({response.status_code})缺少 Location 头: {url}")
+                return location
             return response.headers.get("Location", url)
 
     @staticmethod
@@ -291,10 +299,22 @@ class BaseParser:
         self,
         image_urls: list[str],
     ):
-        """创建图片内容列表"""
+        """创建图片内容列表
+
+        单次解析内并发下载受 ``download._DOWNLOAD_SEM`` 限制（默认 8），
+        避免长帖几十张图瞬间打爆目标域名。
+        """
+        import asyncio
+
+        from ..download import _DOWNLOAD_SEM
+
+        async def _download_with_sem(url: str):
+            async with _DOWNLOAD_SEM:
+                return await DOWNLOADER.download_img(url, ext_headers=self.headers)
+
         contents: list[ImageContent] = []
         for url in image_urls:
-            task = DOWNLOADER.download_img(url, ext_headers=self.headers)
+            task = asyncio.create_task(_download_with_sem(url))
             contents.append(ImageContent(task))
         return contents
 

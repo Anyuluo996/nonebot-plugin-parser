@@ -26,7 +26,10 @@ ANDROID_HEADER: Final[dict[str, str]] = {
 
 COMMON_TIMEOUT: Final[Timeout] = Timeout(connect=15.0, read=20.0, write=10.0, pool=10.0)
 
-DOWNLOAD_TIMEOUT: Final[Timeout] = Timeout(connect=15.0, read=240.0, write=10.0, pool=10.0)
+# read: 两次数据接收间的最大间隔(非总时长)。原 240s 对坏 CDN 节点(卡死不发数据)等太久,
+# 配合 backup_urls 轮换 + host 过滤后坏节点已少见; 60s 足够区分好坏且不误杀大视频流。
+# 最坏情况: 4×60s + 7s 退避 ≈ 4 分钟(原 240s 时约 16 分钟)。
+DOWNLOAD_TIMEOUT: Final[Timeout] = Timeout(connect=15.0, read=60.0, write=10.0, pool=10.0)
 
 
 class PlatformEnum(str, Enum):

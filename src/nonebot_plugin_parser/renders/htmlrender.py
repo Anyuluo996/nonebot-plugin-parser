@@ -32,7 +32,9 @@ class HtmlRenderer(ImageRenderer):
 
     @override
     async def render_image(self, result: ParseResult) -> bytes:
-        await result.ensure_downloads_complete()
+        # 仅等图片资源(封面/头像/内嵌图), 不等视频 — 视频下载可能很慢(mcdn 等 P2P 节点),
+        # 卡片渲染不应被它阻塞。视频由 render_contents 独立发送(支持超时先发封面)。
+        await result.ensure_downloads_complete(img_only=True)
 
         logo = resources.RESOURCES_DIR / f"{result.platform.name}.png"
         logo = logo.as_uri() if logo.exists() else None

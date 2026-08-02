@@ -643,3 +643,45 @@ async def test_get_redirect_url_2xx_returns_location_or_url(monkeypatch):
     monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
     result = await BaseParser.get_redirect_url("https://example.com/x")
     assert result == "https://example.com/x"
+
+
+@pytest.mark.asyncio
+async def test_weibo_parse_weibo_id_deleted_returns_parse_exception(monkeypatch):
+    """已删除微博（上游返回 ok:0 错误信封，缺 `data` 字段）应抛语义化
+    ParseException，而不是泄漏 msgspec.ValidationError（回归：删博导致 CI 红）。
+    """
+
+    class _FakeResp:
+        status_code = 200
+        headers: ClassVar[dict] = {"content-type": "application/json; charset=utf-8"}
+        # 上游对已删除/锁定/风控的真实响应：无 `data` 字段
+        content: ClassVar[bytes] = (
+            b'{"ok":0,"errno":"20101","msg":"\xe8\xaf\xa5\xe5\xbe\xae\xe5\x8d\x9a\xe4\xb8\x8d\xe5\xad\x98\xe5\x9c\xa8",'
+            b'"error_type":"alert","extra":"target weibo does not exist!"}'
+        )
+        reason_phrase = "OK"
+
+    class _FakeClient:
+        def __init__(self, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def request(self, method, url, **kw):
+            return _FakeResp()
+
+    import httpx
+
+    monkeypatch.setattr(httpx, "AsyncClient", _FakeClient)
+
+    from nonebot_plugin_parser.parsers import WeiBoParser
+    from nonebot_plugin_parser.exception import ParseException
+
+    parser = WeiBoParser()
+    # 不应抛 msgspec.ValidationError，而应转成语义化 ParseException
+    with pytest.raises(ParseException, match="微博数据解析失败"):
+        await parser.parse_weibo_id("QsPbt51HH")

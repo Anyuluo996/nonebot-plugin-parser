@@ -306,3 +306,10 @@ async def _():
 # music 通过函数级懒导入取用 _send_parse_result / get_parser_by_type(已在上文定义),
 # 故此处 import 安全。每个子模块在自身 import 时执行 _register_*() / 装饰器注册命令。
 from . import admin, music, tg_login, credential  # noqa: F401
+
+# ── 向后兼容 re-export ──────────────────────────────────────────────
+# 拆分前 _normalize_user_id / _tg_login / _tg_password / _tg_2fa_pending 定义在
+# 本模块, 现迁移到 admin / tg_login 子模块。测试与潜在外部代码仍从
+# ``nonebot_plugin_parser.matchers`` 顶层导入, 这里重新导出避免破坏。
+from .admin import _normalize_user_id  # noqa: F401
+from .tg_login import _tg_login, _tg_password, _tg_2fa_pending  # noqa: F401

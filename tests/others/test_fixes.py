@@ -104,13 +104,9 @@ async def test_curl_stream_download_success(tmp_path, monkeypatch):
     session = FakeCurlSession([(200, [b"hello", b"world"])])
 
     # _download_by_curl 内部 `from curl_cffi.requests import AsyncSession`
-    monkeypatch.setattr(
-        "curl_cffi.requests.AsyncSession", lambda *a, **k: session
-    )
+    monkeypatch.setattr("curl_cffi.requests.AsyncSession", lambda *a, **k: session)
 
-    result = await _download_by_curl(
-        "https://example.com/file.bin", file_path, {"User-Agent": "test"}, max_retries=0
-    )
+    result = await _download_by_curl("https://example.com/file.bin", file_path, {"User-Agent": "test"}, max_retries=0)
     assert result == file_path
     assert file_path.read_bytes() == b"helloworld"
 
@@ -130,15 +126,11 @@ async def test_curl_stream_respects_max_size(tmp_path, monkeypatch):
 
     import curl_cffi.requests
 
-    monkeypatch.setattr(
-        "curl_cffi.requests.AsyncSession", lambda *a, **k: session
-    )
+    monkeypatch.setattr("curl_cffi.requests.AsyncSession", lambda *a, **k: session)
 
     file_path = tmp_path / "large.bin"
     with pytest.raises(IgnoreException):
-        await _download_by_curl(
-            "https://example.com/large.bin", file_path, {}, max_retries=0
-        )
+        await _download_by_curl("https://example.com/large.bin", file_path, {}, max_retries=0)
     # 超限应删除半成品文件
     assert not file_path.exists()
 
@@ -150,15 +142,11 @@ async def test_curl_ignore_exception_not_retried_as_download(tmp_path, monkeypat
     from nonebot_plugin_parser.exception import IgnoreException
 
     session = FakeCurlSession([(200, [])])  # 空内容
-    monkeypatch.setattr(
-        "curl_cffi.requests.AsyncSession", lambda *a, **k: session
-    )
+    monkeypatch.setattr("curl_cffi.requests.AsyncSession", lambda *a, **k: session)
 
     file_path = tmp_path / "empty.bin"
     with pytest.raises(IgnoreException):
-        await _download_by_curl(
-            "https://example.com/empty.bin", file_path, {}, max_retries=3
-        )
+        await _download_by_curl("https://example.com/empty.bin", file_path, {}, max_retries=3)
     # 只应调用 1 次（IgnoreException 不重试）
     assert session.calls == 1
 
@@ -173,17 +161,11 @@ async def test_curl_567_retries_then_succeeds(tmp_path, monkeypatch):
 
     monkeypatch.setattr("asyncio.sleep", _no_sleep)  # 跳过重试等待
 
-    session = FakeCurlSession(
-        [(567, []), (567, []), (200, [b"ok"])]
-    )
-    monkeypatch.setattr(
-        "curl_cffi.requests.AsyncSession", lambda *a, **k: session
-    )
+    session = FakeCurlSession([(567, []), (567, []), (200, [b"ok"])])
+    monkeypatch.setattr("curl_cffi.requests.AsyncSession", lambda *a, **k: session)
 
     file_path = tmp_path / "retry.bin"
-    result = await _download_by_curl(
-        "https://example.com/retry.bin", file_path, {}, max_retries=3
-    )
+    result = await _download_by_curl("https://example.com/retry.bin", file_path, {}, max_retries=3)
     assert session.calls == 3
     assert result.read_bytes() == b"ok"
 
@@ -195,15 +177,11 @@ async def test_curl_non200_raises_download_exception(tmp_path, monkeypatch):
     from nonebot_plugin_parser.exception import DownloadException
 
     session = FakeCurlSession([(404, [])])
-    monkeypatch.setattr(
-        "curl_cffi.requests.AsyncSession", lambda *a, **k: session
-    )
+    monkeypatch.setattr("curl_cffi.requests.AsyncSession", lambda *a, **k: session)
 
     file_path = tmp_path / "notfound.bin"
     with pytest.raises(DownloadException):
-        await _download_by_curl(
-            "https://example.com/404.bin", file_path, {}, max_retries=0
-        )
+        await _download_by_curl("https://example.com/404.bin", file_path, {}, max_retries=0)
 
 
 # --------------------------------------------------------------------------- #
@@ -215,9 +193,7 @@ async def test_run_subprocess_success():
     from nonebot_plugin_parser.utils import _run_subprocess
 
     # echo 在 Windows 是 cmd 内置，用 python 跨平台
-    returncode, stdout, stderr = await _run_subprocess(
-        ["python", "-c", "print('hello')"], timeout=10
-    )
+    returncode, stdout, stderr = await _run_subprocess(["python", "-c", "print('hello')"], timeout=10)
     assert returncode == 0
     assert b"hello" in stdout
 
@@ -229,9 +205,7 @@ async def test_run_subprocess_timeout_kills_process():
 
     # 启一个会一直运行的进程（sleep 10s），超时设很短
     with pytest.raises(asyncio.TimeoutError):
-        await _run_subprocess(
-            ["python", "-c", "import time; time.sleep(10)"], timeout=0.5
-        )
+        await _run_subprocess(["python", "-c", "import time; time.sleep(10)"], timeout=0.5)
 
 
 @pytest.mark.asyncio
@@ -239,9 +213,7 @@ async def test_run_subprocess_nonzero_returncode():
     """返回码非 0 时调用方（exec_ffmpeg_cmd）应抛 RuntimeError。"""
     from nonebot_plugin_parser.utils import _run_subprocess
 
-    returncode, stdout, stderr = await _run_subprocess(
-        ["python", "-c", "import sys; sys.exit(1)"], timeout=10
-    )
+    returncode, stdout, stderr = await _run_subprocess(["python", "-c", "import sys; sys.exit(1)"], timeout=10)
     assert returncode == 1
 
 

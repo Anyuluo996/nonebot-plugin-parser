@@ -65,9 +65,7 @@ async def _retry_one(record: dict) -> None:
                     mark_reported(url)
             else:
                 mark_reported(url)
-        logger.debug(
-            f"失败链接重试仍失败({rec.get('retries', 0)}/{pconfig.failure_retry_max}): {url} - {err}"
-        )
+        logger.debug(f"失败链接重试仍失败({rec.get('retries', 0)}/{pconfig.failure_retry_max}): {url} - {err}")
 
 
 def _find_parser_for_url(url: str) -> BaseParser | None:

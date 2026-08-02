@@ -145,8 +145,13 @@ async def _download_by_curl(
     file_path: Path,
     headers: dict[str, str],
     max_retries: int = 3,
+    *,
+    backup_urls: list[str] | None = None,
 ) -> Path:
-    """使用 curl_cffi 下载文件（模拟浏览器绕过检测），支持重试"""
+    """使用 curl_cffi 下载文件（模拟浏览器绕过检测），支持重试
+
+    backup_urls: 备用链接, 重试时轮换不同 CDN。
+    """
     from curl_cffi.const import CurlOpt, CurlIpResolve
     from curl_cffi.requests import AsyncSession
 
@@ -161,6 +166,12 @@ async def _download_by_curl(
         proxies = {"https": "", "http": ""}
 
     for attempt in range(max_retries + 1):
+        # 重试时轮换 backup_urls, 避免反复命中同一个坏 CDN 节点
+        if attempt == 0 or not backup_urls:
+            current_url = url
+        else:
+            current_url = backup_urls[(attempt - 1) % len(backup_urls)]
+            logger.info("curl 重试切换 CDN ({}/{}) | cdn: {}", attempt + 1, max_retries + 1, current_url[:70])
         try:
             # curl_cffi 也加超时（DOWNLOAD_TIMEOUT 秒），避免连接挂起永久卡死下载
             # DOWNLOAD_TIMEOUT 是 httpx.Timeout，curl_cffi 期望 float；运行时 curl_cffi 可接受
@@ -174,7 +185,7 @@ async def _download_by_curl(
             ) as session:
                 # 流式下载：边读边累计大小，超限立即中止，避免把整个大文件载入内存
                 resp = await session.get(
-                    url,
+                    current_url,
                     headers=headers,
                     allow_redirects=True,
                     proxies=proxies,  # type: ignore[arg-type]
@@ -187,7 +198,7 @@ async def _download_by_curl(
 
                 if status != 200:
                     await safe_unlink(file_path)
-                    logger.error("curl_cffi 下载失败 HTTP {} | url: {}", status, url)
+                    logger.error("curl_cffi 下载失败 HTTP {} | url: {}", status, current_url)
                     raise DownloadException("媒体下载失败")
 
                 # 流式写盘 + 大小上限校验（修复：原先 len(resp.content) 已把整文件载入内存）
@@ -215,7 +226,7 @@ async def _download_by_curl(
 
                 if downloaded_size == 0:
                     await safe_unlink(file_path)
-                    logger.warning("媒体 url: {}, 大小为 0, 取消下载", url)
+                    logger.warning("媒体 url: {}, 大小为 0, 取消下载", current_url)
                     raise IgnoreException
 
                 return file_path
@@ -226,7 +237,7 @@ async def _download_by_curl(
         except _RetryDownload:
             if attempt == max_retries:
                 await safe_unlink(file_path)
-                logger.error("567 重试耗尽 | url: {}", url)
+                logger.error("567 重试耗尽 | url: {}", current_url)
                 raise DownloadException("媒体下载失败")
             wait = 2**attempt
             logger.warning(
@@ -234,14 +245,14 @@ async def _download_by_curl(
                 wait,
                 attempt + 1,
                 max_retries,
-                url,
+                current_url,
             )
             await asyncio.sleep(wait)
             continue
         except Exception as e:
             if attempt == max_retries:
                 await safe_unlink(file_path)
-                logger.exception("curl_cffi 下载异常 | url: {}", url)
+                logger.exception("curl_cffi 下载异常 | url: {}", current_url)
                 raise DownloadException("媒体下载失败")
             wait = 2**attempt
             logger.warning(
@@ -250,7 +261,7 @@ async def _download_by_curl(
                 wait,
                 attempt + 1,
                 max_retries,
-                url,
+                current_url,
             )
             await asyncio.sleep(wait)
             continue
@@ -299,8 +310,17 @@ class StreamDownloader:
         ext_headers: dict[str, str] | None = None,
         chunk_size: int = 64 * 1024,
         max_retries: int = 3,
+        backup_urls: list[str] | None = None,
     ) -> Path:
-        """download file by url with stream"""
+        """download file by url with stream
+
+        backup_urls: 备用 CDN 链接列表。重试时轮换不同链接,
+        避免反复命中同一个坏节点(如 B 站 mcdn P2P 节点)。为空则重试同一个 url。
+
+        注意: _use_curl / _bypass_proxy 按 ``url`` (主链) 判定 client 和代理配置,
+        backup_urls 应与主链属于同一 curl/代理类别(同平台 CDN 总是如此)。
+        若 backup 跨类别(如主链 bilivideo、备选 snssdk), 会在重试时用错 client。
+        """
         if not file_name:
             file_name = generate_file_name(url)
         file_path = self.cache_dir / file_name
@@ -315,7 +335,7 @@ class StreamDownloader:
         use_curl_result = _use_curl(url)
         logger.info("_use_curl check | url: {}, result: {}", url[:80], use_curl_result)
         if use_curl_result:
-            return await _download_by_curl(url, file_path, headers, max_retries)
+            return await _download_by_curl(url, file_path, headers, max_retries, backup_urls=backup_urls)
 
         client = self.direct_client if _bypass_proxy(url) else self.client
         max_size_bytes = pconfig.max_size * 1024 * 1024
@@ -323,7 +343,12 @@ class StreamDownloader:
 
         for attempt in range(max_retries + 1):
             redirect_count = 0
-            current_url = url
+            # 重试时轮换 backup_urls, 避免反复命中同一个坏 CDN 节点
+            if attempt == 0 or not backup_urls:
+                current_url = url
+            else:
+                current_url = backup_urls[(attempt - 1) % len(backup_urls)]
+                logger.info("重试切换 CDN ({}/{}) | cdn: {}", attempt + 1, max_retries + 1, current_url[:70])
             try:
                 while True:
                     try:
@@ -469,11 +494,14 @@ class StreamDownloader:
         *,
         video_name: str | None = None,
         ext_headers: dict[str, str] | None = None,
+        backup_urls: list[str] | None = None,
     ) -> Path:
         """download video file by url with stream"""
         if video_name is None:
             video_name = generate_file_name(url, ".mp4")
-        return await self.download_file(url, file_name=video_name, ext_headers=ext_headers, chunk_size=1024 * 1024)
+        return await self.download_file(
+            url, file_name=video_name, ext_headers=ext_headers, chunk_size=1024 * 1024, backup_urls=backup_urls
+        )
 
     @auto_task
     async def download_audio(
@@ -482,11 +510,12 @@ class StreamDownloader:
         *,
         audio_name: str | None = None,
         ext_headers: dict[str, str] | None = None,
+        backup_urls: list[str] | None = None,
     ) -> Path:
         """download audio file by url with stream"""
         if audio_name is None:
             audio_name = generate_file_name(url, ".mp3")
-        return await self.download_file(url, file_name=audio_name, ext_headers=ext_headers)
+        return await self.download_file(url, file_name=audio_name, ext_headers=ext_headers, backup_urls=backup_urls)
 
     @auto_task
     async def download_img(
@@ -509,11 +538,17 @@ class StreamDownloader:
         *,
         output_path: Path,
         ext_headers: dict[str, str] | None = None,
+        v_backup_urls: list[str] | None = None,
+        a_backup_urls: list[str] | None = None,
     ) -> Path:
-        """download video and audio file by url with stream and merge"""
+        """download video and audio file by url with stream and merge
+
+        v_backup_urls / a_backup_urls: 视频和音频各自的备用 CDN 链接,
+        重试时独立轮换(互不干扰)。
+        """
         v_path, a_path = await asyncio.gather(
-            self.download_video(v_url, ext_headers=ext_headers),
-            self.download_audio(a_url, ext_headers=ext_headers),
+            self.download_video(v_url, ext_headers=ext_headers, backup_urls=v_backup_urls),
+            self.download_audio(a_url, ext_headers=ext_headers, backup_urls=a_backup_urls),
         )
         await merge_av(v_path=v_path, a_path=a_path, output_path=output_path)
         return output_path

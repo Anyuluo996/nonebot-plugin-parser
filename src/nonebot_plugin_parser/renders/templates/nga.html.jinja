@@ -211,8 +211,8 @@
           {% if result.author %}
           <div class="username">{{ result.author.name }}</div>
           {% endif %}
-          {% if result.formartted_datetime %}
-          <div class="time">{{ result.formartted_datetime }}</div>
+          {% if result.formatted_datetime() %}
+          <div class="time">{{ result.formatted_datetime() }}</div>
           {% endif %}
         </div>
       </div>

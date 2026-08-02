@@ -125,6 +125,11 @@ class LoginQrHandle:
     """后台读线程（持续把 pty 输出存到 _output_buffer 并处理 survey 光标回显）"""
     _output_buffer: bytearray = field(default_factory=bytearray)
     """tdl 累计输出（用于检测 2FA 提示、提取二维码、判断成功）"""
+    created_at: float = field(default_factory=time.monotonic)
+    """handle 创建时间（monotonic 秒），供 2FA pending 定时清理判断陈旧度。
+
+    用 monotonic 而非 wall clock: 清理只关心相对时长, 不受系统时间回拨影响。
+    """
 
 
 async def start_login_qr(qr_wait_timeout: float = 30.0) -> LoginQrHandle:

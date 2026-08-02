@@ -114,3 +114,22 @@ def _setup_failure_retry_job() -> None:
 
 
 _setup_failure_retry_job()
+
+
+@scheduler.scheduled_job("interval", minutes=5, id="parser-tg-2fa-cleanup")
+async def _cleanup_tg_2fa_pending():
+    """周期清理 ``_tg_2fa_pending`` 中陈旧的 2FA handle。
+
+    用户触发 2FA 后若不发密码(放弃/掉线/超时), 对应的 ``LoginQrHandle`` 会一直
+    持有 pty fd、tdl 子进程、daemon 读线程, 造成资源泄漏。本 job 每 5 分钟扫描一次,
+    清理创建超过 10 分钟仍未被消费的 pending handle (调用 tdl._terminate_handle
+    kill 进程组 + 关 fd)。正常路径(用户发密码消费)不受影响。
+    """
+    from .matchers.tg_login import _cleanup_stale_2fa
+
+    try:
+        n = _cleanup_stale_2fa(max_age_seconds=600)
+        if n > 0:
+            logger.info(f"清理 {n} 个陈旧的 Telegram 2FA pending handle")
+    except Exception:
+        logger.exception("tg 2fa pending 清理 job 异常")

@@ -13,9 +13,10 @@ from nonebot_plugin_uninfo import Session, UniSession
 if TYPE_CHECKING:
     from ..download import LoginQrHandle
 
+from . import auth
 from .rule import SUPER_PRIVATE, PSR_FORCE_PARSE_KEY, Searched, SearchResult, on_keyword_regex
 from ..utils import LimitedSizeDict
-from .filter import is_tg_authorized, is_platform_enabled
+from .filter import get_group_key, is_tg_authorized, is_platform_enabled
 from ..config import gconfig, pconfig
 from ..helper import UniHelper, UniMessage
 from ..parsers import BaseParser, ParseResult, BilibiliParser
@@ -145,11 +146,24 @@ async def parser_handler(
         logger.debug(f"平台 {parser.platform.name} 在群组 {session.scene_path} 中已被禁用，跳过解析")
         return
 
+    # 3.05 黑名单: 全局封禁用户不解析(自动解析 + 前缀强制解析都不做)
+    _session_user = getattr(session, "user", None)
+    user_id = str(_session_user.id) if _session_user else None
+    if user_id and auth.is_blacklisted(user_id):
+        logger.info(f"用户 {user_id} 在全局黑名单中, 跳过解析")
+        return
+
+    # 3.06 前缀强制解析授权: 仅当平台被群管「关闭解析」后, 前缀强制解析才需授权。
+    # 平台开着时人人可用前缀(行为零变化); 平台关了, 只有被授权的用户能 par+链接 绕过。
+    if force_parse and not platform_enabled:
+        if not user_id or not auth.is_force_parse_authorized(user_id, session):
+            logger.info(f"用户 {user_id} 无强制解析权限, 平台 {parser.platform.name} 已被关闭")
+            raise TipException("该平台已被关闭，你没有强制解析权限，请联系管理员")
+
     # 3.1 Telegram 解析需额外权限：仅 SUPERUSER 或被授权用户可用
     if parser.platform.name == "telegram":
-        user_id = session.user.id if session.user else None
-        is_super = user_id is not None and str(user_id) in set(gconfig.superusers)
-        authorized = is_super or (user_id is not None and is_tg_authorized(str(user_id)))
+        is_super = user_id is not None and user_id in set(gconfig.superusers)
+        authorized = is_super or (user_id is not None and is_tg_authorized(user_id))
         if not authorized:
             logger.info(f"用户 {user_id} 无 Telegram 解析权限，拒绝")
             raise TipException("无 Telegram 解析权限，请联系 SUPERUSER 执行「tg授权」")
@@ -210,7 +224,7 @@ async def parser_handler(
         raise
 
 
-@on_command("bm", priority=3, block=True).handle()
+@on_command("bm", priority=3, block=True, rule=auth.not_blacklisted()).handle()
 @UniHelper.with_reaction
 async def _(message: Message = CommandArg()):
     text = message.extract_plain_text()
@@ -241,7 +255,7 @@ from ..download import YTDLP_DOWNLOADER
 if YTDLP_DOWNLOADER is not None:
     from ..parsers import YouTubeParser
 
-    @on_command("ym", priority=3, block=True).handle()
+    @on_command("ym", priority=3, block=True, rule=auth.not_blacklisted()).handle()
     @UniHelper.with_reaction
     async def _(message: Message = CommandArg()):
         text = message.extract_plain_text()
@@ -526,6 +540,151 @@ async def _tg_list(matcher: Matcher):
     await matcher.finish("Telegram 解析授权列表:\n" + "\n".join(whitelist))
 
 
+# ==================== 用户授权与黑名单 ====================
+# 细粒度授权: 按用户 + 受控项(默认全部),分全局(跨群)与群组(本群)两层。
+# 黑名单: 全局封禁, 命中后不解析/不响应功能指令(SUPERUSER 不可被拉黑)。
+# 受控项语义键见 auth.py, 当前生效的是 "强制解析"(前缀强制解析授权)。
+def _extract_target_user(message: Message) -> tuple[str | None, str]:
+    """从命令参数中提取「被操作用户」与其余参数。
+
+    优先取消息 at 段的 qq/user_id(更准),取不到回退到文本首段的 @用户名/纯数字。
+    返回 (user_id_or_None, 剩余参数文本)。
+    """
+    # 1. 优先 at 段
+    for seg in message["at"]:
+        seg_data = getattr(seg, "data", {}) or {}
+        # OneBot v11: qq; 其他适配器: user_id
+        uid = seg_data.get("qq") or seg_data.get("user_id")
+        if uid:
+            uid = str(uid)
+            # 去掉 at 段后的剩余纯文本
+            rest = message.extract_plain_text().strip()
+            return uid, rest
+
+    # 2. 回退到文本: 首段作为用户标识, 其余作为受控项
+    parts = message.extract_plain_text().split()
+    if not parts:
+        return None, ""
+    uid = _normalize_user_id(parts[0])
+    rest = " ".join(parts[1:])
+    return uid, rest
+
+
+def _format_items(items: list[str]) -> str:
+    """受控项列表的可读展示: 空列表显示「全部受控项」。"""
+    return "、".join(items) if items else "全部受控项"
+
+
+@on_command("par授权", block=True, permission=SUPERUSER).handle()
+async def _par_grant(matcher: Matcher, session: Session = UniSession(), args: Message = CommandArg()):
+    """SUPERUSER: 授权用户使用受控项(本群)。用法: par授权 @用户 [受控项...]
+
+    不写受控项 = 授权全部。本群生效(私聊场景视为全局授权)。
+    """
+    user_id, rest = _extract_target_user(args)
+    if not user_id:
+        await matcher.finish("用法: par授权 @用户 [受控项...]\n(不写受控项=授权全部,如:par授权 @用户 强制解析)")
+    items = rest.split() if rest.strip() else []
+
+    group_key = None if session.scene.is_private else get_group_key(session)
+    scope = "全局" if group_key is None else "本群"
+    if auth.grant(user_id, items, group_key):
+        await matcher.finish(f"✅ 已{scope}授权 {user_id} 使用 {_format_items(items)}")
+    await matcher.finish(f"{user_id} 的{scope}授权未变化(已是该配置)")
+
+
+@on_command("par全局授权", block=True, permission=SUPERUSER).handle()
+async def _par_grant_global(matcher: Matcher, args: Message = CommandArg()):
+    """SUPERUSER: 全局授权用户(跨群生效)。用法: par全局授权 @用户 [受控项...]"""
+    user_id, rest = _extract_target_user(args)
+    if not user_id:
+        await matcher.finish("用法: par全局授权 @用户 [受控项...]\n(不写受控项=授权全部)")
+    items = rest.split() if rest.strip() else []
+
+    if auth.grant(user_id, items, group_key=None):
+        await matcher.finish(f"✅ 已全局授权 {user_id} 使用 {_format_items(items)}")
+    await matcher.finish(f"{user_id} 的全局授权未变化(已是该配置)")
+
+
+@on_command("par取消授权", block=True, permission=SUPERUSER).handle()
+async def _par_revoke(matcher: Matcher, session: Session = UniSession(), args: Message = CommandArg()):
+    """SUPERUSER: 撤销用户的授权(全局 + 本群)。用法: par取消授权 @用户 [受控项...]
+
+    不写受控项 = 撤销该用户全部授权。
+    """
+    user_id, rest = _extract_target_user(args)
+    if not user_id:
+        await matcher.finish("用法: par取消授权 @用户 [受控项...]\n(不写受控项=撤销全部)")
+    items = rest.split() if rest.strip() else None
+
+    changed_global = auth.revoke(user_id, items, group_key=None)
+    # 群组授权: 私聊触发无群组上下文, 只清全局; 群聊触发时同时清本群。
+    group_key = None if session.scene.is_private else get_group_key(session)
+    changed_group = auth.revoke(user_id, items, group_key=group_key) if group_key else False
+
+    if changed_global or changed_group:
+        await matcher.finish(f"✅ 已撤销 {user_id} 的授权({', '.join(items) if items else '全部'})")
+    await matcher.finish(f"{user_id} 没有可撤销的授权")
+
+
+@on_command("par授权查看", block=True, permission=SUPERUSER).handle()
+async def _par_grants_view(matcher: Matcher, session: Session = UniSession()):
+    """SUPERUSER: 查看授权名单(全局 + 本群)。"""
+    lines: list[str] = []
+    global_grants = auth.list_grants(group_key=None)
+    if global_grants:
+        lines.append("【全局授权】")
+        for uid, items in global_grants.items():
+            lines.append(f"  {uid}: {_format_items(items)}")
+    else:
+        lines.append("【全局授权】(空)")
+
+    if not session.scene.is_private:
+        group_key = get_group_key(session)
+        group_grants = auth.list_grants(group_key=group_key)
+        lines.append(f"【本群授权】({group_key})")
+        if group_grants:
+            for uid, items in group_grants.items():
+                lines.append(f"  {uid}: {_format_items(items)}")
+        else:
+            lines.append("  (空)")
+
+    await matcher.finish("\n".join(lines))
+
+
+@on_command("par拉黑", block=True, permission=SUPERUSER).handle()
+async def _par_ban(matcher: Matcher, args: Message = CommandArg()):
+    """SUPERUSER: 全局拉黑用户(不解析/不响应功能指令)。用法: par拉黑 @用户"""
+    user_id, _ = _extract_target_user(args)
+    if not user_id:
+        await matcher.finish("用法: par拉黑 @用户")
+    if user_id in set(gconfig.superusers):
+        await matcher.finish("不可拉黑 SUPERUSER")
+    if auth.add_blacklist(user_id):
+        await matcher.finish(f"✅ 已拉黑 {user_id}(全局封禁: 不解析/不响应功能指令)")
+    await matcher.finish(f"{user_id} 已在黑名单中")
+
+
+@on_command("par解除拉黑", block=True, permission=SUPERUSER).handle()
+async def _par_unban(matcher: Matcher, args: Message = CommandArg()):
+    """SUPERUSER: 解除全局拉黑。用法: par解除拉黑 @用户"""
+    user_id, _ = _extract_target_user(args)
+    if not user_id:
+        await matcher.finish("用法: par解除拉黑 @用户")
+    if auth.remove_blacklist(user_id):
+        await matcher.finish(f"✅ 已解除 {user_id} 的拉黑")
+    await matcher.finish(f"{user_id} 不在黑名单中")
+
+
+@on_command("par黑名单", block=True, permission=SUPERUSER).handle()
+async def _par_blacklist_view(matcher: Matcher):
+    """SUPERUSER: 查看全局黑名单。"""
+    blacklist = auth.get_blacklist()
+    if not blacklist:
+        await matcher.finish("当前黑名单为空")
+    await matcher.finish("全局黑名单:\n" + "\n".join(blacklist))
+
+
 # 模块级 2FA 密码等待状态：{user_id: LoginQrHandle}
 # tg登录 检测到 2FA 时写入，tg密码 matcher 消费后删除
 # LoginQrHandle 仅用于类型标注（TYPE_CHECKING 避免运行时循环导入）
@@ -737,8 +896,10 @@ async def _do_music_search(
 def _register_music_order_commands() -> None:
     prefix = pconfig.parse_prefix or "par"
 
+    _nb_rule = auth.not_blacklisted()
+
     # 默认三服务点歌
-    @on_command(f"{prefix}点歌", priority=2, block=True).handle()
+    @on_command(f"{prefix}点歌", priority=2, block=True, rule=_nb_rule).handle()
     async def _order_default(matcher: Matcher, args: Message = CommandArg(), session: Session = UniSession()):
         await _do_music_search(matcher, session, args.extract_plain_text(), _DEFAULT_ORDER_PLATFORMS)
 
@@ -751,7 +912,7 @@ def _register_music_order_commands() -> None:
 
             return _handler
 
-        on_command(f"{prefix}{alias}", priority=2, block=True).handle()(_make_handler(platform))
+        on_command(f"{prefix}{alias}", priority=2, block=True, rule=_nb_rule).handle()(_make_handler(platform))
 
 
 _register_music_order_commands()
@@ -789,6 +950,10 @@ async def _music_select(matcher: Matcher, session: Session = UniSession()):
     order = music_order.ORDER_STORE.get(user_id, scene_id)
     if order is None:
         # 没有点歌记录, 放行 (par1 等落到 force-parse 流程)
+        return
+
+    # 黑名单用户不响应点歌选择(放行给后续 matcher, 不阻断)
+    if user_id != "unknown" and auth.is_blacklisted(user_id):
         return
 
     matcher.stop_propagation()  # 命中点歌选择, 阻断后续 matcher

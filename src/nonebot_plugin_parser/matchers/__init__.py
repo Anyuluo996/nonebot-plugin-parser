@@ -13,10 +13,10 @@ from nonebot_plugin_uninfo import Session, UniSession
 if TYPE_CHECKING:
     from ..download import LoginQrHandle
 
+from . import auth
 from .rule import SUPER_PRIVATE, PSR_FORCE_PARSE_KEY, Searched, SearchResult, on_keyword_regex
 from ..utils import LimitedSizeDict
-from .filter import is_tg_authorized, is_platform_enabled, get_group_key
-from . import auth
+from .filter import get_group_key, is_tg_authorized, is_platform_enabled
 from ..config import gconfig, pconfig
 from ..helper import UniHelper, UniMessage
 from ..parsers import BaseParser, ParseResult, BilibiliParser

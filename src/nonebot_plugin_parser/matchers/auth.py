@@ -82,7 +82,7 @@ _load_grants()
 
 
 def _matches(granted: list[str] | None, item: str) -> bool:
-    """ granted 为 None/[] 视为「全部授权」,否则检查 item 是否在显式清单内。"""
+    """granted 为 None/[] 视为「全部授权」,否则检查 item 是否在显式清单内。"""
     if not granted:  # None 或 []
         return True
     return item in granted

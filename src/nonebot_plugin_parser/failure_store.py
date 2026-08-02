@@ -87,8 +87,18 @@ def record_failure(url: str, platform: str, error: str) -> None:
 
 
 def get_retryable_failures(max_retries: int) -> list[dict[str, Any]]:
-    """L2：返回可重试的失败记录（retries<max 且 reported=False）。"""
-    return [r for r in _failures.values() if not r.get("reported", False) and int(r.get("retries", 0)) < max_retries]
+    """L2：返回可重试的失败记录（retries<max 且 reported=False）。
+
+    返回每条记录的**浅拷贝**（``dict(r)``），与内存中的 ``_failures`` 解耦：
+    ``failure_retry._retry_one`` 会再次 ``retries++``，而本模块的 ``mark_retried``
+    也对 ``_failures`` 中的同一条记录 ``retries++``。若返回引用，二者操作同一对象
+    会导致一次失败被计 +2（重试预算被腰斩）。返回拷贝后二者各 +1，互不影响。
+    """
+    return [
+        dict(r)
+        for r in _failures.values()
+        if not r.get("reported", False) and int(r.get("retries", 0)) < max_retries
+    ]
 
 
 def mark_retried(url: str, error: str) -> None:

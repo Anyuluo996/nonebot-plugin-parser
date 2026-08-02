@@ -34,7 +34,7 @@ async def test_nga_parse():
 
     logger.debug(f"标题: {result.title}")
     logger.debug(f"主楼作者: {result.author.name if result.author else 'N/A'}")
-    logger.debug(f"主楼时间: {result.formartted_datetime}")
+    logger.debug(f"主楼时间: {result.formatted_datetime()}")
     logger.debug(f"主楼graphics: {result.graphics}")
 
     # ── 回复楼层断言 ──

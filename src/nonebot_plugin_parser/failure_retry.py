@@ -48,13 +48,16 @@ async def _retry_one(record: dict) -> None:
         mark_success(url)
         logger.debug(f"失败链接重试成功，已删除: {url}")
     except Exception as e:
-        err = f"{type(e).__name__}: {getattr(e, 'message', e)}"
+        err = f"{type(e).__name__}: {e!s}"
+        # mark_retried 内部对 _failures 的原记录 retries+=1（与本次传入的 record 拷贝解耦）。
+        # 上报所需的最新 retries/error 从 _failure 取回，避免手动递增产生双倍计数。
         mark_retried(url, err)
-        rec = record
-        rec["retries"] = int(rec.get("retries", 0)) + 1
-        rec["error"] = err
+        from . import failure_store
+
+        latest = failure_store.get_failures()
+        rec = next((r for r in latest if r.get("url") == url), record)
         # 达到上限 → 上报
-        if rec["retries"] >= pconfig.failure_retry_max:
+        if int(rec.get("retries", 0)) >= pconfig.failure_retry_max:
             if pconfig.failure_report_enabled:
                 ok = await report_failure_record(rec)
                 if not ok:
@@ -62,38 +65,29 @@ async def _retry_one(record: dict) -> None:
                     mark_reported(url)
             else:
                 mark_reported(url)
-        logger.debug(f"失败链接重试仍失败({rec['retries']}/{pconfig.failure_retry_max}): {url} - {err}")
+        logger.debug(
+            f"失败链接重试仍失败({rec.get('retries', 0)}/{pconfig.failure_retry_max}): {url} - {err}"
+        )
 
 
 def _find_parser_for_url(url: str) -> BaseParser | None:
-    """遍历所有已注册 parser，找第一个 search_url 能匹配该 url 的。"""
-    for parser_cls in BaseParser.get_all_subclass():
-        parser = _get_parser_instance(parser_cls)
-        if parser is None:
-            continue
+    """遍历已注册 parser 实例，找第一个 search_url 能匹配该 url 的。
+
+    直接复用 ``matchers.KEYWORD_PARSER_MAP`` 里运行态的 parser 实例
+    （与用户消息走的是同一批），而非另起 ``parser_cls()``。这样凭据缓存
+    （如 BilibiliParser._credential）、cookies 文件、连接池在主流程与重试
+    流程间共享，避免重复加载凭据 / 并发写同一 cookies 文件。
+    """
+    # 懒导入避免 matchers 与 failure_retry 之间的循环导入
+    from .matchers import KEYWORD_PARSER_MAP
+
+    for parser in KEYWORD_PARSER_MAP.values():
         try:
             parser.search_url(url)  # 不匹配会抛 ParseException
             return parser
         except ParseException:
             continue
     return None
-
-
-# parser 实例缓存，避免每次重试都 new
-_PARSER_INSTANCES: dict[type[BaseParser], BaseParser] = {}
-
-
-def _get_parser_instance(parser_cls: type[BaseParser]) -> BaseParser | None:
-    """获取/缓存 parser 实例。构造失败返回 None。"""
-    if parser_cls in _PARSER_INSTANCES:
-        return _PARSER_INSTANCES[parser_cls]
-    try:
-        inst = parser_cls()
-        _PARSER_INSTANCES[parser_cls] = inst
-        return inst
-    except Exception as e:
-        logger.debug(f"实例化 parser {parser_cls.__name__} 失败: {e}")
-        return None
 
 
 async def run_failure_retry() -> None:

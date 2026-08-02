@@ -486,8 +486,8 @@
         {% endif %}
         <div class="user-info">
           <div class="username">{{ result.author.name }}</div>
-          {% if result.formartted_datetime %}
-          <div class="time">{{ result.formartted_datetime }}</div>
+          {% if result.formatted_datetime() %}
+          <div class="time">{{ result.formatted_datetime() }}</div>
           {% endif %}
         </div>
         {% if not is_repost and result.platform and logo %}

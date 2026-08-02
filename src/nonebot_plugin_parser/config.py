@@ -80,6 +80,13 @@ class Config(BaseModel):
     """资源最大大小 默认 100 单位 MB"""
     parser_duration_maximum: int = 480
     """视频/音频最大时长"""
+    parser_video_send_timeout: int = 30
+    """视频下载首包等待阈值（秒）。超时后先发送封面图，视频后台继续下完再补发。
+
+    避免因 CDN 节点慢（如 B 站 mcdn P2P 节点）导致用户长时间干等。
+    实际下载重试仍按 download_file 的超时与 backup_urls 轮换进行，本阈值仅控制
+    "封面先发" 的触发时机。设为 0 可禁用此行为（恢复等视频下完一起发的旧行为）。
+    """
     parser_append_url: bool = False
     """是否在解析结果中附加原始URL"""
     parser_disabled_platforms: list[PlatformEnum] = Field(default_factory=list)
@@ -194,6 +201,11 @@ class Config(BaseModel):
     def duration_maximum(self) -> int:
         """视频/音频最大时长"""
         return self.parser_duration_maximum
+
+    @property
+    def video_send_timeout(self) -> int:
+        """视频下载首包等待阈值（秒），超时先发封面"""
+        return self.parser_video_send_timeout
 
     @property
     def disabled_platforms(self) -> list[PlatformEnum]:

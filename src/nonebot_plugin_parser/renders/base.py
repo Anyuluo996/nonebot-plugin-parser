@@ -1,5 +1,6 @@
 import io
 import uuid
+import asyncio
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar
 from pathlib import Path
@@ -42,7 +43,31 @@ class BaseRenderer(ABC):
             try:
                 match cont:
                     case VideoContent():
-                        path = await cont.get_path()
+                        timeout = pconfig.video_send_timeout
+                        if timeout > 0:
+                            try:
+                                path = await asyncio.wait_for(cont.get_path(), timeout=timeout)
+                            except asyncio.TimeoutError:
+                                # 视频未在阈值内下完: 先发封面, 视频任务不被取消(底层 task 仍存活),
+                                # 继续等其完成后补发。下载层的 backup_urls 轮换仍在后台进行。
+                                # 封面获取单独 try: 封面 task 失败不应阻断"先发封面"的兜底逻辑
+                                try:
+                                    cover_path = await cont.get_cover_path()
+                                except Exception:
+                                    cover_path = None
+                                if cover_path is not None:
+                                    logger.info("视频下载超时, 先发封面图, 视频后台继续 | url: {}", result.display_url)
+                                    yield UniMessage(UniHelper.img_seg(cover_path))
+                                # 继续等视频完成。给 3 倍超时上限, 避免无限挂起
+                                # (下载层最坏 4×60s≈4分钟, 这里 3×30s=90s 兜底)。
+                                # 超时则放弃视频, 转为 DownloadException 让外层计入失败计数。
+                                try:
+                                    path = await asyncio.wait_for(cont.get_path(), timeout=timeout * 3)
+                                except asyncio.TimeoutError:
+                                    logger.warning("视频补发仍超时, 放弃 | url: {}", result.display_url)
+                                    raise DownloadException("视频下载超时")
+                        else:
+                            path = await cont.get_path()
                         yield UniMessage(UniHelper.video_seg(path))
                     case AudioContent():
                         path = await cont.get_path()

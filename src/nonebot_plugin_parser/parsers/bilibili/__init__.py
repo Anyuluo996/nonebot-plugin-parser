@@ -1,7 +1,8 @@
 import json
 import asyncio
 from re import Match
-from typing import ClassVar
+from typing import Final, ClassVar
+from urllib.parse import urlparse
 from collections.abc import AsyncGenerator
 
 from msgspec import MsgspecError, convert
@@ -26,6 +27,55 @@ from .dynamic import DynamicInfo
 
 # 转发链递归深度上限，防止循环引用/极深嵌套导致 RecursionError 崩溃
 MAX_REPOST_DEPTH = 5
+
+# B站 P2P 边缘节点 host 特征。实测这些节点(os 已被伪装成 bcache, 只能靠 host 判别):
+#   - 速度仅 1-2M/s, 而正规 CDN(bilivideo.com)可达 5-25M/s
+#   - 频繁连接重置(Connection reset), 是 "下载异常重试" 日志的主要来源
+# backup_url 里必然存在正规 CDN, 主链命中 P2P 时优先换正规 CDN
+_P2P_HOST_MARKERS: Final[tuple[str, ...]] = (
+    "mcdn.bilivideo",  # xy116x196x156x92xy.mcdn.bilivideo.cn 等
+    "edge.mountaintoys",  # *.edge.mountaintoys.cn (mcdn 专属域名, 4483 端口)
+)
+
+
+def _is_p2p_node(url: str) -> bool:
+    """判断 URL 是否指向 P2P 边缘节点(mcdn 等), 这些节点质量差应优先回避"""
+    host = urlparse(url).hostname or ""
+    return any(marker in host for marker in _P2P_HOST_MARKERS)
+
+
+def _select_preferred_streams(primary: str, backups: list[str]) -> tuple[str, list[str]]:
+    """主链命中 P2P 节点时, 从 backup_url 里取第一个正规 CDN 提到主链位置。
+
+    返回 (优选主链, 完整备用列表)。备用列表保留全部链接(含原 P2P 主链)供下载层重试轮换。
+    全是 P2P 时保持主链(有总比没有强)。结果对 primary 去重(避免 B站偶发返回重复链接)。
+    """
+    if not _is_p2p_node(primary):
+        return primary, _dedup_backups(backups, primary)
+    for i, bu in enumerate(backups):
+        if not _is_p2p_node(bu):
+            # 把第一个正规 CDN 提到主链, 原 P2P 主链降级到 backup 首位
+            new_backups = [primary, *backups[:i], *backups[i + 1 :]]
+            logger.debug(f"主链命中 P2P 节点, 切换到正规 CDN: {_short_url(primary)} → {_short_url(bu)}")
+            return bu, _dedup_backups(new_backups, bu)
+    logger.warning(f"主链及所有 backup 均为 P2P 节点, 保持主链: {_short_url(primary)}")
+    return primary, _dedup_backups(backups, primary)
+
+
+def _dedup_backups(backups: list[str], primary: str) -> list[str]:
+    """去重并排除与主链相同的链接, 保持原顺序"""
+    seen: set[str] = {primary}
+    out: list[str] = []
+    for u in backups:
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
+def _short_url(url: str, n: int = 60) -> str:
+    """日志友好的 URL 截断"""
+    return url[:n] + ("..." if len(url) > n else "")
 
 
 def _safe_convert(raw, target_type, *, context: str):
@@ -198,16 +248,28 @@ class BilibiliParser(BaseParser):
             output_path = pconfig.cache_dir / f"{video_info.bvid}-{page_num}.mp4"
             if output_path.exists():
                 return output_path
-            v_url, a_url = await self.extract_download_urls(video=video, page_index=page_info.index)
+            v_url, v_backups, a_url, a_backups = await self.extract_download_urls(
+                video=video, page_index=page_info.index
+            )
             if page_info.duration > pconfig.duration_maximum:
                 logger.warning(f"视频时长 {page_info.duration} 秒, 超过 {pconfig.duration_maximum} 秒, 取消下载")
                 raise IgnoreException
             if a_url is not None:
                 return await self.downloader.download_av_and_merge(
-                    v_url, a_url, output_path=output_path, ext_headers=self.headers
+                    v_url,
+                    a_url,
+                    output_path=output_path,
+                    ext_headers=self.headers,
+                    v_backup_urls=v_backups,
+                    a_backup_urls=a_backups,
                 )
             else:
-                return await self.downloader.download_file(v_url, file_name=output_path.name, ext_headers=self.headers)
+                return await self.downloader.download_file(
+                    v_url,
+                    file_name=output_path.name,
+                    ext_headers=self.headers,
+                    backup_urls=v_backups,
+                )
 
         video_task = asyncio.create_task(download_video())
         video_content = self.create_video_content(
@@ -376,8 +438,13 @@ class BilibiliParser(BaseParser):
         bvid: str | None = None,
         avid: int | None = None,
         page_index: int = 0,
-    ) -> tuple[str, str | None]:
-        """解析视频下载链接"""
+    ) -> tuple[str, list[str], str | None, list[str]]:
+        """解析视频下载链接
+
+        返回 (视频主链, 视频backup列表, 音频主链或None, 音频backup列表)。
+        主链已做 P2P 节点过滤(命中 mcdn 等坏节点时从 backup 提取正规 CDN 替换);
+        backup 列表保留全部链接供下载层重试时轮换不同 CDN。
+        """
 
         from bilibili_api.video import (
             AudioStreamDownloadURL,
@@ -415,11 +482,15 @@ class BilibiliParser(BaseParser):
             raise DownloadException("未找到可下载的视频流")
         logger.debug(f"视频流质量: {video_stream.video_quality.name}, 编码: {video_stream.video_codecs}")
 
+        # P2P 节点过滤: 主链命中 mcdn 等坏节点时, 从 backup 提取正规 CDN 替换
+        v_url, v_backups = _select_preferred_streams(video_stream.url, list(video_stream.backup_url or []))
+
         audio_stream = streams[1]
         if not isinstance(audio_stream, AudioStreamDownloadURL):
-            return video_stream.url, None
+            return v_url, v_backups, None, []
         logger.debug(f"音频流质量: {audio_stream.audio_quality.name}")
-        return video_stream.url, audio_stream.url
+        a_url, a_backups = _select_preferred_streams(audio_stream.url, list(audio_stream.backup_url or []))
+        return v_url, v_backups, a_url, a_backups
 
     # B站 dash 视频流 codecs 字符串 → VideoCodecs 映射
     # 上游 issue #1035: VideoCodecs.HEV.value="hev" 无法匹配 "hvc1.x.x"，导致 codecs=None

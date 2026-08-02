@@ -152,3 +152,73 @@ if force_parse and not platform_enabled:
 - ❌ 不改 `config.py`(全运行时驱动,无需 .env 配置项)。
 - ❌ 不迁移/删除 Telegram 白名单。
 - ❌ bm/ym/点歌 不纳入「收紧清单」(留第 2 批)。
+
+---
+
+## 九、第 2 批:命令下放 + 前缀一致性(已完成)
+
+### 问题背景
+
+第 1 批上线后,用户反馈两个问题:
+
+1. **管理命令名不跟随前缀**:第 1 批把 `par授权`/`par拉黑` 等硬编码为 `par` 开头,但 `parser_force_prefix` 可配置(如 `jx`),凭据命令(`jxqq登录`)与管理命令(`par授权`)命名风格不一致。
+2. **凭据命令无法下放**:`dycookie`/`parqq登录` 等仍仅 SUPERUSER 可用,SUPERUSER 无法授权他人代为维护凭据。
+
+### 设计决策(与用户对齐)
+
+| 决策点 | 选择 |
+| --- | --- |
+| 管理命令前缀 | `prefix = pconfig.parse_prefix or "par"`,空前缀回退 `par`(避免 `授权`/`拉黑` 等短命令冲突) |
+| 凭据命令前缀 | `blogin`/`dyttwid`/`dycookie` 保持硬编码不拼前缀(自带平台标识,不冲突) |
+| 授权键 | **语义键(不含前缀)**,与命令前缀解耦 |
+| 授权键粒度 | 每命令一个语义键(最细粒度) |
+
+### 语义键清单(`auth.py`)
+
+| 常量 | 语义键 | 对应命令 | 下放 |
+| --- | --- | --- | --- |
+| `FORCE_PARSE` | `强制解析` | 前缀强制解析 | ✅(第 1 批) |
+| `BILI_LOGIN` | `bilibili登录` | `blogin`(仅私聊) | ✅ |
+| `NETEASE_LOGIN` | `网易云登录` | `par网易云登录`/`parwyy登录`/登出 | ✅ |
+| `QQ_LOGIN` | `qq登录` | `parqq登录`/`parqq登出` | ✅ |
+| `DY_TTWID` | `抖音ttwid` | `dyttwid`/`dyttwid查看` | ✅ |
+| `DY_COOKIE` | `抖音cookie` | `dycookie`/`dycookie查看` | ✅ |
+
+不下放的命令:管理命令本身(`par授权` 等)、`tg登录`(改变共享 tdl 会话)。
+
+### 关键改动
+
+1. **`auth.py` 新增**:
+   - 凭据语义键常量 + `DELEGABLE_ITEMS` 元组
+   - `COMMAND_TO_ITEM` 映射 + `register_command_item()` 登记接口
+   - `resolve_item()`:把用户输入(语义键/真实命令名/带前缀命令名)归一化为语义键
+   - `super_or_authorized(item) -> Permission`:SUPERUSER 短路 + 授权判定(用 `SUPERUSER | Permission(...)`)
+   - `private_authorized(item) -> Permission`:私聊限定版本(用于 `blogin`)
+
+2. **`__init__.py` 改动**:
+   - 管理命令包进 `_register_admin_commands()`,命令名用 `f"{prefix}xxx"`
+   - 凭据命令注册点 `permission=SUPERUSER` 改为 `permission=auth.super_or_authorized(语义键)`
+   - 音乐登录命令额外调用 `auth.register_command_item()` 登记映射
+   - 新增 `_parse_items()`:授权命令的受控项参数批量归一化
+
+### NoneBot Permission 约束
+
+NoneBot **不允许 Permission 之间用 `&`**(`And operation between Permissions is not allowed`)。
+故 `private_authorized` 不能写成 `Permission(_private) & super_or_authorized(...)`,
+而要把私聊检查与授权检查合并进同一个 async check 函数,再用 `SUPERUSER | Permission(...)` 组合。
+
+### 授权命令参数解析
+
+用户授权时可输入以下任意形态,`resolve_item` 统一归一化:
+- 语义键:`强制解析` / `qq登录` / `网易云登录` / `bilibili登录` / `抖音ttwid` / `抖音cookie`
+- 真实命令名(硬编码):`blogin` / `dyttwid` / `dycookie`
+- 带前缀命令名(注册后):`parqq登录` / `par网易云登录`
+
+无法识别的输入会让授权命令报错并提示可用受控项清单。
+
+### 向后兼容性
+
+- 旧语义键 `强制解析` 不变,第 1 批的授权数据无需迁移。
+- 凭据命令原 SUPERUSER 仍可触发(`super_or_authorized` 内含 SUPERUSER 短路)。
+- 管理命令空前缀时回退 `par`,与第 1 批硬编码行为一致。
+

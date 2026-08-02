@@ -37,7 +37,8 @@ class Renderer(ImageRenderer):
 
         # 回复楼层图片（extra["posts"].images）与主楼图片一样，需在模板渲染前下完，
         # 否则 template_to_pic 访问 .path_uri 时还是 Task，取不到本地路径。
-        await result.ensure_downloads_complete()
+        # 仅等图片资源(img_only), 不等视频 — 视频由 render_contents 独立发送。
+        await result.ensure_downloads_complete(img_only=True)
 
         from .resources import DEFAULT_AVATAR_PATH
 

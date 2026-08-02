@@ -95,9 +95,7 @@ def get_retryable_failures(max_retries: int) -> list[dict[str, Any]]:
     会导致一次失败被计 +2（重试预算被腰斩）。返回拷贝后二者各 +1，互不影响。
     """
     return [
-        dict(r)
-        for r in _failures.values()
-        if not r.get("reported", False) and int(r.get("retries", 0)) < max_retries
+        dict(r) for r in _failures.values() if not r.get("reported", False) and int(r.get("retries", 0)) < max_retries
     ]
 
 

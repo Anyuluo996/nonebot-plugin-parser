@@ -85,7 +85,7 @@ jobs:
           version: "latest"
 
       - name: Install Dependencies
-        run: uv sync --locked --group pydantic-v2
+        run: uv sync --locked
 
       - name: Run Pytest Others
         run: uv run poe ${{ env.TASK }}

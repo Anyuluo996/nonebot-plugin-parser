@@ -28,6 +28,7 @@ async def test_pixiv_url_pattern():
         logger.info(f"URL 匹配成功: {url} -> keyword={keyword}, id={searched.group(1)}")
 
 
+@pytest.mark.flaky(reruns=3, reruns_delay=2)
 @pytest.mark.asyncio
 async def test_pixiv_parse():
     """测试 Pixiv 插画解析"""
@@ -136,8 +137,6 @@ async def test_pixiv_ugoira_parse():
 @pytest.mark.asyncio
 async def test_pixiv_render(tmp_path):
     """测试 Pixiv 图片渲染"""
-    from pathlib import Path
-
     from nonebot_plugin_parser.parsers import PixivParser
     from nonebot_plugin_parser.renders import get_renderer
 

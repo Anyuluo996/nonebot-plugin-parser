@@ -51,7 +51,7 @@ dependencies = [
   "protobuf>=7.35.1,<7.36.0",
   # gmssl: 抖音 a_bogus 签名算法内部的国密 SM3 哈希
   "gmssl>=3.2.2,<4.0.0",
-  "bilibili-api-python>=17.4.1,<18.0.0",
+  "bilibili-api-python>=17.4.2,<18.0.0",
   "qqmusic-api-python>=0.6.7,<1.0.0",
   "nonebot-plugin-alconna>=0.60.4,<1.0.0",
   "nonebot-plugin-apscheduler>=0.5.0,<1.0.0",

@@ -576,8 +576,10 @@ class BilibiliParser(BaseParser):
             seg = vd.get("segment_base") or {}
             sar_raw = vd.get("sar", "1:1")
             try:
-                sar = tuple(int(x) for x in str(sar_raw).split(":")) if ":" in str(sar_raw) else (1, 1)
-            except (TypeError, ValueError):
+                parts = [int(x) for x in str(sar_raw).split(":")] if ":" in str(sar_raw) else [1, 1]
+                # VideoStreamDownloadURL 要求 sar 为固定 2 元组 (width, height)
+                sar = (parts[0], parts[-1]) if len(parts) >= 2 else (1, 1)
+            except (TypeError, ValueError, IndexError):
                 sar = (1, 1)
             try:
                 frame_rate = float(vd.get("frame_rate", 0.0))

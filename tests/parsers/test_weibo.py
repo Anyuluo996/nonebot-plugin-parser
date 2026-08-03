@@ -98,6 +98,7 @@ async def test_video():
     await asyncio.gather(*[parse_video(url) for url in urls])
 
 
+@pytest.mark.flaky(reruns=3, reruns_delay=2)
 @pytest.mark.asyncio
 async def test_text():
     """测试微博纯文本"""

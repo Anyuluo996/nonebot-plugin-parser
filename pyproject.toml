@@ -66,12 +66,12 @@ Repository = "https://github.com/fllesser/nonebot-plugin-parser"
 
 [project.optional-dependencies]
 htmlkit = ["nonebot-plugin-htmlkit>=0.1.0rc4"]
-htmlrender = ["nonebot-plugin-htmlrender>=0.6.7"]
+htmlrender = ["nonebot-plugin-htmlrender[playwright]>=0.6.7"]
 ytdlp = ["yt-dlp[default]>=2026.3.17"]
 emosvg = ["emosvg>=0.1.7"]
 all = [
   "nonebot-plugin-htmlkit>=0.1.0rc4",
-  "nonebot-plugin-htmlrender>=0.6.7",
+  "nonebot-plugin-htmlrender[playwright]>=0.6.7",
   "yt-dlp[default]>=2026.3.17",
   "emosvg>=0.1.7",
 ]
@@ -88,7 +88,7 @@ dev = [
 extras = [
   "emosvg>=0.1.7",
   "nonebot-plugin-htmlkit>=0.1.0rc4",
-  "nonebot-plugin-htmlrender>=0.6.7",
+  "nonebot-plugin-htmlrender[playwright]>=0.6.7",
   "yt-dlp[default]>=2026.3.17",
   "types-yt-dlp>=2026.3.17.20260408",
 ]
@@ -100,23 +100,13 @@ test = [
   "pytest-timeout>=2.0.0",
   "pytest-xdist>=3.8.0,<4.0.0",
   "respx>=0.22.0",
+  "pytest-rerunfailures>=16.4,<17.0.0",
 ]
-pydantic-v2 = ["pydantic>=2.0.0"]
 telegram = ["nonebot-adapter-telegram>=0.1.0b20"]
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13.0"]
 build-backend = "uv_build"
-
-[tool.uv]
-# pydantic-v1 兼容组已移除：qqmusic-api-python 硬依赖 pydantic>=2.13.3，
-# 项目代码也仅使用 pydantic v2 API，故不再支持下游 pydantic v1 环境。
-conflicts = [
-  [
-    { group = "pydantic-v2" },
-    { group = "telegram" },
-  ],
-]
 
 [tool.uv.sources]
 nonebug = { git = "https://github.com/nonebot/nonebug", rev = "master" }

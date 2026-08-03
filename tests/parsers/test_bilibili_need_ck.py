@@ -53,7 +53,8 @@ async def test_max_size_video():
     bvid = "BV1du4y1E7Nh"
     audio_url = None
     try:
-        _, audio_url = await parser.extract_download_urls(bvid=bvid)
+        # extract_download_urls 返回 4 元组: (视频主链, 视频backup, 音频主链, 音频backup)
+        _, _, audio_url, _ = await parser.extract_download_urls(bvid=bvid)
     except IgnoreException:
         pass
 
@@ -69,7 +70,8 @@ async def test_no_audio_video():
     from nonebot_plugin_parser.parsers import BilibiliParser
 
     parser = BilibiliParser()
-    video_url, audio_url = await parser.extract_download_urls(bvid="BV1gRjMziELt")
+    # extract_download_urls 返回 4 元组: (视频主链, 视频backup, 音频主链, 音频backup)
+    video_url, _, audio_url, _ = await parser.extract_download_urls(bvid="BV1gRjMziELt")
 
     assert video_url is not None
     assert audio_url is None

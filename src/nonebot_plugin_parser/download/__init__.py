@@ -20,6 +20,11 @@ from ..config import pconfig
 from ..constants import COMMON_HEADER, DOWNLOAD_TIMEOUT
 from ..exception import IgnoreException, DownloadException
 
+# curl_cffi 的 timeout 只认 tuple[int, int] / int / float。
+# 直接传 httpx.Timeout 对象会被 set_curl_options 忽略 → 不设任何超时 → 卡死 CDN 永久挂起。
+# 这里用 (connect, read) tuple，与 DOWNLOAD_TIMEOUT 语义对齐。
+CURL_DOWNLOAD_TIMEOUT: tuple[float, float] = (DOWNLOAD_TIMEOUT.connect, DOWNLOAD_TIMEOUT.read)
+
 # Referer 白名单：域名 → Referer 值
 _REFERRER_MAP: dict[str, str] = {
     "img.nga.178.com": "https://nga.178.com/",
@@ -173,11 +178,12 @@ async def _download_by_curl(
             current_url = backup_urls[(attempt - 1) % len(backup_urls)]
             logger.info("curl 重试切换 CDN ({}/{}) | cdn: {}", attempt + 1, max_retries + 1, current_url[:70])
         try:
-            # curl_cffi 也加超时（DOWNLOAD_TIMEOUT 秒），避免连接挂起永久卡死下载
-            # DOWNLOAD_TIMEOUT 是 httpx.Timeout，curl_cffi 期望 float；运行时 curl_cffi 可接受
+            # curl_cffi 加超时避免连接挂起永久卡死下载。
+            # 注意: curl_cffi 的 set_curl_options 只认 tuple/int/float, 传 httpx.Timeout
+            # 会被忽略导致无超时, 故用 CURL_DOWNLOAD_TIMEOUT (connect, read) tuple。
             async with AsyncSession(
                 impersonate=impersonate,
-                timeout=DOWNLOAD_TIMEOUT,  # type: ignore[arg-type]
+                timeout=CURL_DOWNLOAD_TIMEOUT,
                 # 强制 IPv4：部分部署环境无 IPv6 出口但 DNS 返回 AAAA 记录，
                 # curl 默认优先尝试 IPv6 会先踩坑（超时后回退 IPv4，徒增延迟甚至 reset）。
                 # 实测对走代理路径无影响，纯兜底。

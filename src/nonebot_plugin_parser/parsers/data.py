@@ -9,6 +9,8 @@ from dataclasses import field, dataclass
 from collections.abc import Iterator, Sequence, Awaitable
 
 from ..utils import fmt_duration
+from ..config import pconfig
+from ..exception import DownloadException
 
 
 def repr_path_task(path_task: Path | Task[Path]) -> str:
@@ -30,7 +32,13 @@ class MediaContent:
     async def get_path(self) -> Path:
         if isinstance(self.path_task, Path):
             return self.path_task
-        self.path_task = await self.path_task
+        timeout = pconfig.video_send_timeout
+        try:
+            self.path_task = (
+                await self.path_task if timeout <= 0 else await asyncio.wait_for(self.path_task, timeout=timeout)
+            )
+        except asyncio.TimeoutError as e:
+            raise DownloadException("媒体下载超时") from e
         return self.path_task
 
     @property
@@ -64,7 +72,11 @@ class VideoContent(MediaContent):
             return None
         if isinstance(self.cover, Path):
             return self.cover
-        self.cover = await self.cover
+        timeout = pconfig.video_send_timeout
+        try:
+            self.cover = await self.cover if timeout <= 0 else await asyncio.wait_for(self.cover, timeout=timeout)
+        except asyncio.TimeoutError as e:
+            raise DownloadException("封面下载超时") from e
         return self.cover
 
     @property
@@ -105,7 +117,13 @@ class DynamicContent(MediaContent):
             return None
         if isinstance(self.gif_path, Path):
             return self.gif_path
-        self.gif_path = await self.gif_path
+        timeout = pconfig.video_send_timeout
+        try:
+            self.gif_path = (
+                await self.gif_path if timeout <= 0 else await asyncio.wait_for(self.gif_path, timeout=timeout)
+            )
+        except asyncio.TimeoutError as e:
+            raise DownloadException("动图下载超时") from e
         return self.gif_path
 
     async def get_cover_path(self) -> Path | None:
@@ -113,7 +131,11 @@ class DynamicContent(MediaContent):
             return None
         if isinstance(self.cover, Path):
             return self.cover
-        self.cover = await self.cover
+        timeout = pconfig.video_send_timeout
+        try:
+            self.cover = await self.cover if timeout <= 0 else await asyncio.wait_for(self.cover, timeout=timeout)
+        except asyncio.TimeoutError as e:
+            raise DownloadException("封面下载超时") from e
         return self.cover
 
     @property

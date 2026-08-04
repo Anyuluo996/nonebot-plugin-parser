@@ -23,7 +23,7 @@ from ..exception import IgnoreException, DownloadException
 # curl_cffi 的 timeout 只认 tuple[int, int] / int / float。
 # 直接传 httpx.Timeout 对象会被 set_curl_options 忽略 → 不设任何超时 → 卡死 CDN 永久挂起。
 # 这里用 (connect, read) tuple，与 DOWNLOAD_TIMEOUT 语义对齐。
-CURL_DOWNLOAD_TIMEOUT: tuple[float, float] = (DOWNLOAD_TIMEOUT.connect, DOWNLOAD_TIMEOUT.read)
+CURL_DOWNLOAD_TIMEOUT: tuple[float, float] = (DOWNLOAD_TIMEOUT.connect or 15.0, DOWNLOAD_TIMEOUT.read or 60.0)
 
 # Referer 白名单：域名 → Referer 值
 _REFERRER_MAP: dict[str, str] = {

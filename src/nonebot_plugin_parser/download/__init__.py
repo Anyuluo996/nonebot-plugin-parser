@@ -235,6 +235,7 @@ async def _download_by_curl(
                     logger.warning("媒体 url: {}, 大小为 0, 取消下载", current_url)
                     raise IgnoreException
 
+                logger.debug(f"下载完成(curl): {file_path.name} ({downloaded_size / 1024:.0f} KB)")
                 return file_path
 
         except (IgnoreException, DownloadException):
@@ -331,6 +332,7 @@ class StreamDownloader:
             file_name = generate_file_name(url)
         file_path = self.cache_dir / file_name
         if file_path.exists():
+            logger.debug(f"下载缓存命中: {file_path.name}")
             return file_path
 
         headers = {**self.headers, **(ext_headers or {})}
@@ -339,7 +341,7 @@ class StreamDownloader:
                 headers["Referer"] = auto_ref
 
         use_curl_result = _use_curl(url)
-        logger.info("_use_curl check | url: {}, result: {}", url[:80], use_curl_result)
+        logger.debug("_use_curl check | url: {}, result: {}", url[:80], use_curl_result)
         if use_curl_result:
             return await _download_by_curl(url, file_path, headers, max_retries, backup_urls=backup_urls)
 
@@ -456,6 +458,7 @@ class StreamDownloader:
                                 )
                                 raise IgnoreException
 
+                            logger.debug(f"下载完成: {file_path.name} ({downloaded_size / 1024:.0f} KB)")
                             return file_path
                     except _FollowRedirect as redirect:
                         current_url = redirect.location

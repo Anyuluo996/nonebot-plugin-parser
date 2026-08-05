@@ -1978,7 +1978,7 @@ requires-dist = [
     { name = "nonebot2", specifier = ">=2.4.3,<3.0.0" },
     { name = "pillow", specifier = ">=11.0.0" },
     { name = "protobuf", specifier = ">=7.35.1,<7.36.0" },
-    { name = "qqmusic-api-python", specifier = ">=0.6.7,<1.0.0" },
+    { name = "qqmusic-api-python", specifier = ">=0.7.2,<1.0.0" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "yt-dlp", extras = ["default"], marker = "extra == 'all'", specifier = ">=2026.3.17" },
     { name = "yt-dlp", extras = ["default"], marker = "extra == 'ytdlp'", specifier = ">=2026.3.17" },
@@ -2995,7 +2995,7 @@ wheels = [
 
 [[package]]
 name = "qqmusic-api-python"
-version = "0.7.1"
+version = "0.7.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -3007,9 +3007,9 @@ dependencies = [
     { name = "pydantic" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9a/ee/a44a0643a1a9d0d7ef17aa037d4b501add07ca78f1aab3f83f5a4bb91bb4/qqmusic_api_python-0.7.1.tar.gz", hash = "sha256:2295bd465450dc130d7c5682054adb017e24e0b4725f1ce57f8c7db9958d5b85", size = 411794, upload-time = "2026-08-02T09:46:26.841Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a0/7c/451f4e88ceb79082185e720e0b185b072a3329cf0c189bb265dd42ebd4c5/qqmusic_api_python-0.7.2.tar.gz", hash = "sha256:d264ac005ba7c37dbdb0befd8efea78c023427a56ab51bc49df0cb37f8825ca5", size = 422260, upload-time = "2026-08-05T10:36:31.979Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/b2/66/27c9d2f0a02430fc260b8a33b32f392e335e16dca3bd4e0adffb6d76c8e4/qqmusic_api_python-0.7.1-py3-none-any.whl", hash = "sha256:977e99f3854c21943a0e34f5d7b47825c2e16379046532c087617f311ff40b21", size = 130799, upload-time = "2026-08-02T09:46:25.381Z" },
+    { url = "https://files.pythonhosted.org/packages/7f/e4/4f3a327c10a6ae7c1927408c7258265e66aa00006e0a95523827c1299c9b/qqmusic_api_python-0.7.2-py3-none-any.whl", hash = "sha256:455f7ce7159ff4a055cd0112c63cd8ef966c9cd6a43dc7750cd57c88db579279", size = 136716, upload-time = "2026-08-05T10:36:30.673Z" },
 ]
 
 [[package]]

@@ -536,12 +536,20 @@ async def fetch_messages(channel: str, message_id: int) -> dict:
 
     with tempfile.TemporaryDirectory(prefix="tdl_export_") as tmpdir:
         out_file = Path(tmpdir) / "export.json"
+        # 关键: 必须显式 `-T id` 且**两次 `-i`** 才能形成单条 ID 范围,
+        # 否则 tdl 默认按 time 类型把 -i 解释为起点, 扫描整个频道历史
+        # (单条消息从 166s+ 降到 < 2s)。详见
+        # docs/issues/TelegramChatExportSlowScan.md §2.2
         cmd = [
             *_build_base_args(),
             "chat",
             "export",
             "-c",
             str(channel),
+            "-T",
+            "id",
+            "-i",
+            str(message_id),
             "-i",
             str(message_id),
             "--with-content",

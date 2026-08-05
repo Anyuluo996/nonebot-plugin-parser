@@ -89,7 +89,17 @@ class BaseParser:
 
     @final
     async def parse(self, keyword: str, searched: Match[str]) -> ParseResult:
-        return await self._handlers[keyword](self, searched)
+        from nonebot import logger
+
+        url = searched.group(0)
+        logger.debug(f"[{self.platform.display_name}] 开始解析: {url[:80]}")
+        result = await self._handlers[keyword](self, searched)
+        logger.debug(
+            f"[{self.platform.display_name}] 解析完成: "
+            f"type={result.content_type}, contents={len(result.contents)}, "
+            f"title={result.title!r:.40}"
+        )
+        return result
 
     @final
     async def parse_with_redirect(

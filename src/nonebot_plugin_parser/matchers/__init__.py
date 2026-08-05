@@ -202,9 +202,8 @@ async def parser_handler(
         if result is None:
             # 5. 执行解析
             result = await parser.parse(sr.keyword, sr.searched)
-            logger.debug(f"解析结果: {result}")
         else:
-            logger.debug(f"命中缓存: {cache_key}, 结果: {result}")
+            logger.debug(f"命中缓存: {cache_key[:80]}")
 
         # 6. 渲染内容消息并发送
         await _send_parse_result(result)
@@ -229,6 +228,8 @@ async def parser_handler(
         except Exception:
             pass
     except Exception as e:
+        # 解析失败：打 ERROR 日志（原仅存 failure_store，日志层完全不可见）
+        logger.exception(f"解析失败 [{parser.platform.display_name}]: {sr.searched.group(0)[:80]}")
         # 记录解析失败到本地（供维护者排查，不影响主流程）
         record_failure(
             url=sr.searched.group(0),

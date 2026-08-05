@@ -570,6 +570,7 @@ async def fetch_messages(channel: str, message_id: int) -> dict:
     target = next((m for m in messages if m.get("id") == message_id), None)
     if target is None:
         raise ParseException(f"未在导出结果中找到消息 {message_id}")
+    logger.debug(f"tdl chat export 完成: channel={channel}, msg_id={message_id}, type={target.get('type')}")
     return target
 
 
@@ -656,6 +657,7 @@ async def download_media(
             # （如 C: 的 tmp -> D: 的 cache），os.replace 在跨盘时会抛 WinError 17
             await asyncio.to_thread(shutil.move, str(src), str(dest))
             moved.append(dest)
+        logger.debug(f"tdl dl 完成: {len(moved)} 个文件 → {[p.name for p in moved]}")
         return moved
 
 

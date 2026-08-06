@@ -157,7 +157,7 @@ async def get_play_url(parser: "BaseParser", song_hash: str, quality: str = "128
         return None
     try:
         data = resp.json()
-    except Exception as exc:
+    except Exception:
         logger.warning(f"酷狗 play 响应非 JSON: {resp.text[:200]!r}")
         return None
     if data.get("errcode") not in (None, 0, "0"):

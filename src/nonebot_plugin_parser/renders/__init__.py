@@ -30,8 +30,6 @@ match pconfig.render_type:
         from .htmlrender import HtmlRenderer
 
         RENDERER = HtmlRenderer()
-    case RenderType.htmlkit:
-        RENDERER = None
 
 
 def get_renderer(platform: str) -> BaseRenderer:

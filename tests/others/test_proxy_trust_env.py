@@ -224,6 +224,11 @@ async def test_kugou_get_play_url_proxies_empty_when_unconfigured(monkeypatch):
 
             return json.dumps({"errcode": 0, "url": "https://track.kugou.com/test.mp3"})
 
+        def json(self):
+            import json
+
+            return json.loads(self.text)
+
     class _FakeSession:
         def __init__(self, *args, **kwargs):
             pass
@@ -276,6 +281,11 @@ async def test_kugou_get_play_url_proxies_when_configured(monkeypatch):
             import json
 
             return json.dumps({"errcode": 0, "url": "https://track.kugou.com/test.mp3"})
+
+        def json(self):
+            import json
+
+            return json.loads(self.text)
 
     class _FakeSession:
         def __init__(self, *args, **kwargs):

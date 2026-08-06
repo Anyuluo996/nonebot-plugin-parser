@@ -6,22 +6,20 @@ youtube:
 
 kuaishou:
 视频：
-- https://www.kuaishou.com/short-video/3xhjgcmir24m4nm 
+- https://www.kuaishou.com/short-video/3xhjgcmir24m4nm
 - https://v.kuaishou.com/2yAnzeZ
 - https://v.m.chenzhongtech.com/fw/photo/3xburnkmj3auazc
 图集：
-- https://v.kuaishou.com/2xZPkuV  链接失效
+- https://v.kuaishou.com/2xZPkuV
 
 bilibili:
 - https://www.bilibili.com/opus/998440765151510535
 - https://www.bilibili.com/opus/1040093151889457152
 - https://www.bilibili.com/opus/1122430505331982343
 - https://www.bilibili.com/read/cv523868
-- https://t.bilibili.com/1120105154190770281 dynamic video
 - https://t.bilibili.com/1121388026537181241 dynamic opus
 - https://space.bilibili.com/396886341/favlist?fid=311147541&ftype=create
 - https://live.bilibili.com/23585383
-- https://b23.tv/YTg9oSw
 - https://bili2233.cn/rnrwIyU
 - https://www.bilibili.com/video/BV1VLk9YDEzB
 - https://bilibili.com/av1234567
@@ -56,9 +54,6 @@ douyin:
 普通图文
   - https://www.douyin.com/note/7469411074119322899
   - https://v.douyin.com/iP6Uu1Kh
-  - https://v.douyin.com/GeIocABVe5U/     # 含 'BV'，用于测试匹配
-老视频，网页打开会重定向到 m.ixigua.com
-  - https://v.douyin.com/iUrHrruH
 含视频的图集
   - https://v.douyin.com/CeiJfqyWs # 将会解析出视频
   - https://www.douyin.com/note/7450744229229235491 # 重定向 note/ 的实况照片, 解析出 4 段视频
@@ -79,15 +74,12 @@ weibo:
 图集
   - https://weibo.com/7207262816/P5kWdcfDe 多图 > 9 张
   - https://weibo.com/7207262816/P2AFBk387 9张
-  - https://weibo.com/7207262816/Q6YCbtAn8 单张，转发，横屏
-  - https://weibo.com/7207262816/Q617WgOm4 单张，转发，长图
   - https://weibo.com/7207262816/PsFzpzUX2 两张
   - https://weibo.com/7207262816/P2rJE157H 三张
 纯文
-  - ​​​https://mapp.api.weibo.cn/fx/8102df2b26100b2e608e6498a0d3cfe2.html
+  - https://weibo.com/5647310207/Q9c0ZwW2X
 转发
-  - https://mapp.api.weibo.cn/fx/77eaa5c2f741894631a87fc4806a1f05.html 图文
-  - https://weibo.com/1694917363/Q0KtXh6z2 视频
+  - https://weibo.com/2385967842/Q9epfFLvQ 图文
 文章
   - https://card.weibo.com/article/m/show/id/2309404962180771742222
   - https://weibo.com/ttarticle/p/show?id=2309405232896864026685

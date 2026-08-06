@@ -1,10 +1,8 @@
 import re
 import json
-import asyncio
 from typing import Any, ClassVar
 
 from .base import Platform, BaseParser, PlatformEnum, handle
-from ..config import pconfig
 from ..exception import ParseException
 
 # 渲染前 4 楼回复（不含主楼 0 楼）
@@ -82,43 +80,18 @@ class NGAParser(BaseParser):
     async def _fetch_thread_json(self, tid: int) -> dict[str, Any]:
         """请求 NGA lite=js JSON 接口并解析为 dict。
 
-        优先 curl_cffi（TLS 指纹模拟），不可用回退 httpx。
+        走 ``request_curl``（curl_cffi TLS 指纹模拟绕反爬，不可用自动回退 httpx）。
         """
         api_url = f"{NGA_API_URL}?tid={tid}&lite=js&__output=11"
 
-        # 优先 curl_cffi（绕过反爬），不可用回退 httpx
         try:
-            from curl_cffi.requests import AsyncSession
-        except ImportError:
-            AsyncSession = None  # type: ignore[assignment]
-
-        if AsyncSession is not None:
-            # NGA 在国内，默认不走代理；用户显式配置了代理才走
-            proxy_url = pconfig.proxy
-            if proxy_url:
-                proxies = {"https": proxy_url, "http": proxy_url}
-            else:
-                proxies = {"https": "", "http": ""}
-
-            async def _do_request():
-                async with AsyncSession(
-                    impersonate="chrome110",
-                    timeout=NGA_REQUEST_TIMEOUT,
-                ) as session:
-                    return await session.get(
-                        api_url,
-                        headers=self.headers,
-                        allow_redirects=True,
-                        proxies=proxies,  # type: ignore[arg-type]
-                    )
-
-            try:
-                resp = await asyncio.wait_for(_do_request(), timeout=NGA_REQUEST_TIMEOUT)
-            except Exception as e:
-                raise ParseException(f"请求失败: {e}")
-        else:
-            # 回退 httpx（大概率被 403，保留兜底）
-            resp = await self.request(api_url, follow_redirects=True, raise_for_status=False)
+            resp = await self.request_curl(
+                api_url,
+                allow_redirects=True,
+                timeout=NGA_REQUEST_TIMEOUT,
+            )
+        except Exception as e:
+            raise ParseException(f"请求失败: {e}")
 
         if resp.status_code != 200:
             raise ParseException(f"无法获取页面, HTTP {resp.status_code}")

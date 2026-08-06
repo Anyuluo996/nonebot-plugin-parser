@@ -8,6 +8,7 @@ import pytest
 
 ZHIHU_ANSWER = "https://www.zhihu.com/question/67423622/answer/1396759249"
 # 酷狗「舍得 - 王唯旖」(免费歌曲 privilege=0)，hash 直接在 URL 参数中
+# 注: 该分享链接已失效 (404)，test_kugou 会 skip；需替换为新的免费歌曲 hash
 KUGOU_SHARE = "https://t.kugou.com/song/?hash=62C406C76F45C3EF39F451F2C4F22D95"
 # 酷狗分享链接（chain 格式，hash 在页面 body 的 JSON 里）
 KUGOU_CHAIN = "https://m.kugou.com/share/song.html?chain=4lDUBfcG3V2"
@@ -15,6 +16,7 @@ KUGOU_CHAIN = "https://m.kugou.com/share/song.html?chain=4lDUBfcG3V2"
 QQMUSIC_SONG = "https://y.qq.com/n/ryqq/songDetail/002Qvhtb46OI7q"
 HUPU = "https://bbs.hupu.com/639669147.html"
 COOLAPK = "https://www.coolapk.com/feed/58619217"
+# 注: 该 LOFTER 帖子已删除 (404)，test_lofter 会 skip
 LOFTER = "https://www.lofter.com/post/30e8bd_1c9e1a3a0"
 DUITANG = "https://www.duitang.com/atlas/?id=12878945"
 BUFF_NEWS = "https://buff.163.com/s/news-detail_share.html?article_id=87832&comment_type=211"
@@ -44,6 +46,7 @@ async def test_netease():
     from nonebot_plugin_parser.parsers import NCMParser
 
     parser = NCMParser()
+    # 注: 歌曲 id=1945263 已下架/无版权，test_netease 会 skip；需替换为有效的免费歌曲 id
     keyword, matched = parser.search_url("https://y.music.163.com/m/song?id=1945263")
     assert matched
     try:

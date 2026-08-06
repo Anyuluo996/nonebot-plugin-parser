@@ -61,7 +61,7 @@ async def test_dynamic():
     from nonebot_plugin_parser.parsers import BilibiliParser
 
     dynamic_urls = [
-        "https://t.bilibili.com/1120105154190770281",
+        "https://t.bilibili.com/1121388026537181241",
         "https://www.bilibili.com/opus/998440765151510535",
         "https://www.bilibili.com/opus/1040093151889457152",
     ]

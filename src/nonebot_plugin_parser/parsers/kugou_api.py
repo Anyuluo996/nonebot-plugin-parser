@@ -9,8 +9,8 @@
 
 **播放地址接口的 SSA 反爬**：``gateway.kugou.com/v5/url`` 会按 TLS 指纹触发 SSA 验证
 （errcode 20028 + ssa-code 头）。Python ``httpx`` 的 TLS 指纹会被标记，因此播放地址
-请求改用 ``curl_cffi``（浏览器指纹模拟，与项目下载模块一致）发起。详情和歌词接口
-无此问题，继续用 ``parser.request``（httpx）。VIP/无版权曲目会返回空 url，据此判定不可播。
+请求走 ``parser.request_curl``（curl_cffi 浏览器指纹模拟，不可用时自动回退 httpx）。
+详情和歌词接口无此问题，继续用 ``parser.request``（httpx）。VIP/无版权曲目会返回空 url，据此判定不可播。
 """
 
 import time
@@ -19,8 +19,6 @@ import hashlib
 from typing import TYPE_CHECKING
 
 from nonebot import logger
-
-from ..config import pconfig
 
 if TYPE_CHECKING:
     from .base import BaseParser
@@ -138,67 +136,29 @@ async def get_play_url(parser: "BaseParser", song_hash: str, quality: str = "128
         "x-router": "trackercdn.kugou.com",
     }
 
-    # 优先 curl_cffi（绕过 SSA TLS 指纹检测），不可用回退 httpx
+    # request_curl: curl_cffi 绕过 SSA TLS 指纹检测，不可用时自动回退 httpx
     try:
-        from curl_cffi.requests import AsyncSession
-    except ImportError:
-        AsyncSession = None  # type: ignore[assignment]
-
-    if AsyncSession is not None:
-        import json as _json
-        import asyncio as _asyncio
-
-        # 酷狗在国内，默认不走代理（与 NGA 一致）；用户显式配置了代理才走，
-        # 避免被容器层 HTTP_PROXY/HTTPS_PROXY 环境变量错误地经代理。
-        proxy_url = pconfig.proxy
-        proxies = {"https": proxy_url, "http": proxy_url} if proxy_url else {"https": "", "http": ""}
-
-        async def _do_request():
-            async with AsyncSession(impersonate="chrome110", timeout=15, verify=False) as session:
-                return await session.get(
-                    _PLAY_URL_API,
-                    params=params,
-                    headers=headers,
-                    proxies=proxies,  # type: ignore[arg-type]
-                )
-
-        try:
-            resp = await _asyncio.wait_for(_do_request(), timeout=15)
-        except Exception as exc:
-            logger.warning(f"酷狗 get_play_url(curl_cffi) 异常: {exc!r}")
-            return None
-        if resp.headers.get("ssa-code"):
-            logger.debug(f"酷狗 play 接口(curl_cffi)命中 SSA 风控, ssa-code={resp.headers.get('ssa-code')}")
-            return None
-        if resp.status_code != 200:
-            logger.warning(f"酷狗 play 接口(curl_cffi)返回 {resp.status_code}")
-            return None
-        try:
-            data = _json.loads(resp.text)
-        except _json.JSONDecodeError:
-            logger.warning(f"酷狗 play 响应(curl_cffi)非 JSON: {resp.text[:200]!r}")
-            return None
-        if data.get("errcode") not in (None, 0, "0"):
-            logger.debug(f"酷狗 play errcode={data.get('errcode')} (VIP/无版权)")
-            return None
-        return _extract_url(data)
-
-    # 回退：httpx（大概率被 SSA 拦截）
-    try:
-        resp = await parser.request(_PLAY_URL_API, params=params, headers=headers, raise_for_status=False)
+        resp = await parser.request_curl(
+            _PLAY_URL_API,
+            params=params,
+            headers=headers,
+            timeout=15,
+            verify=False,
+        )
     except Exception as exc:
-        logger.warning(f"酷狗 get_play_url(httpx) 异常: {exc!r}")
+        logger.warning(f"酷狗 get_play_url 异常: {exc!r}")
         return None
+
     if resp.headers.get("ssa-code"):
-        logger.debug(f"酷狗 play 接口(httpx)命中 SSA 风控, ssa-code={resp.headers.get('ssa-code')}")
+        logger.debug(f"酷狗 play 接口命中 SSA 风控, ssa-code={resp.headers.get('ssa-code')}")
         return None
     if resp.status_code != 200:
-        logger.warning(f"酷狗 play 接口(httpx)返回 {resp.status_code}")
+        logger.warning(f"酷狗 play 接口返回 {resp.status_code}")
         return None
     try:
         data = resp.json()
     except Exception as exc:
-        logger.warning(f"酷狗 play 响应(httpx)非 JSON: {exc!r}")
+        logger.warning(f"酷狗 play 响应非 JSON: {resp.text[:200]!r}")
         return None
     if data.get("errcode") not in (None, 0, "0"):
         logger.debug(f"酷狗 play errcode={data.get('errcode')} (VIP/无版权)")

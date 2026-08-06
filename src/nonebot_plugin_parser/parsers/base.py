@@ -205,6 +205,74 @@ class BaseParser:
                 response.raise_for_status()
             return response
 
+    async def request_curl(
+        self,
+        url: str,
+        *,
+        headers: dict[str, str] | None = None,
+        params: Any | None = None,
+        timeout: float = 15,
+        allow_redirects: bool = True,
+        verify: bool = False,
+        raise_for_status: bool = False,
+    ):
+        """带 TLS 指纹模拟的 HTTP GET 请求（curl_cffi），不可用时回退 httpx。
+
+        收敛 NGA/酷狗等需绕反爬（SSA TLS 指纹检测）平台重复的 curl_cffi 调用样板。
+        与 ``request``（httpx）签名风格一致，返回的 response 接口兼容
+        （都有 status_code/text/headers/.json()）。
+
+        代理逻辑：``pconfig.proxy`` 有值则走代理，无值则用空字符串显式禁用
+        （避免被容器层 HTTP_PROXY/HTTPS_PROXY 环境变量误伤），与原各 parser 内联逻辑一致。
+
+        Args:
+            url: 请求地址。
+            headers: 请求头（整体覆盖实例默认 headers）。
+            params: 查询参数。
+            timeout: 超时秒数。
+            allow_redirects: 是否跟随重定向。
+            verify: 是否校验 TLS 证书。
+            raise_for_status: 是否对 >= 400 的响应抛错。
+
+        Returns:
+            curl_cffi.Response 或 httpx.Response（回退时）。
+        """
+        try:
+            from curl_cffi.requests import AsyncSession
+        except ImportError:
+            AsyncSession = None  # type: ignore[assignment]
+
+        if AsyncSession is not None:
+            client_headers = headers if headers is not None else self.headers
+            proxy_url = pconfig.proxy
+            proxies = {"https": proxy_url, "http": proxy_url} if proxy_url else {"https": "", "http": ""}
+
+            async with AsyncSession(
+                impersonate="chrome110",
+                timeout=timeout,
+                verify=verify,
+            ) as session:
+                response = await session.get(
+                    url,
+                    params=params,
+                    headers=client_headers,
+                    allow_redirects=allow_redirects,
+                    proxies=proxies,  # type: ignore[arg-type]
+                )
+                if raise_for_status and response.status_code >= 400:
+                    response.raise_for_status()
+                return response
+
+        # curl_cffi 不可用 → 回退 httpx（大概率被指纹检测拦截，保留兜底）
+        return await self.request(
+            url,
+            headers=headers,
+            params=params,
+            follow_redirects=allow_redirects,
+            raise_for_status=raise_for_status,
+            timeout=timeout,
+        )
+
     @staticmethod
     async def get_redirect_url(
         url: str,

@@ -40,6 +40,51 @@ def handle(keyword: str, pattern: str):
     return decorator
 
 
+async def _is_platform_allowed(platform_name: str) -> bool:
+    """跨 parser 路由时复用 matcher 层的群组平台禁用检查。
+
+    短链重定向可能落到管理员已关闭解析的平台（如 v.douyin.com → 汽水音乐，
+    而汽水已被该群关闭）。此时应跳过目标 parser，与用户直接发该平台链接时
+    matcher 层 ``is_platform_enabled`` 的判定保持一致，避免短链绕过关闭设定。
+
+    通过 nonebot 的 ``current_bot`` / ``current_event`` ContextVar 拿运行态上下文
+    构造 Session（仅在 matcher 运行上下文中可用）。拿不到上下文时（如测试、
+    非消息触发的调用）返回 True 放行——matcher 层缺 session 也不阻断解析。
+
+    仅检查群组级平台开关；黑名单 / Telegram 授权 / 强制解析授权等用户级检查
+    属于 matcher 职责，不在此重复。
+    """
+    try:
+        from nonebot.matcher import current_bot, current_event
+        from nonebot_plugin_uninfo import get_session
+
+        bot = current_bot.get()
+        event = current_event.get()
+    except LookupError:
+        # 不在 matcher 运行上下文（如测试直调），放行
+        return True
+
+    # get_session 会调适配器接口（如 OneBot get_group_info），可能抛 I/O 异常。
+    # 鉴权失败不应阻断解析——降级放行，与 matcher 层缺 session 行为一致。
+    try:
+        session = await get_session(bot, event)
+    except Exception:
+        from nonebot import logger
+
+        logger.debug(
+            f"_is_platform_allowed: get_session 失败, 放行 {platform_name}",
+            exc_info=True,
+        )
+        return True
+
+    if session is None:
+        return True
+
+    from ..matchers.filter import is_platform_enabled
+
+    return is_platform_enabled(session, platform_name)
+
+
 class BaseParser:
     platform: ClassVar[Platform]
     """ 平台信息（包含名称和显示名称） """
@@ -107,7 +152,16 @@ class BaseParser:
         url: str,
         headers: dict[str, str] | None = None,
     ) -> ParseResult:
-        """先重定向再解析"""
+        """先重定向再解析。
+
+        短链 (如 v.douyin.com) 重定向后的真实 URL 可能落到别的平台 (如汽水音乐
+        music.douyin.com)。若本 parser 匹配不到，遍历已注册 parser 找能匹配的
+        转发解析，实现短链跨平台路由。适用于所有短链 parser (lofter/weibo/xhs 等)。
+
+        跨 parser 路由会复用 matcher 层的群组平台禁用检查 (is_platform_enabled)，
+        避免短链重定向绕过管理员关闭某平台的设定（如关了汽水但抖音短链 redirect
+        到汽水）。黑名单 / Telegram 授权等用户级检查仍在 matcher 层，不在此重复。
+        """
         from nonebot import logger
 
         redirect_url = await self.get_redirect_url(url, headers=headers or self.headers)
@@ -116,7 +170,40 @@ class BaseParser:
             raise ParseException(f"无法重定向 URL: {url}")
 
         logger.info(f"URL 重定向: {url} -> {redirect_url}")
-        keyword, searched = self.search_url(redirect_url)
+
+        try:
+            keyword, searched = self.search_url(redirect_url)
+        except ParseException:
+            # 本 parser 匹配不到: 短链重定向到了其它平台, 尝试跨 parser 路由。
+            # 懒导入避免 parsers -> matchers 的循环导入 (matchers 顶层依赖 parsers)。
+            from ..matchers import KEYWORD_PARSER_MAP
+
+            # 按 id 去重: 一个 parser 类注册多个 keyword, map.values() 会重复出现。
+            seen: set[int] = set()
+            for parser in KEYWORD_PARSER_MAP.values():
+                if id(parser) in seen or parser is self:
+                    continue
+                seen.add(id(parser))
+                try:
+                    keyword, searched = parser.search_url(redirect_url)
+                except ParseException:
+                    continue
+                # 复用 matcher 层群组平台禁用检查，避免短链 redirect 绕过关闭设定。
+                # 拿不到 session (非 matcher 运行上下文) 时放行，与 matcher 层行为一致
+                # (matcher 层缺 session 也不阻断)。
+                if not await _is_platform_allowed(parser.platform.name):
+                    logger.info(
+                        f"跨 parser 路由: 目标平台 {parser.platform.display_name} "
+                        f"在当前会话已禁用, 跳过: {redirect_url[:80]}"
+                    )
+                    continue
+                logger.info(
+                    f"跨 parser 路由: {redirect_url[:80]} -> "
+                    f"{parser.platform.display_name}"
+                )
+                return await parser.parse(keyword, searched)
+            raise ParseException(f"无法匹配 {redirect_url}")
+
         logger.info(f"重定向 URL 匹配到: {keyword}")
         return await self.parse(keyword, searched)
 

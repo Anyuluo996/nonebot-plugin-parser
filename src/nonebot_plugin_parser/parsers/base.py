@@ -197,10 +197,7 @@ class BaseParser:
                         f"在当前会话已禁用, 跳过: {redirect_url[:80]}"
                     )
                     continue
-                logger.info(
-                    f"跨 parser 路由: {redirect_url[:80]} -> "
-                    f"{parser.platform.display_name}"
-                )
+                logger.info(f"跨 parser 路由: {redirect_url[:80]} -> {parser.platform.display_name}")
                 return await parser.parse(keyword, searched)
             raise ParseException(f"无法匹配 {redirect_url}")
 

@@ -58,9 +58,7 @@ async def test_nga_parse():
     await result.ensure_downloads_complete()
 
     # 收集所有回复楼图片, 检查下载产物是否完整
-    reply_imgs = [
-        img for post in posts for img in post["images"] if hasattr(img, "path_uri")
-    ]
+    reply_imgs = [img for post in posts for img in post["images"] if hasattr(img, "path_uri")]
     missing = [img for img in reply_imgs if img.path_uri is None]
     if missing:
         pytest.skip(

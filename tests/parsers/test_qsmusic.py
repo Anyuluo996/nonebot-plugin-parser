@@ -4,10 +4,7 @@ from nonebot import logger
 # 线上回归链接: 抖音短链 v.douyin.com/wX71xwbWuDM 重定向至此 track 页。
 # 旧版 qishui.douyin.com/s/xxx/ 格式线上已不再被 app 分享，此处仅覆盖当前
 # 实际落点 music.douyin.com/qishui/share/track?track_id=...
-TRACK_URL = (
-    "https://music.douyin.com/qishui/share/track"
-    "?track_id=7670742106552256539&from_item_id=7671065299874206569"
-)
+TRACK_URL = "https://music.douyin.com/qishui/share/track?track_id=7670742106552256539&from_item_id=7671065299874206569"
 
 # v.douyin.com 短链，验证 DouyinParser.parse_with_redirect 跨 parser 路由到汽水。
 # 会被抖音侧重定向到上面的 TRACK_URL（末尾 query 可能随时间变化，但路径稳定）。
@@ -86,13 +83,9 @@ async def test_douyin_short_link_redirect_to_qsmusic():
         pytest.skip(f"{SHORT_URL} | 链接失效或被风控，跳过: {e}")
 
     # 跨 parser 路由后，结果应来自汽水音乐平台
-    assert result.platform.name == "qsmusic", (
-        f"短链未跨 parser 路由到汽水音乐，实际平台: {result.platform.name}"
-    )
+    assert result.platform.name == "qsmusic", f"短链未跨 parser 路由到汽水音乐，实际平台: {result.platform.name}"
     assert result.audio_contents, "音频内容为空"
-    logger.success(
-        f"{SHORT_URL} | 抖音短链跨 parser 路由到汽水音乐成功: {result.title}"
-    )
+    logger.success(f"{SHORT_URL} | 抖音短链跨 parser 路由到汽水音乐成功: {result.title}")
 
 
 @pytest.mark.asyncio
@@ -127,12 +120,8 @@ async def test_cross_parser_route_respects_disabled_platform(monkeypatch):
         await parser.parse(keyword, searched)
 
     # 确认鉴权检查被调用，且针对的是汽水音乐平台
-    assert "qsmusic" in checked_platforms, (
-        "跨 parser 路由未对汽水音乐平台做鉴权检查"
-    )
-    logger.success(
-        f"{SHORT_URL} | 目标平台被禁用时正确跳过，鉴权检查覆盖平台: {checked_platforms}"
-    )
+    assert "qsmusic" in checked_platforms, "跨 parser 路由未对汽水音乐平台做鉴权检查"
+    logger.success(f"{SHORT_URL} | 目标平台被禁用时正确跳过，鉴权检查覆盖平台: {checked_platforms}")
 
 
 @pytest.mark.asyncio
@@ -196,6 +185,3 @@ async def test_is_platform_allowed_with_session_and_disabled(monkeypatch):
     finally:
         current_bot.reset(token_bot)
         current_event.reset(token_event)
-
-
-

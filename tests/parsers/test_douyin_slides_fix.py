@@ -425,8 +425,11 @@ async def test_create_dynamic_contents_merges_bgm(monkeypatch):
     from nonebot_plugin_parser.parsers.base import BaseParser
 
     # 用最小桩继承 BaseParser (其 __init__ 需要 COMMON_HEADER 等常量)
+    # _abstract_parser=True 跳过 __init_subclass__ 的全局注册, 避免 _StubParser
+    # 污染 BaseParser._registry 导致后续 register_parser_matcher() 访问
+    # 不存在的 platform 属性而 AttributeError (测试隔离: 桩不应被当真实平台注册)
     class _StubParser(BaseParser):
-        pass
+        _abstract_parser = True
 
     parser = _StubParser()
 

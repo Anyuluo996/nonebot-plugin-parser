@@ -1,9 +1,13 @@
 """汽水音乐解析器。
 
-> ⚠️ 实验性：未实测成功，独立实现未接入 Meting，可能受分享页结构变更影响。
-
 适配自 parser-lite 的 qsmusic，解析字节系汽水音乐分享链接。
 从分享页 _ROUTER_DATA 提取歌曲资源与歌词。
+
+支持两种分享链接格式：
+- ``qishui.douyin.com/s/xxx/``  旧版短链（app 内分享）
+- ``music.douyin.com/qishui/share/track?track_id=...``  新版 track 页
+  （抖音短链 ``v.douyin.com/xxx`` 重定向后常见的落点，两种页面结构一致，
+  均走 ``loaderData.track_page.audioWithLyricsOption``）
 """
 
 import re
@@ -24,6 +28,12 @@ class QSMusicParser(BaseParser):
     @handle(
         "qishui.douyin.com",
         r"https?://[^\s]*?qishui\.douyin\.com/s/[a-zA-Z0-9]+/",
+    )
+    @handle(
+        "music.douyin.com",
+        # 只锚定到 track_id（页面唯一有效参数），不捕获后续 &from_item_id 等统计参数，
+        # 避免尾部标点/空白污染 group(0) 作为 share_url 请求。
+        r"https?://music\.douyin\.com/qishui/share/track\?track_id=\d+",
     )
     async def _parse_qsmusic_share(self, searched: re.Match[str]):
         share_url = searched.group(0)

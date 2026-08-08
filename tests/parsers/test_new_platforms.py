@@ -21,6 +21,12 @@ LOFTER = "https://www.lofter.com/post/30e8bd_1c9e1a3a0"
 DUITANG = "https://www.duitang.com/atlas/?id=12878945"
 BUFF_NEWS = "https://buff.163.com/s/news-detail_share.html?article_id=87832&comment_type=211"
 HEYBOX = "https://www.xiaoheihe.cn/app/bbs/link/abc123"
+# 小黑盒 QQ 分享卡片 jumpUrl：api.xiaoheihe.cn/v3/bbs/app/api/web/share?...&link_id=xxx
+# keyword 子串门要求 keyword 是 URL 子串，否则 regex 不参与匹配（见 rule.py KeywordRegexRule）
+HEYBOX_SHARE = (
+    "https://api.xiaoheihe.cn/v3/bbs/app/api/web/share"
+    "?h_camp=link&h_session_id=AH5mHiiMSRm6yiTt&h_src=YXBwX3NoYXJl&link_id=9a05724436e0"
+)
 ILLU_DRAWING = "https://illund.com/share.html?al=mindlib%3A%2F%2Freactbox%2F%3Fmainid%3Dfcecc2da36"
 TIEBA = "https://tieba.baidu.com/p/9502327656"
 
@@ -234,6 +240,41 @@ async def test_heybox():
     except Exception as e:
         pytest.skip(f"小黑盒解析失败，跳过: {e!r}")
     assert result.title, "应提取标题"
+
+
+def test_heybox_share_card_url_matches():
+    """离线: 小黑盒 QQ 分享卡片 jumpUrl 应能被 search_url 匹配。
+
+    卡片 jumpUrl 是 api.xiaoheihe.cn/v3/bbs/app/api/web/share?...&link_id=xxx,
+    与标准 app/bbs/link/{id} 格式不同。原 keyword (xiaoheihe.cn/app/bbs、
+    xiaoheihe.cn/bbs/post_share) 都不是该 URL 子串, keyword 子串门 (rule.py
+    KeywordRegexRule) 在 regex 之前就跳过, 导致 link_id 无法提取、静默不解析。
+    纯单元测试 (只测 search_url, 不触发网络请求)。
+    """
+    from nonebot_plugin_parser.parsers import HeyBoxParser
+
+    parser = HeyBoxParser()
+    _, matched = parser.search_url(HEYBOX_SHARE)
+    assert matched, "小黑盒分享卡片 web/share URL 应被匹配"
+    assert matched.group("link_id") == "9a05724436e0", "应从 link_id= 提取帖子 id"
+
+
+def test_heybox_long_url_not_regression_after_share_handler():
+    """回归: 加 web/share 卡片 handler 后, 标准 app/bbs/link 长链仍正确路由。
+
+    三者 keyword 互斥: web/share 路径不含 app/bbs 或 bbs/post_share 子串,
+    app/bbs/link 路径不含 web/share 子串, 不会互相误匹配。
+    """
+    from nonebot_plugin_parser.parsers import HeyBoxParser
+
+    parser = HeyBoxParser()
+    # 标准长链仍正常匹配
+    _, matched = parser.search_url(HEYBOX)
+    assert matched, "标准 app/bbs/link URL 不应因 share handler 回归"
+    assert matched.group("link_id") == "abc123"
+    # 卡片 URL 走 web/share handler 而非 app/bbs handler
+    keyword_card, _ = parser.search_url(HEYBOX_SHARE)
+    assert keyword_card == "xiaoheihe.cn/v3/bbs/app/api/web/share", "卡片 URL 应走 web/share handler"
 
 
 @pytest.mark.asyncio

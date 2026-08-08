@@ -101,6 +101,7 @@ class HeyBoxParser(BaseParser):
 
     @handle("xiaoheihe.cn/app/bbs", r"link\/(?P<link_id>[A-Za-z0-9]+)")
     @handle("xiaoheihe.cn/bbs/post_share", r"link_id=(?P<link_id>[A-Za-z0-9]+)")
+    @handle("xiaoheihe.cn/v3/bbs/app/api/web/share", r"link_id=(?P<link_id>[A-Za-z0-9]+)")
     async def _parse(self, searched: re.Match[str]):
         link_id = searched.group("link_id")
 

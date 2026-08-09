@@ -144,12 +144,55 @@
 3. Diagnostics 检查
    - 相关源码与测试文件应无 IDE 报错
 
-如改动涉及风格、导入、静态类型或 CI 相关问题，追加执行：
+推荐直接用「本地 CI 流程」（见下）一键覆盖，避免遗漏 ruff/format/类型检查导致推送后 CI 红。
 
-1. `uv run ruff check <相关路径>`
-2. 必要时执行 `uvx basedpyright`
+### 6. 本地 CI 流程
 
-### 6. CI 对齐要求
+CI（`.github/workflows/ci.yml`）共 6 个 job，其中 3 个（Prek / Typos / BasedPyright）是历史 CI 红的高频原因。推送前在本地复刻这些检查可大幅减少往返。
+
+#### 6.1 一次性环境准备
+
+```bash
+# uv 已是项目入口（pyproject.toml 声明），prek / poe 随 .venv 装入
+uv sync
+
+# prek —— pre-commit 的快速实现，跑 ruff-check/ruff-format/uv-lock/uv-sync
+uv tool install prek
+
+# typos —— 拼写检查，预编译二进制（Windows 放 scoop shims，或走 cargo/scoop）
+#   二进制方式（推荐，免编译）:
+curl -sL -o /tmp/typos.zip "https://github.com/crate-ci/typos/releases/latest/download/typos-v1.49.0-x86_64-pc-windows-msvc.zip"
+pwsh -c "Expand-Archive /tmp/typos.zip ~/scoop/shims -Force"
+#   或: scoop install typos / cargo install typos-cli
+
+# basedpyright —— 类型检查，走 npm（CI 同样用 npm 装）
+npm install -g basedpyright
+```
+
+> prek 装在 `~/.local/bin`，typos 装在 `~/scoop/shims`，二者可能不在默认 PATH（bash）。下方脚本已做动态定位，pwsh profile 通常已加这两个路径。
+
+#### 6.2 一键脚本
+
+仓库自带 `scripts/ci-local.sh`（不入库，`scripts/` 已 gitignore），动态定位工具并复刻 CI 检查：
+
+```bash
+scripts/ci-local.sh            # 全量: Prek + Typos + BasedPyright + test-other (+parsers/renders)
+scripts/ci-local.sh --lint     # 仅静态检查: Prek + Typos + BasedPyright（最快，日常推荐）
+scripts/ci-local.sh --fast     # Prek + BasedPyright + test-other（跳过 parsers/renders）
+```
+
+脚本对应关系（CI job → 本地命令）：
+
+| CI Job | 本地命令 | 覆盖度 |
+|---|---|---|
+| Prek | `prek run --all-files` | ✅ 完整（ruff-check/format/uv-lock/uv-sync） |
+| Typos | `typos` | ✅ 完整 |
+| BasedPyright | `npx basedpyright` | ✅ 完整 |
+| Test | `uv run poe test-other` | ✅ 完整 |
+| Test Parsers | `uv run poe test-parser` | ⚠️ 需 ffmpeg + deno（deno 缺则个别跳过） |
+| Test Render | `uv run poe test-render` | ⚠️ 需 playwright chromium（首次 `uv run playwright install chromium-headless-shell`） |
+
+#### 6.3 CI 对齐要求
 
 1. 本地验证应尽量与 CI 保持一致，不引入"本地能过、CI 必挂"的改动。
 2. 已知 CI 关注项包括：
@@ -160,6 +203,7 @@
    - `pytest tests/parsers`（需 FFmpeg + Deno）
    - `pytest tests/renders`（需 Playwright chromium）
 3. 修改 `src/`、`tests/`、`.github/`、`uv.lock`、`pyproject.toml` 时，要默认会影响 CI。
+4. 特别注意：`basedpyright` 会做 `reportPossiblyUnbound` 等严格检查，`except` 分支引用的变量必须在 `try` 之前初始化（不能只依赖"逻辑上不会走到"）。
 
 ## Git 协作规范
 

@@ -19,6 +19,7 @@
 """
 
 import re
+import asyncio
 from copy import deepcopy
 from typing import TypeVar
 
@@ -199,9 +200,33 @@ async def parser_handler(
         cache_key = sr.searched.group(0)
         result = _get_cached_result(cache_key)
 
+        # 标记本次解析是否因顶层超时失败（由下方 wait_for 置位），
+        # 用于 except 分支区分超时与普通异常——比 isinstance(e, TimeoutError) 更精确，
+        # 避免误判 parser 内部自行用 asyncio.timeout 抛出的 TimeoutError。
+        timed_out = False
+
         if result is None:
             # 5. 执行解析
-            result = await parser.parse(sr.keyword, sr.searched)
+            # 加顶层超时兜底，防止某 parser 网络请求静默挂起导致主流程无限 await
+            # （如 curl_cffi 静默忽略 httpx.Timeout）。超时走 except 分支：打 WARNING
+            # 日志 + record_failure + fail 表情，从而可被 L2 后台重试救援。
+            # Telegram 豁免：其解析阶段需同步下载媒体，tdl 自身 timeout=600s 兜底。
+            # NOTE: 超时取消 parse 不会取消 parser 已 create_task 的惰性下载 task
+            # （抖音/B站等视频/图片下载在 render 阶段才 await），它们会变孤儿继续
+            # 跑完——不会数据损坏（下载在 tempdir/aiofiles async with 内，取消触发
+            # __aexit__ 清理），代价是浪费并发槽与带宽，属可接受的短期取舍。
+            # NOTE: 真正挂起的 parser 记进 failure_store 后，L2 重试（_PER_RETRY_TIMEOUT=60s
+            # < 本阈值）大概率同样挂起——L2 是尽力而为，最坏消耗 retry 次数后标记 reported，
+            # 不会无限重试。若未来要让 L2 跳过超时记录，可在 record_failure 加 is_timeout 标记。
+            timeout = pconfig.parse_timeout
+            try:
+                if timeout > 0 and parser.platform.name != "telegram":
+                    result = await asyncio.wait_for(parser.parse(sr.keyword, sr.searched), timeout=timeout)
+                else:
+                    result = await parser.parse(sr.keyword, sr.searched)
+            except asyncio.TimeoutError:
+                timed_out = True
+                raise
         else:
             logger.debug(f"命中缓存: {cache_key[:80]}")
 
@@ -228,13 +253,22 @@ async def parser_handler(
         except Exception:
             pass
     except Exception as e:
-        # 解析失败：打 ERROR 日志（原仅存 failure_store，日志层完全不可见）
-        logger.exception(f"解析失败 [{parser.platform.display_name}]: {sr.searched.group(0)[:80]}")
+        # 解析失败：记录到日志层（原仅存 failure_store，日志层完全不可见）
+        if timed_out:
+            # 超时用 WARNING + 无堆栈（wait_for 取消的堆栈无排查价值），文案可读
+            error_msg = f"解析超时（>{pconfig.parse_timeout}s）"
+            logger.warning(
+                f"解析超时 [{parser.platform.display_name}]: {sr.searched.group(0)[:80]} (>{pconfig.parse_timeout}s)"
+            )
+        else:
+            # 普通异常用 ERROR + 完整堆栈
+            error_msg = f"{type(e).__name__}: {e!s}"
+            logger.exception(f"解析失败 [{parser.platform.display_name}]: {sr.searched.group(0)[:80]}")
         # 记录解析失败到本地（供维护者排查，不影响主流程）
         record_failure(
             url=sr.searched.group(0),
             platform=parser.platform.name,
-            error=f"{type(e).__name__}: {e!s}",
+            error=error_msg,
         )
         # 发生错误，添加"失败"表情
         try:

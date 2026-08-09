@@ -167,3 +167,13 @@ coverage*.xml
 
 # 内部实现总结文档（不随仓库发布）
 docs/tdl-login-implementation.md
+
+# ZCode 工具本地工作区（plans/tmp 等）
+.zcode/
+
+# 本地调试脚本（网易云扫码测试、B站 CDN 实测等，不随项目发布）
+scripts/
+
+# 本地 issue 分析草稿（同目录另有入库的分析文档）
+docs/issues/REPLY_FORCE_PARSE_AND_CARD_SUPPORT.md
+docs/issues/TelegramChatExportSlowScan.md

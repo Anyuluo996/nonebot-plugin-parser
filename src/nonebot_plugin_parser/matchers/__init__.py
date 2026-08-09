@@ -195,15 +195,16 @@ async def parser_handler(
     except Exception:
         pass  # 如果不支持表情，忽略错误
 
+    # 标记本次解析是否因顶层超时失败（由下方 wait_for 置位），
+    # 用于 except 分支区分超时与普通异常——比 isinstance(e, TimeoutError) 更精确，
+    # 避免误判 parser 内部自行用 asyncio.timeout 抛出的 TimeoutError。
+    # 声明在 try 之外：若 try 早期（如缓存读取）抛异常，except 分支引用它仍安全已绑定。
+    timed_out = False
+
     try:
         # 4. 获取缓存结果
         cache_key = sr.searched.group(0)
         result = _get_cached_result(cache_key)
-
-        # 标记本次解析是否因顶层超时失败（由下方 wait_for 置位），
-        # 用于 except 分支区分超时与普通异常——比 isinstance(e, TimeoutError) 更精确，
-        # 避免误判 parser 内部自行用 asyncio.timeout 抛出的 TimeoutError。
-        timed_out = False
 
         if result is None:
             # 5. 执行解析

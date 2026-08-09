@@ -87,6 +87,13 @@ class Config(BaseModel):
     实际下载重试仍按 download_file 的超时与 backup_urls 轮换进行，本阈值仅控制
     "封面先发" 的触发时机。设为 0 可禁用此行为（恢复等视频下完一起发的旧行为）。
     """
+    parser_parse_timeout: int = 90
+    """解析顶层超时（秒）。解析超时后记录失败并打 warning 日志，不再无限挂起。
+
+    仅作用于解析（元数据抓取）阶段，不影响后续渲染/视频下载（那两层各有自身超时）。
+    Telegram 平台豁免（其解析阶段需同步下载媒体，tdl 自身 timeout=600s 兜底）。
+    设为 0 可禁用此行为（恢复不限时等待的旧行为）。
+    """
     parser_append_url: bool = False
     """是否在解析结果中附加原始URL"""
     parser_disabled_platforms: list[PlatformEnum] = Field(default_factory=list)
@@ -206,6 +213,11 @@ class Config(BaseModel):
     def video_send_timeout(self) -> int:
         """视频下载首包等待阈值（秒），超时先发封面"""
         return self.parser_video_send_timeout
+
+    @property
+    def parse_timeout(self) -> int:
+        """解析顶层超时（秒），超时记录失败不再挂起"""
+        return self.parser_parse_timeout
 
     @property
     def disabled_platforms(self) -> list[PlatformEnum]:

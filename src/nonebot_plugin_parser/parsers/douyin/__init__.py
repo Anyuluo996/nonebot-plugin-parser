@@ -59,6 +59,12 @@ _PC_WEB_COMMON_PARAMS: dict[str, str] = {
 class DouyinParser(BaseParser):
     platform: ClassVar[Platform] = Platform(name=PlatformEnum.DOUYIN, display_name="抖音")
 
+    def __init__(self):
+        super().__init__()
+        # 抖音 douyinvod 视频直链 (PC detail API 的 play_addr) 需 Referer 防盗链校验,
+        # 缺失则 403; COMMON_HEADER 全局通用仅含 UA, 在此给本 parser 下载头补上。
+        self.headers["Referer"] = "https://www.douyin.com/"
+
     # https://v.douyin.com/_2ljF4AmKL8
     @handle("v.douyin", r"v\.douyin\.com/[a-zA-Z0-9_\-]+")
     @handle("jx.douyin", r"jx\.douyin\.com/[a-zA-Z0-9_\-]+")

@@ -726,3 +726,30 @@ async def test_douyin_parser_download_headers_have_referer():
     assert parser.headers.get("Referer") == "https://www.douyin.com/", (
         "DouyinParser 下载头缺 Referer, douyinvod 直链会 403"
     )
+
+
+@pytest.mark.asyncio
+async def test_detail_api_http_error_converted_to_parse_exception(monkeypatch):
+    """detail API 偶发 403 风控/超时 (httpx.HTTPError) 应转 ParseException 走 fallback,
+    而非 HTTPStatusError 直穿成 ERROR + traceback。
+
+    回归: parse_slides 的 request 默认 raise_for_status=True, 403 抛 HTTPStatusError;
+    修复前未被 except (ParseException, ValueError) 捕获 → traceback; 修复后 parse_slides
+    主动捕获 httpx.HTTPError 转 ParseException, 上层 _parse_douyin fallback 生效。
+    """
+    import httpx
+
+    from nonebot_plugin_parser.parsers import DouyinParser
+    from nonebot_plugin_parser.exception import ParseException
+
+    parser = DouyinParser()
+    req = httpx.Request("GET", "https://www.douyin.com/aweme/v1/web/aweme/detail/")
+    resp = httpx.Response(403, request=req)
+
+    async def _fake_request(*args, **kwargs):
+        raise httpx.HTTPStatusError("403 Forbidden", request=req, response=resp)
+
+    monkeypatch.setattr(parser, "request", _fake_request)
+
+    with pytest.raises(ParseException, match="detail API request failed"):
+        await parser.parse_slides(NORMAL_VIDEO_VID)

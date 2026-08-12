@@ -208,7 +208,15 @@ class DouyinParser(BaseParser):
         }
         a_bogus = quote(_ABOGUS.get_value(params), safe="")
         params["a_bogus"] = a_bogus
-        response = await self.request(detail_url, headers=headers, params=params)
+        # detail API 偶发 403 风控/限流或网络超时 (httpx.HTTPError), 转 ParseException
+        # 让上层 _parse_douyin 的 fallback 生效 (WARNING 级), 而非 HTTPStatusError 直穿成
+        # ERROR + traceback。分享页改版后 fallback 也失败, 但日志干净且重试机制照常兜底。
+        import httpx
+
+        try:
+            response = await self.request(detail_url, headers=headers, params=params)
+        except httpx.HTTPError as e:
+            raise ParseException(f"douyin detail API request failed for {video_id}: {e}") from e
 
         # 空 body 防御: 抖音风控下 detail 接口常返回 200 + content-length: 0,
         # 此时 msgspec 解码会抛 DecodeError(继承 ValueError), 这里主动转成

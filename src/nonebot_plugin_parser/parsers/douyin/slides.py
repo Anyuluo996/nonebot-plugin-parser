@@ -47,12 +47,22 @@ class Music(Struct):
 
 
 class SlidesData(Struct):
-    """抖音图文/实况照片(slides)单条数据 (旧 isPicture=false 格式)"""
+    """抖音图文/实况照片/普通视频单条数据 (旧 isPicture=false 格式)
+
+    普通视频自抖音 2026-08 改版起改由 PC detail API 提供 (m/iesdouyin 分享页
+    _ROUTER_DATA 不再含 videoInfoRes, parse_video 兜底失效), 故 SlidesData 也
+    承载普通视频: 此时 images 为空, 顶层 video 含 play_addr/cover/duration,
+    由 parse_slides 统一输出。
+    """
 
     author: Author
     desc: str
     create_time: int
-    images: list[Image]
+    # 纯视频的 aweme_detail.images 为 null (实测 key 存在但值 None, 非缺失),
+    # 故类型用 Optional 容忍 None; 图文/实况仍由 API 填充为 list,
+    # 访问点统一 None-safe (见 image_urls / dynamic_urls / dynamic_cover_urls)。
+    images: list[Image] | None = None
+    video: Video | None = None
     music: Music | None = None
     """背景音乐; 实况照片视频轨本身静音, 需取 BGM 后用 ffmpeg 合并"""
 
@@ -74,7 +84,7 @@ class SlidesData(Struct):
     @property
     def image_urls(self) -> list[str]:
         # 跳过带 video 的图片(实况照片), 它们由 dynamic_urls 作为视频单独输出
-        return [choice(img.url_list) for img in self.images if not img.video]
+        return [choice(img.url_list) for img in (self.images or []) if not img.video]
 
     @property
     def dynamic_urls(self) -> list[str]:
@@ -87,7 +97,7 @@ class SlidesData(Struct):
         CDN 镜像 (douyinvod.com) 偶发 403/404, play API 更稳定。
         """
         urls = []
-        for img in self.images:
+        for img in self.images or []:
             if not img.video:
                 continue
             urls.append(self._prefer_play_api(img.video.play_addr.url_list))
@@ -105,7 +115,7 @@ class SlidesData(Struct):
     def dynamic_cover_urls(self) -> list[str]:
         """实况照片视频对应的封面 URL"""
         covers = []
-        for img in self.images:
+        for img in self.images or []:
             if not img.video:
                 continue
             if img.video.cover:
@@ -118,6 +128,29 @@ class SlidesData(Struct):
     def create_time_seconds(self) -> int:
         """PC detail 接口旧格式 createTime 已是秒, 直接返回。"""
         return self.create_time
+
+    # --- 普通视频相关 property (images 为空、video 存在时使用) ---
+    # video.py 的 Video 结构 (play_addr/cover/duration) 与 detail API 的
+    # aweme_detail.video 字段同名同构, 直接复用; 去水印逻辑 (playwm→play)
+    # 对齐 video.py parse_video, 保证新旧链路输出一致。
+    @property
+    def video_url(self) -> str | None:
+        """普通 mp4 视频直链; 对齐 video.py parse_video 去水印 (playwm→play)。"""
+        if not self.video:
+            return None
+        return choice(self.video.play_addr.url_list).replace("playwm", "play")
+
+    @property
+    def cover_url(self) -> str | None:
+        """普通视频封面, 取自 video.cover (实况照片封面另见 dynamic_cover_urls)。"""
+        if self.video and self.video.cover:
+            return choice(self.video.cover.url_list)
+        return None
+
+    @property
+    def duration_ms(self) -> int:
+        """视频时长 (毫秒), 对齐 create_video_content 期望的 ms 单位。"""
+        return self.video.duration if self.video else 0
 
 
 # === 新格式: isPicture=true 的 picture 类型图文 ===
@@ -237,6 +270,21 @@ class PictureSlidesData(Struct):
                 br = p.video_bit_rate_list[0]
                 covers.append(br.cover or p.url)
         return covers
+
+    # --- 普通视频相关 property: picture 类型不含普通 mp4, 对齐 SlidesData 接口 ---
+    # decode_aweme_detail 返回 SlidesData | PictureSlidesData union, parse_slides
+    # 统一调用 video_url 等需两端都定义, 否则 basedpyright 报 attribute 缺失。
+    @property
+    def video_url(self) -> str | None:
+        return None
+
+    @property
+    def cover_url(self) -> str | None:
+        return None
+
+    @property
+    def duration_ms(self) -> int:
+        return 0
 
 
 # === 顶层响应结构 + 智能 dispatch ===

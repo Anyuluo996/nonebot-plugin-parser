@@ -180,12 +180,19 @@ async def test_note_empty_body_falls_back_to_parse_video(monkeypatch):
 
     修复前: msgspec.DecodeError 未被 note 的 ``except ParseException`` 捕获,
     直接 traceback; 修复后: 空 body 主动转 ParseException, note fallback 生效。
+
+    注: 抖音 2026-08 改版后 m/iesdouyin 分享页 _ROUTER_DATA 不再含 videoInfoRes,
+    真实分享页无法提供数据; 本测试改为 mock 分享页返回有效 _ROUTER_DATA,
+    专注验证 "detail 空 body → fallback parse_video" 的回退逻辑本身,
+    不依赖外部网站可用性。
     """
+    import json as _json
+
     from nonebot_plugin_parser.parsers import DouyinParser
 
     parser = DouyinParser()
 
-    # 仅对 PC detail 接口返回空 body (模拟抖音风控); 其它请求(分享页兜底)走真实网络
+    # PC detail 接口返回空 body (模拟抖音风控)
     class _EmptyResp:
         def __init__(self) -> None:
             self.status_code = 200
@@ -197,22 +204,64 @@ async def test_note_empty_body_falls_back_to_parse_video(monkeypatch):
         def url(self):
             return "https://www.douyin.com/aweme/v1/web/aweme/detail/"
 
-    _real_request = parser.request
+    # 分享页兜底返回有效 _ROUTER_DATA (含 images, 模拟改版前的分享页结构)
+    _router_data = _json.dumps(
+        {
+            "loaderData": {
+                "video_(id)/page": {
+                    "videoInfoRes": {
+                        "item_list": [
+                            {
+                                "create_time": 1700000000,
+                                "author": {
+                                    "nickname": "fallback-author",
+                                    "avatar_thumb": {"url_list": ["https://example.com/avatar.jpg"]},
+                                },
+                                "desc": "fallback note (分享页 _ROUTER_DATA)",
+                                "images": [{"url_list": ["https://example.com/img1.jpg"]}],
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    )
+
+    class _RouterDataResp:
+        def __init__(self) -> None:
+            self.status_code = 200
+            self.text = f"<script>window._ROUTER_DATA = {_router_data}</script>"
+            self.content = self.text.encode("utf-8")
+            self.headers = {"content-type": "text/html"}
+
+        @property
+        def url(self):
+            return "https://www.iesdouyin.com/share/note/"
 
     async def _fake_request(url, *args, **kwargs):
         if "aweme/v1/web/aweme/detail" in str(url):
             return _EmptyResp()
-        return await _real_request(url, *args, **kwargs)
+        if "share/note" in str(url) or "share/video" in str(url):
+            return _RouterDataResp()
+        raise RuntimeError(f"unexpected URL: {url}")
+
+    # mock 下载层: parse_video 的 create_image_contents 会调度 download_img
+    async def _coro(*args, **kwargs):
+        return __import__("pathlib").Path("/fake/img")
+
+    def _stub_dl(*args, **kwargs):
+        return asyncio.create_task(_coro(*args, **kwargs))
 
     monkeypatch.setattr(parser, "request", _fake_request)
+    monkeypatch.setattr(parser.downloader, "download_img", _stub_dl)
 
-    # note 类型: PC detail 失败应 fallback 到 parse_video (真实网络)
+    # note 类型: PC detail 失败应 fallback 到 parse_video (mock 分享页)
     keyword, searched = parser.search_url(f"https://www.iesdouyin.com/share/note/{LIVE_NOTE_VID}")
     assert searched, "note URL 未匹配"
     result = await parser.parse(keyword, searched)
 
-    # 即使实况照片视频因风控丢失, 也应返回标题 + 至少一些内容, 而非 traceback
-    assert result.title, "fallback 后标题不应为空"
+    # fallback 到 parse_video 后应返回标题 + 至少一些内容 (images 静态图)
+    assert result.title == "fallback note (分享页 _ROUTER_DATA)"
     assert result.contents, "fallback 后应至少返回静态图内容"
 
 
@@ -240,54 +289,90 @@ _PICTURE_NOTE_PAYLOAD = {
         },
         "pictureList": [
             {
-                "width": 540, "height": 542,
+                "width": 540,
+                "height": 542,
                 "url": "https://p3-pc-sign.douyinpic.com/img1",
-                "videoBitRateList": [{
-                    "cover": "https://p3-pc-sign.douyinpic.com/cov1",
-                    "bitRate": 637347, "dataSize": 488288, "format": "mp4",
-                    "isH265": 0, "fps": 30, "gearName": "normal_540_0", "qualityType": 20,
-                    "width": 540, "height": 542,
-                    "url": "https://www.douyin.com/aweme/v1/play/?file_id=f1",
-                    "backUrl": []
-                }]
+                "videoBitRateList": [
+                    {
+                        "cover": "https://p3-pc-sign.douyinpic.com/cov1",
+                        "bitRate": 637347,
+                        "dataSize": 488288,
+                        "format": "mp4",
+                        "isH265": 0,
+                        "fps": 30,
+                        "gearName": "normal_540_0",
+                        "qualityType": 20,
+                        "width": 540,
+                        "height": 542,
+                        "url": "https://www.douyin.com/aweme/v1/play/?file_id=f1",
+                        "backUrl": [],
+                    }
+                ],
             },
             {
-                "width": 1008, "height": 660,
+                "width": 1008,
+                "height": 660,
                 "url": "https://p3-pc-sign.douyinpic.com/img2",
-                "videoBitRateList": [{
-                    "cover": "https://p3-pc-sign.douyinpic.com/cov2",
-                    "bitRate": 1013317, "dataSize": 405707, "format": "mp4",
-                    "isH265": 0, "fps": 30, "gearName": "normal_540_0", "qualityType": 20,
-                    "width": 880, "height": 576,
-                    "url": "https://www.douyin.com/aweme/v1/play/?file_id=f2",
-                    "backUrl": []
-                }]
+                "videoBitRateList": [
+                    {
+                        "cover": "https://p3-pc-sign.douyinpic.com/cov2",
+                        "bitRate": 1013317,
+                        "dataSize": 405707,
+                        "format": "mp4",
+                        "isH265": 0,
+                        "fps": 30,
+                        "gearName": "normal_540_0",
+                        "qualityType": 20,
+                        "width": 880,
+                        "height": 576,
+                        "url": "https://www.douyin.com/aweme/v1/play/?file_id=f2",
+                        "backUrl": [],
+                    }
+                ],
             },
             {
-                "width": 2560, "height": 1600,
+                "width": 2560,
+                "height": 1600,
                 "url": "https://p3-pc-sign.douyinpic.com/img3",
-                "videoBitRateList": [{
-                    "cover": "https://p3-pc-sign.douyinpic.com/cov3",
-                    "bitRate": 641916, "dataSize": 2118324, "format": "mp4",
-                    "isH265": 0, "fps": 30, "gearName": "normal_720_0", "qualityType": 10,
-                    "width": 1152, "height": 720,
-                    "url": "https://www.douyin.com/aweme/v1/play/?file_id=f3",
-                    "backUrl": []
-                }]
+                "videoBitRateList": [
+                    {
+                        "cover": "https://p3-pc-sign.douyinpic.com/cov3",
+                        "bitRate": 641916,
+                        "dataSize": 2118324,
+                        "format": "mp4",
+                        "isH265": 0,
+                        "fps": 30,
+                        "gearName": "normal_720_0",
+                        "qualityType": 10,
+                        "width": 1152,
+                        "height": 720,
+                        "url": "https://www.douyin.com/aweme/v1/play/?file_id=f3",
+                        "backUrl": [],
+                    }
+                ],
             },
             {
-                "width": 2560, "height": 1600,
+                "width": 2560,
+                "height": 1600,
                 "url": "https://p3-pc-sign.douyinpic.com/img4",
-                "videoBitRateList": [{
-                    "cover": "https://p9-pc-sign.douyinpic.com/cov4",
-                    "bitRate": 1347295, "dataSize": 1235133, "format": "mp4",
-                    "isH265": 0, "fps": 30, "gearName": "normal_720_0", "qualityType": 10,
-                    "width": 1152, "height": 720,
-                    "url": "https://www.douyin.com/aweme/v1/play/?file_id=f4",
-                    "backUrl": []
-                }]
-            }
-        ]
+                "videoBitRateList": [
+                    {
+                        "cover": "https://p9-pc-sign.douyinpic.com/cov4",
+                        "bitRate": 1347295,
+                        "dataSize": 1235133,
+                        "format": "mp4",
+                        "isH265": 0,
+                        "fps": 30,
+                        "gearName": "normal_720_0",
+                        "qualityType": 10,
+                        "width": 1152,
+                        "height": 720,
+                        "url": "https://www.douyin.com/aweme/v1/play/?file_id=f4",
+                        "backUrl": [],
+                    }
+                ],
+            },
+        ],
     }
 }
 
@@ -348,12 +433,8 @@ async def test_picture_note_decodes_picture_list(monkeypatch):
     result = await parser.parse_slides(PICTURE_NOTE_VID)
 
     # 核心断言: 4 张图全是 live photo, 应输出 4 段 dynamic + 0 张静态图
-    assert result.img_contents == [], (
-        f"全是 live photo, 静态图应为 0, 实际 {len(result.img_contents)}"
-    )
-    assert len(result.dynamic_contents) == 4, (
-        f"应有 4 段 live photo 视频, 实际 {len(result.dynamic_contents)}"
-    )
+    assert result.img_contents == [], f"全是 live photo, 静态图应为 0, 实际 {len(result.img_contents)}"
+    assert len(result.dynamic_contents) == 4, f"应有 4 段 live photo 视频, 实际 {len(result.dynamic_contents)}"
 
     # 断言: 每段 dynamic 都带封面 (live video 的独立 cover, 来自 videoBitRateList[0].cover)
     for i, cont in enumerate(result.dynamic_contents):
@@ -376,12 +457,9 @@ async def test_picture_note_decodes_bgm_url(monkeypatch):
     修复前 slides.py 未解析 music 字段, bgm_url 恒为 None, 合并逻辑无法触发。
     """
     import json as _json
-    from typing import ClassVar
 
-    from nonebot_plugin_parser.parsers import DouyinParser
     from nonebot_plugin_parser.parsers.douyin import slides
 
-    parser = DouyinParser()
     raw = _json.dumps(_PICTURE_NOTE_PAYLOAD).encode("utf-8")
 
     aweme_detail = slides.decode_aweme_detail(raw)
@@ -482,3 +560,153 @@ async def test_create_dynamic_contents_merges_bgm(monkeypatch):
     )
     await asyncio.gather(*[c.get_path() for c in contents2])
     assert len(merge_called) == 0, "bgm_url=None 时不应调度 _merge_bgm"
+
+
+# === 回归5: 普通视频改由 PC detail API 解析 (2026-08 抖音改版) ===
+# 改版后 m/iesdouyin 分享页 _ROUTER_DATA 不再含 videoInfoRes, parse_video 兜底
+# 全线失效; 普通视频改走 parse_slides (detail API), 由 SlidesData 新增的 video
+# 字段输出 VideoContent。
+NORMAL_VIDEO_VID = "7672751899556311734"
+
+# 真实 PC detail 响应结构 (容器内对 NORMAL_VIDEO_VID 实测):
+#   - create_time 为 snake_case 秒 (旧格式, 非 camelCase createTime)
+#   - images 为 null (纯视频: key 存在但值 None, 非 key 缺失)
+#   - 顶层 video 含 play_addr/cover/duration
+_NORMAL_VIDEO_PAYLOAD = {
+    "aweme_detail": {
+        "desc": "#福建话 #福建方言 #闽南语 #方言趣味分享 #福建人",
+        "create_time": 1786451763,  # 秒 (旧格式 snake_case)
+        "author": {
+            "nickname": "吴影默",
+            "avatar_thumb": {"url_list": ["https://p3.douyinpic.com/aweme/100x100/avatar.jpg"]},
+        },
+        "images": None,  # 纯视频: key 存在但值 null (实测, 非 key 缺失)
+        "video": {
+            "play_addr": {
+                # playwm 水印直链, 验证 video_url 的 playwm→play 去水印
+                "url_list": ["https://v11-weba.douyinvod.com/video/tos/playwm/normal.mp4"]
+            },
+            "cover": {"url_list": ["https://p3-pc-sign.douyinpic.com/image-cut/cover.jpg"]},
+            "duration": 5620,  # 毫秒
+        },
+    }
+}
+
+
+@pytest.mark.asyncio
+async def test_normal_video_decodes_play_addr(monkeypatch):
+    """普通视频经 PC detail API 解析, SlidesData 承载 video.play_addr 输出 VideoContent。
+
+    覆盖三个改版关键点:
+    1. images=null 时 decode 不崩 (Optional 容忍, 非 key 缺失);
+    2. video_url 正确提取并去水印 (playwm→play, 对齐 parse_video);
+    3. parse_slides 的 video 分支输出 1 个带封面的 VideoContent。
+    """
+    import json as _json
+    from typing import ClassVar
+
+    from nonebot_plugin_parser.parsers import DouyinParser
+    from nonebot_plugin_parser.parsers.douyin import slides
+
+    parser = DouyinParser()
+    raw = _json.dumps(_NORMAL_VIDEO_PAYLOAD).encode("utf-8")
+
+    # 先验证 decoder 层: images=null 容忍, video_url 去水印, 字段提取正确
+    aweme_detail = slides.decode_aweme_detail(raw)
+    assert aweme_detail is not None, "decode 失败 (images=null 应被 Optional 容忍)"
+    assert aweme_detail.video_url is not None, "普通视频应解出 video_url"
+    assert "playwm" not in aweme_detail.video_url, "未去水印 (期望 playwm→play)"
+    assert aweme_detail.cover_url is not None, "应解出 cover_url"
+    assert aweme_detail.duration_ms == 5620, f"duration_ms 应为 5620, 实际 {aweme_detail.duration_ms}"
+
+    class _MockResp:
+        status_code = 200
+        content = raw
+        text = raw.decode("utf-8")
+        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+
+        @property
+        def url(self):
+            return "https://www.douyin.com/aweme/v1/web/aweme/detail/"
+
+    async def _fake_request(url, *args, **kwargs):
+        if "aweme/v1/web/aweme/detail" in str(url):
+            return _MockResp()
+        raise RuntimeError(f"unexpected URL: {url}")
+
+    async def _coro(*args, **kwargs):
+        return __import__("pathlib").Path("/fake/media")
+
+    def _stub_dl(*args, **kwargs):
+        return asyncio.create_task(_coro(*args, **kwargs))
+
+    monkeypatch.setattr(parser, "request", _fake_request)
+    monkeypatch.setattr(parser.downloader, "download_video", _stub_dl)
+    monkeypatch.setattr(parser.downloader, "download_img", _stub_dl)
+
+    result = await parser.parse_slides(NORMAL_VIDEO_VID)
+
+    # 纯视频: 1 个 VideoContent, 无实况动态/图片
+    assert len(result.video_contents) == 1, (
+        f"普通视频应输出 1 个 VideoContent, 实际 contents={[type(c).__name__ for c in result.contents]}"
+    )
+    assert result.dynamic_contents == [], "普通视频不应有实况动态"
+    assert result.img_contents == [], "普通视频不应有图片"
+    vc = result.video_contents[0]
+    assert vc.cover is not None, "VideoContent 应带封面 (来自 video.cover)"
+    assert vc.duration == 5620, f"时长应为 5620ms, 实际 {vc.duration}"
+    assert result.title == "#福建话 #福建方言 #闽南语 #方言趣味分享 #福建人"
+    assert result.author is not None
+    assert result.author.name == "吴影默"
+
+
+@pytest.mark.asyncio
+async def test_normal_video_parse_prefers_detail_api(monkeypatch):
+    """video 类型走 _parse_douyin 时优先 PC detail API, 不触发分享页兜底。
+
+    改版后分享页 _ROUTER_DATA 无 videoInfoRes, parse_video 兜底必失败;
+    _parse_douyin 的 video 分支应优先 parse_slides, 成功即返回。
+    若误走兜底, _fake_request 对非 detail URL 会 raise 让测试失败。
+    """
+    import json as _json
+    from typing import ClassVar
+
+    from nonebot_plugin_parser.parsers import DouyinParser
+
+    parser = DouyinParser()
+    raw = _json.dumps(_NORMAL_VIDEO_PAYLOAD).encode("utf-8")
+
+    class _MockResp:
+        status_code = 200
+        content = raw
+        text = raw.decode("utf-8")
+        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+
+        @property
+        def url(self):
+            return "https://www.douyin.com/aweme/v1/web/aweme/detail/"
+
+    async def _fake_request(url, *args, **kwargs):
+        if "aweme/v1/web/aweme/detail" in str(url):
+            return _MockResp()
+        # 分享页兜底 (m.douyin / iesdouyin) 不应被调用
+        raise RuntimeError(f"不应请求分享页兜底 URL (应优先 detail API): {url}")
+
+    async def _coro(*args, **kwargs):
+        return __import__("pathlib").Path("/fake/media")
+
+    def _stub_dl(*args, **kwargs):
+        return asyncio.create_task(_coro(*args, **kwargs))
+
+    monkeypatch.setattr(parser, "request", _fake_request)
+    monkeypatch.setattr(parser.downloader, "download_video", _stub_dl)
+    monkeypatch.setattr(parser.downloader, "download_img", _stub_dl)
+
+    keyword, searched = parser.search_url(f"https://www.douyin.com/video/{NORMAL_VIDEO_VID}")
+    assert searched, "无法匹配 video URL"
+    result = await parser.parse(keyword, searched)
+
+    assert len(result.video_contents) == 1, "应经 detail API 解析出 1 个视频"
+    assert result.video_contents[0].cover is not None
+    assert result.title
+    assert "福建话" in result.title

@@ -710,3 +710,19 @@ async def test_normal_video_parse_prefers_detail_api(monkeypatch):
     assert result.video_contents[0].cover is not None
     assert result.title
     assert "福建话" in result.title
+
+
+@pytest.mark.asyncio
+async def test_douyin_parser_download_headers_have_referer():
+    """抖音 douyinvod 视频直链需 Referer 防盗链, DouyinParser 下载头必须带上。
+
+    改版后 video 走 PC detail API, play_addr 直链 (douyinvod) 缺 Referer 会 403
+    (实测容器内无 Referer 403, 加 Referer 200 video/mp4); DouyinParser.__init__
+    给 self.headers 补 Referer, create_video_content 等下载透传该 header。
+    """
+    from nonebot_plugin_parser.parsers import DouyinParser
+
+    parser = DouyinParser()
+    assert parser.headers.get("Referer") == "https://www.douyin.com/", (
+        "DouyinParser 下载头缺 Referer, douyinvod 直链会 403"
+    )

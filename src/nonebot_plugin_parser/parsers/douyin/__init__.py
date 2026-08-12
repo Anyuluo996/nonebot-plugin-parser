@@ -59,6 +59,12 @@ _PC_WEB_COMMON_PARAMS: dict[str, str] = {
 class DouyinParser(BaseParser):
     platform: ClassVar[Platform] = Platform(name=PlatformEnum.DOUYIN, display_name="抖音")
 
+    def __init__(self):
+        super().__init__()
+        # 抖音 douyinvod 视频直链 (PC detail API 的 play_addr) 需 Referer 防盗链校验,
+        # 缺失则 403; COMMON_HEADER 全局通用仅含 UA, 在此给本 parser 下载头补上。
+        self.headers["Referer"] = "https://www.douyin.com/"
+
     # https://v.douyin.com/_2ljF4AmKL8
     @handle("v.douyin", r"v\.douyin\.com/[a-zA-Z0-9_\-]+")
     @handle("jx.douyin", r"jx\.douyin\.com/[a-zA-Z0-9_\-]+")
@@ -81,13 +87,15 @@ class DouyinParser(BaseParser):
         if ty == "slides":
             return await self.parse_slides(vid)
 
-        # note 可能是纯图文, 也可能是含实况照片(live photo)的图文:
-        # 后者重定向成 note/ 而非 slides/, 而 parse_video 依赖的 _ROUTER_DATA
-        # 不返回 images[].video, 会丢失实况视频; PC detail API 才返回。
-        # 因此 note 优先走 parse_slides, 失败再回退 parse_video (兼容纯视频/旧结构)。
-        # 捕获范围: ParseException + msgspec.DecodeError (继承 ValueError) +
-        # ValueError (兜住 msgspec 结构变更) + httpx/timeout 错误。
-        if ty == "note":
+        # note 与 video 都优先走 PC detail API (parse_slides):
+        #   - note: 可能是纯图文, 也可能是含实况照片(live photo)的图文, 后者重定向成
+        #     note/ 而非 slides/, parse_video 依赖的 _ROUTER_DATA 不返回 images[].video,
+        #     会丢失实况视频; PC detail API 才返回。
+        #   - video: 自抖音 2026-08 改版起, m/iesdouyin 分享页 _ROUTER_DATA 不再含
+        #     videoInfoRes, parse_video 兜底失效, 改由 PC detail API 提供直链。
+        # parse_slides 失败(ValueError 含 msgspec.DecodeError / 风控空 body) 再回退
+        # parse_video, 兼容旧结构与 detail 不可用时的降级。
+        if ty in ("note", "video"):
             try:
                 return await self.parse_slides(vid)
             except (ParseException, ValueError) as e:
@@ -96,7 +104,7 @@ class DouyinParser(BaseParser):
                 # 不再用 bare Exception, 避免吞掉 AttributeError / TypeError 等代码 bug
                 # exc_info=True 保留 traceback, 便于事后排查非预期异常
                 logger.warning(
-                    f"parse_slides failed for note {vid}, fallback to parse_video: {e!r}",
+                    f"parse_slides failed for {ty} {vid}, fallback to parse_video: {e!r}",
                     exc_info=True,
                 )
 
@@ -235,6 +243,12 @@ class DouyinParser(BaseParser):
                     bgm_url=aweme_detail.bgm_url,
                 )
             )
+
+        # 普通视频 (images/dynamic 均空, 顶层 video 含 play_addr)
+        # 自抖音 2026-08 改版, 普通视频改由 detail API 提供直链。
+        # `if not contents` 确保仅纯视频进此分支, 图文/实况不受影响。
+        if not contents and (video_url := aweme_detail.video_url):
+            contents.append(self.create_video_content(video_url, aweme_detail.cover_url, aweme_detail.duration_ms))
 
         # 构建作者
         author = self.create_author(aweme_detail.name, aweme_detail.avatar_url)

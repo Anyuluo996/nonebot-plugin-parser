@@ -39,6 +39,7 @@ from ..helper import UniHelper, UniMessage
 from ..parsers import BaseParser, ParseResult, BilibiliParser
 from ..renders import get_renderer
 from ..exception import TipException
+from ..parse_retry import parse_with_retry
 from ..failure_store import record_failure
 
 
@@ -207,24 +208,24 @@ async def parser_handler(
         result = _get_cached_result(cache_key)
 
         if result is None:
-            # 5. 执行解析
-            # 加顶层超时兜底，防止某 parser 网络请求静默挂起导致主流程无限 await
+            # 5. 执行解析（parse_with_retry 内含：顶层超时兜底 + 解析层即时重试）
+            # 顶层超时兜底防止某 parser 网络请求静默挂起导致主流程无限 await
             # （如 curl_cffi 静默忽略 httpx.Timeout）。超时走 except 分支：打 WARNING
             # 日志 + record_failure + fail 表情，从而可被 L2 后台重试救援。
+            # 解析层即时重试防平台偶发失败（抖音改版/风控的 403/空 body），重试
+            # 成功直接走正常发送链路；全部失败才报错，且仍进 L2 后台重试兜底。
+            # 重试不覆盖超时/Telegram 的口径详见 parse_retry 模块注释。
             # Telegram 豁免：其解析阶段需同步下载媒体，tdl 自身 timeout=600s 兜底。
             # NOTE: 超时取消 parse 不会取消 parser 已 create_task 的惰性下载 task
             # （抖音/B站等视频/图片下载在 render 阶段才 await），它们会变孤儿继续
             # 跑完——不会数据损坏（下载在 tempdir/aiofiles async with 内，取消触发
             # __aexit__ 清理），代价是浪费并发槽与带宽，属可接受的短期取舍。
             # NOTE: 真正挂起的 parser 记进 failure_store 后，L2 重试（_PER_RETRY_TIMEOUT=60s
-            # < 本阈值）大概率同样挂起——L2 是尽力而为，最坏消耗 retry 次数后标记 reported，
-            # 不会无限重试。若未来要让 L2 跳过超时记录，可在 record_failure 加 is_timeout 标记。
-            timeout = pconfig.parse_timeout
+            # < parse_timeout）大概率同样挂起——L2 是尽力而为，最坏消耗 retry 次数后标记
+            # reported，不会无限重试。若未来要让 L2 跳过超时记录，可在 record_failure 加
+            # is_timeout 标记。
             try:
-                if timeout > 0 and parser.platform.name != "telegram":
-                    result = await asyncio.wait_for(parser.parse(sr.keyword, sr.searched), timeout=timeout)
-                else:
-                    result = await parser.parse(sr.keyword, sr.searched)
+                result = await parse_with_retry(parser, sr.keyword, sr.searched)
             except asyncio.TimeoutError:
                 timed_out = True
                 raise

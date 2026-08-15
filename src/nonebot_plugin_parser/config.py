@@ -94,6 +94,17 @@ class Config(BaseModel):
     Telegram 平台豁免（其解析阶段需同步下载媒体，tdl 自身 timeout=600s 兜底）。
     设为 0 可禁用此行为（恢复不限时等待的旧行为）。
     """
+    parser_parse_retry_max: int = 3
+    """解析失败即时重试次数（解析层，0 关闭）。单次解析最多尝试 1+N 次，全部失败才向用户报错。
+
+    防抖音等平台结构改版/风控导致的偶发失败（快进快出的 403/空 body），几秒后
+    重试往往即成功。超时、TipException/IgnoreException 不重试；Telegram 平台豁免
+    （解析阶段含媒体下载，重试代价过高）。与失败链接后台定时重试
+    （parser_failure_*，L2）是互补的两层机制：本层在用户消息上下文内即时重试、
+    成功可直接发给用户；L2 无消息上下文，成功也无法回推。
+    """
+    parser_parse_retry_delay: float = 1.0
+    """解析重试基础间隔（秒），按失败次数指数退避：1x → 2x → 4x"""
     parser_append_url: bool = False
     """是否在解析结果中附加原始URL"""
     parser_disabled_platforms: list[PlatformEnum] = Field(default_factory=list)
@@ -218,6 +229,16 @@ class Config(BaseModel):
     def parse_timeout(self) -> int:
         """解析顶层超时（秒），超时记录失败不再挂起"""
         return self.parser_parse_timeout
+
+    @property
+    def parse_retry_max(self) -> int:
+        """解析失败即时重试次数（0 关闭）"""
+        return self.parser_parse_retry_max
+
+    @property
+    def parse_retry_delay(self) -> float:
+        """解析重试基础间隔（秒）"""
+        return self.parser_parse_retry_delay
 
     @property
     def disabled_platforms(self) -> list[PlatformEnum]:

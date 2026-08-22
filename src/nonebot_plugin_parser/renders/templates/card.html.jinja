@@ -635,14 +635,29 @@
             {% for para in group['items'] %}<p>{{ para }}</p>{% endfor %}
           </div>
           {% else %}
+          {# 视频项(如小黑盒文章内嵌视频)只画封面+播放按钮, 视频本体随消息单独发送 #}
+          {% if group.item.cover_path_uri is defined %}
+            {% set is_video = true %}
+            {% set img_uri = group.item.cover_path_uri %}
+          {% else %}
+            {% set is_video = false %}
+            {% set img_uri = group.item.path_uri %}
+          {% endif %}
+          {% if img_uri %}
           <div class="graphics-item">
-            <div class="image-container">
-              <img src="{{ group.item.path_uri | safe }}" class="graphics-img" alt="graphics" />
+            <div class="{% if is_video %}cover-wrapper{% else %}image-container{% endif %}">
+              <img src="{{ img_uri | safe }}" class="{% if is_video %}cover-img{% else %}graphics-img{% endif %}" alt="graphics" />
+              {% if is_video and play_button %}
+              <div class="play-button">
+                <img src="{{ play_button | safe }}" alt="play" />
+              </div>
+              {% endif %}
             </div>
             {% if group.item.alt %}
             <div class="graphics-alt">{{ group.item.alt }}</div>
             {% endif %}
           </div>
+          {% endif %}
           {% endif %}
         {% endfor %}
         {% endif %}

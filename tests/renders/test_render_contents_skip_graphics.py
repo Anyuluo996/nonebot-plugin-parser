@@ -107,5 +107,30 @@ async def test_graphics_restored_after_render_contents():
     assert list(result.graphics) == list(original_graphics), "graphics 内容应还原"
 
 
+@pytest.mark.asyncio
+async def test_graphics_video_sent_but_text_images_skipped():
+    """graphics 里的 VideoContent（小黑盒文章内嵌视频）单独发出，文字/图片仍跳过。
+
+    回归：卡片只画视频封面，若 render_contents 把 graphics 一刀切跳过，
+    文章内嵌视频会凭空丢失。
+    """
+    from nonebot_plugin_alconna.uniseg import Video as VideoSeg
+
+    from nonebot_plugin_parser.parsers import VideoContent
+    from nonebot_plugin_parser.renders import get_renderer
+
+    renderer = get_renderer("heybox")
+    video = VideoContent(path_task=TEST_DIR / "_t_video.mp4")
+    result = _result(graphics=["文字段落应被跳过", _img(RED_PNG), video])
+
+    messages = [m async for m in renderer.render_contents(result)]
+
+    assert len(messages) == 1, f"单个视频应直发 1 条消息，实际 {len(messages)}"
+    segs = list(messages[0])
+    assert any(isinstance(seg, VideoSeg) for seg in segs), "消息应含视频段"
+    assert video in list(result.graphics), "graphics 应还原"
+    assert result.contents == [], "contents 应还原"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

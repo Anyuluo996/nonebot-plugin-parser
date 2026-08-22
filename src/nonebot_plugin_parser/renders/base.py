@@ -234,21 +234,31 @@ class ImageRenderer(BaseRenderer):
         避免文字段落被当作独立消息重复发出（opus 长图文刷屏根因：397 个 str 段落
         构建合并转发 → NapCat 拒绝 → 降级逐条直发刷屏）。
 
+        例外：graphics 里的 VideoContent（如小黑盒文章内嵌视频）画不进卡片（卡片
+        只画其封面），临时并入 contents 走视频通道单独发送，否则视频会凭空丢失。
+
         用临时清空 graphics 复用基类 render_contents，避免复制 contents 的分发逻辑。
         DefaultRenderer（纯文本模式）不继承 ImageRenderer，仍需 render_contents 发 graphics，
         不受此覆盖影响。
         """
         saved_graphics = result.graphics
+        saved_contents = result.contents
         repost = result.repost
         saved_repost_graphics = repost.graphics if repost else None
+        gfx_videos = [g for g in saved_graphics if isinstance(g, VideoContent)]
+        if repost:
+            gfx_videos += [g for g in (repost.graphics or ()) if isinstance(g, VideoContent)]
         result.graphics = []
         if repost:
             repost.graphics = []
+        if gfx_videos:
+            result.contents = [*saved_contents, *gfx_videos]
         try:
             async for message in super().render_contents(result):
                 yield message
         finally:
             result.graphics = saved_graphics
+            result.contents = saved_contents
             if repost:
                 repost.graphics = saved_repost_graphics  # type: ignore[assignment]
 

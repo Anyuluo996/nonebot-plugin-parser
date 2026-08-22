@@ -370,6 +370,10 @@ class ParseResult:
         for gra in self.graphics:
             if isinstance(gra, ImageContent):
                 yield gra.get_path()
+            elif isinstance(gra, VideoContent) and gra.cover is not None:
+                # 卡片要画视频封面(如小黑盒文章内嵌视频), 视频本体由 render_contents
+                # 的视频通道带超时单独处理, 不在此等待
+                yield gra.get_cover_path()
 
         # extra["posts"] 中的图片（NGA/贴吧回复楼层内嵌图 + 贴吧作者头像）
         for post in self.extra.get("posts", []) if isinstance(self.extra.get("posts"), list) else ():

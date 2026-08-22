@@ -1,5 +1,6 @@
 from typing import Any
 from dataclasses import replace
+from collections.abc import Sequence
 from typing_extensions import override
 
 from nonebot import logger, require
@@ -10,24 +11,34 @@ from nonebot_plugin_htmlrender import template_to_pic
 from . import resources
 from .base import ParseResult, ImageRenderer, pconfig
 from ..helper import UniHelper, UniMessage
+from ..parsers import ImageContent
 from ..browser_retry import with_browser_retry
 
-# Chromium 全页截图对超长页面有渲染上限：实测 CSS ~33000px 后内容开始丢失（画面留白）。
-# 单页保守取 16000 CSS px，对应字符数阈值（见 _CHUNK_MAX_CHARS）。
-_SAFE_PAGE_CSS_HEIGHT = 16000
+# 根因实测(2026-08-22 对照实验): card 模板的 backdrop-filter 毛玻璃层在
+# htmlrender 0.7 托管浏览器(dpr=2)下超过 ~16384 物理 px 纹理上限后不再绘制
+# —— 同一张 11271 CSS 卡片带 backdrop-filter 只画到 73%(y=16381), 去掉
+# backdrop-filter 后 100% 画满; 无 backdrop-filter 的 nga/tieba/zhihu 模板
+# 实测 17357 CSS(34714 物理)仍完整绘制。即安全页高 = 16384/2 = 8192 CSS px,
+# 再留余量取 7000。
+_SAFE_PAGE_CSS_HEIGHT = 7000
 
-# 每页文字字符数上限：按 _SAFE_PAGE_CSS_HEIGHT 反推。
-# card 模板正文 28px 字号、1.8 行高、760px 行宽 → 每行 ~27 字、每行高 ~50px，
-# 16000px / 50 ≈ 320 行 × 27 字 ≈ 8600 字符，保守取 6000。
-_CHUNK_MAX_CHARS = 6000
+# 页面高度估算参数(与 card.html.jinja 紧凑版标定):
+# 正文 17px 字号、1.5 行高 ≈ 26px/行, 卡片内容宽 ~735px → ~43 全角字符/行;
+# 图文内嵌图模板限高 800px + 圆角容器/alt ≈ 850px; 头部/标题/内边距固定开销 ~300px。
+_CHARS_PER_LINE = 43
+_LINE_HEIGHT_PX = 26
+_GRAPHICS_IMG_EST_PX = 850
+_PAGE_OVERHEAD_PX = 300
 
 
 class HtmlRenderer(ImageRenderer):
     """HTML 渲染器（Playwright 截图）。
 
-    超长图文（如 B站 opus 长文，数百文字段落）渲染成单张巨图时，Chromium
-    全页截图会在 ~33000 CSS px 后丢失内容（画面留白）。本渲染器对超长 graphics
-    分页：按字符数拆成多块，每块单独渲染一张完整图，再各自切片合并转发。
+    超长图文（如 B站 opus 长文，数百文字段落 + 多图）渲染成单张巨图时，card
+    模板的 backdrop-filter 大图层超过浏览器纹理上限（dpr=2 时 ~8192 CSS px）
+    后不再绘制内容（画面留白但布局高度仍在，表现为"内容截断 + 空白尾图"）。
+    本渲染器对超长 graphics 分页：按估算页高（文字行数 + 图片限高）拆成多块，
+    每块单独渲染一张完整图，再各自切片合并转发。
     """
 
     @override
@@ -62,9 +73,9 @@ class HtmlRenderer(ImageRenderer):
     async def render_messages(self, result: ParseResult):
         """超长 graphics 分页渲染，避免 Chromium 截图丢失内容。
 
-        短内容走基类（单图 + 切片 + render_contents）；graphics 文字总字符数超
-        _CHUNK_MAX_CHARS 时分块，每块构造临时 ParseResult（保留头部上下文）单独渲染，
-        各自切片后合并转发。
+        短内容走基类（单图 + 切片 + render_contents）；估算页高（文字 + 图片）
+        超 _SAFE_PAGE_CSS_HEIGHT 时分块，每块构造临时 ParseResult（保留头部上下文）
+        单独渲染，各自切片后合并转发。
         """
         if not self._needs_paging(result):
             async for msg in super().render_messages(result):
@@ -72,7 +83,7 @@ class HtmlRenderer(ImageRenderer):
             return
 
         chunks = self._chunk_graphics(result)
-        logger.info(f"HtmlRenderer 分页: graphics 拆成 {len(chunks)} 页 (每页 ≤{_CHUNK_MAX_CHARS} 字符)")
+        logger.info(f"HtmlRenderer 分页: graphics 拆成 {len(chunks)} 页 (每页 ≤{_SAFE_PAGE_CSS_HEIGHT}px 估算高度)")
 
         all_slices: list[bytes] = []
         for idx, chunk in enumerate(chunks):
@@ -92,28 +103,42 @@ class HtmlRenderer(ImageRenderer):
         yield UniMessage(UniHelper.construct_forward_message(nodes))
 
     def _needs_paging(self, result: ParseResult) -> bool:
-        """graphics 文字总字符数超阈值才分页（图片型 graphics 不算）。"""
-        total_chars = sum(len(g) for g in result.graphics if isinstance(g, str))
-        return total_chars > _CHUNK_MAX_CHARS
+        """graphics 估算页高（文字 + 图片）超安全高度才分页。"""
+        return self._estimate_page_height(result.graphics) > _SAFE_PAGE_CSS_HEIGHT
 
     @staticmethod
-    def _chunk_graphics(result: ParseResult) -> list[list[Any]]:
-        """按字符数阈值把 graphics 拆成多块，尽量在段落边界切分。
+    def _estimate_item_height(item: str | ImageContent) -> int:
+        """估算单个 graphics 项的渲染高度（CSS px）。图片下载前拿不到真实尺寸,
+        按模板限高统一估算(偏保守, 宁可多分一页也不超光栅上限)。"""
+        import math
 
-        图片型 graphics（ImageContent）跟随相邻文字块，不单独计数。
-        """
+        if isinstance(item, str):
+            lines = max(1, math.ceil(len(item) / _CHARS_PER_LINE))
+            return lines * _LINE_HEIGHT_PX + 4  # 4px 段间距
+        return _GRAPHICS_IMG_EST_PX
+
+    @classmethod
+    def _estimate_page_height(cls, items: Sequence[str | ImageContent]) -> int:
+        return _PAGE_OVERHEAD_PX + sum(cls._estimate_item_height(i) for i in items)
+
+    @classmethod
+    def _chunk_graphics(cls, result: ParseResult) -> list[list[Any]]:
+        """按估算页高把 graphics 拆成多块，尽量在段落边界切分。
+
+        图片型 graphics（ImageContent）按限高估算计入, 不再只按字数——
+        图片多的长文曾因此漏分页, 单页超高被光栅上限截断。"""
         chunks: list[list[Any]] = []
         current: list[Any] = []
-        current_chars = 0
+        current_px = 0
         for item in result.graphics:
-            item_len = len(item) if isinstance(item, str) else 0
-            # 当前块非空且加入后超阈值 → 收尾开新块
-            if current and current_chars + item_len > _CHUNK_MAX_CHARS:
+            item_px = cls._estimate_item_height(item)
+            # 当前块非空且加入后超安全高度 → 收尾开新块
+            if current and current_px + item_px > _SAFE_PAGE_CSS_HEIGHT - _PAGE_OVERHEAD_PX:
                 chunks.append(current)
                 current = []
-                current_chars = 0
+                current_px = 0
             current.append(item)
-            current_chars += item_len
+            current_px += item_px
         if current:
             chunks.append(current)
         return chunks

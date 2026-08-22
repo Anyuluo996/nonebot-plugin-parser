@@ -1,7 +1,9 @@
 """验证 HtmlRenderer 超长 graphics 分页渲染（Chromium 截图丢内容根因修复）。
 
-回归：opus 长图文数百文字段落渲染成单张巨图，Chromium 截图在 ~33000 CSS px 后
-内容丢失（画面留白）。HtmlRenderer 对超长 graphics 分页，每块单独渲染一张完整图。
+回归：opus 长图文（数百文字段落 + 多图）渲染成单张巨图时，Chromium 截图超出
+光栅面上限（htmlrender 0.7 dpr=2 下 ~8192 CSS px）后不再绘制内容（画面留白但
+布局高度保留）。HtmlRenderer 按估算页高（文字行数 + 图片限高）对超长 graphics
+分页，每块单独渲染一张完整图。
 
 注意：nonebot_plugin_parser.* 的 import 必须放在测试函数内部，确保 conftest 的
 init_nonebot session fixture 先完成 nonebot 初始化与插件加载。
@@ -64,7 +66,7 @@ def _make_long_graphics(n_chars: int) -> list[str]:
 
 @pytest.mark.asyncio
 async def test_short_graphics_no_paging(monkeypatch):
-    """短内容（字符数 ≤ 阈值）走基类，不分页：render_image 被调 1 次。"""
+    """短内容（估算页高 ≤ 安全高度）走基类，不分页：render_image 被调 1 次。"""
     from nonebot_plugin_parser.renders.htmlrender import HtmlRenderer
 
     renderer = HtmlRenderer()
@@ -86,7 +88,7 @@ async def test_short_graphics_no_paging(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_long_graphics_paged(monkeypatch):
-    """超长内容（字符数 > 阈值）分页：render_image 被调多次，产出 1 条合并转发。"""
+    """超长内容（估算页高 > 安全高度）分页：render_image 被调多次，产出 1 条合并转发。"""
     from nonebot_plugin_alconna.uniseg import Reference
 
     from nonebot_plugin_parser.renders.htmlrender import HtmlRenderer
@@ -102,7 +104,7 @@ async def test_long_graphics_paged(monkeypatch):
     monkeypatch.setattr(renderer, "render_image", fake_render_image)
     monkeypatch.setattr(type(renderer), "append_url", property(lambda self: False))
 
-    # 造 20000 字符的内容，应分 ≥3 页（6000 字符/页）
+    # 20000 字符 ≈ 26000px 估算高度，应分 ≥3 页（每页 ≤7000px）
     result = _result(graphics=_make_long_graphics(20000))
     messages = [m async for m in renderer.render_messages(result)]
 
@@ -113,19 +115,41 @@ async def test_long_graphics_paged(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_chunk_respects_char_limit():
-    """_chunk_graphics 在段落边界切分，每块字符数 ≤ 阈值。"""
-    from nonebot_plugin_parser.renders.htmlrender import _CHUNK_MAX_CHARS, HtmlRenderer
+async def test_image_only_graphics_paged():
+    """纯图片 graphics 也计入分页（回归：旧模型只数字符，图片再多也不分页）。
 
-    # 每段 100 字符，造 100 段 = 10000 字符
-    paras = ["x" * 100 for _ in range(100)]
+    真实案例：B站 opus 3422 字 + 6 图（估高 ~8000px > 7000）未分页，单页渲染
+    超出光栅面上限，尾部内容画不出来（空白尾图）。
+    """
+    from pathlib import Path
+
+    from nonebot_plugin_parser.parsers import ImageContent
+    from nonebot_plugin_parser.renders.htmlrender import HtmlRenderer
+
+    imgs = [ImageContent(Path(f"fake_{i}.jpg")) for i in range(20)]  # 20×850=17000px
+    result = _result(graphics=imgs)
+
+    assert HtmlRenderer()._needs_paging(result), "20 张图（估高 17000px）应触发分页"
+    chunks = HtmlRenderer._chunk_graphics(result)
+    assert len(chunks) >= 3, f"20 张图应分 ≥3 页，实际 {len(chunks)}"
+    for chunk in chunks:
+        assert HtmlRenderer._estimate_page_height(chunk) <= 7000 + 850, "单页估算高度应 ≤ 安全高度（允许单项粒度溢出）"
+
+
+@pytest.mark.asyncio
+async def test_chunk_respects_height_limit():
+    """_chunk_graphics 在段落边界切分，每块估算高度 ≤ 安全高度。"""
+    from nonebot_plugin_parser.renders.htmlrender import HtmlRenderer
+
+    # 每段 100 字符 ≈ 60px，100 段 ≈ 6000px —— 不足分页；每段 500 字符 ≈ 321px，60 段 ≈ 19200px
+    paras = ["x" * 500 for _ in range(60)]
     result = _result(graphics=paras)
     chunks = HtmlRenderer._chunk_graphics(result)
 
-    assert len(chunks) >= 2, f"10000 字符应分多块，实际 {len(chunks)}"
+    assert len(chunks) >= 2, f"19200px 应分多块，实际 {len(chunks)}"
     for chunk in chunks:
-        chars = sum(len(g) for g in chunk if isinstance(g, str))
-        assert chars <= _CHUNK_MAX_CHARS + 100, f"块字符数 {chars} 超阈值（允许段落粒度溢出）"
+        est = HtmlRenderer._estimate_page_height(chunk)
+        assert est <= 7000 + 500, f"块估算高度 {est}px 超安全高度（允许段落粒度溢出）"
 
 
 @pytest.mark.asyncio

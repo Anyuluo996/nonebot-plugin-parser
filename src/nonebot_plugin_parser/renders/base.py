@@ -19,6 +19,10 @@ from ..exception import IgnoreException, DownloadException
 # 渲染后按此阈值垂直切片，单图直发、多图合并转发。
 MAX_LONG_IMAGE_HEIGHT = 4000
 
+# 相邻切片重叠高度（物理px）：切片边界切断文字行时，下一片开头会带上这段
+# 上一片的末尾内容（DPR=2 下约 3 行），避免读者在两图接缝处丢上下文。
+SLICE_OVERLAP_PX = 160
+
 
 class BaseRenderer(ABC):
     """统一的渲染器，将解析结果转换为消息"""
@@ -174,8 +178,12 @@ class ImageRenderer(BaseRenderer):
     async def _split_long_image(raw: bytes) -> list[bytes]:
         """长图按 MAX_LONG_IMAGE_HEIGHT 垂直切片，返回各片 bytes；不超高时原样返回单元素列表。
 
+        相邻切片保留 SLICE_OVERLAP_PX 重叠：切片边界恰好切断文字行时,
+        上一片的末尾内容会完整出现在下一片开头，阅读不断行。
+
         切片后若最后一片过矮（残片，如分页余下的几十像素），并入倒数第二片，
-        避免发出一张几乎空白的小图。倒数第二片会略超 MAX_LONG_IMAGE_HEIGHT，
+        避免发出一张几乎空白的小图。倒数第二片会略超 MAX_LONG_IMAGE_HEIGHT
+        （最多约 +SLICE_OVERLAP_PX+_MIN_TAIL_HEIGHT，仍 <5000px），
         但 QQ NT 单图上限约 4000-5000px，仍有余量。
 
         Pillow 的 open/crop/save 是同步 CPU 操作，用 to_thread 避免阻塞事件循环。
@@ -186,19 +194,23 @@ class ImageRenderer(BaseRenderer):
 
         # 残片高度阈值：低于此值的最后一片并入前一片
         _MIN_TAIL_HEIGHT = 800
+        # 相邻切片重叠（物理px，DPR=2 下约 3 行文字），保住被边界切断的行
+        overlap = SLICE_OVERLAP_PX
 
         def _do_split() -> list[bytes]:
             img = Image.open(io.BytesIO(raw))
             width, height = img.size
             if height <= MAX_LONG_IMAGE_HEIGHT:
                 return [raw]
-            # 计算切片边界，把矮残片并入前一片
+            # 每片高 ≤MAX，步进 = MAX-overlap（top = bottom - overlap），使相邻片共享 overlap
             boundaries: list[tuple[int, int]] = []
             top = 0
             while top < height:
                 bottom = min(top + MAX_LONG_IMAGE_HEIGHT, height)
                 boundaries.append((top, bottom))
-                top = bottom
+                if bottom >= height:
+                    break
+                top = bottom - overlap
             # 最后一片过矮且前面有片 → 并入
             if len(boundaries) >= 2 and (boundaries[-1][1] - boundaries[-1][0]) < _MIN_TAIL_HEIGHT:
                 prev_top, _ = boundaries[-2]

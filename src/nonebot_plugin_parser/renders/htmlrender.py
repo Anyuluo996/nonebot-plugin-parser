@@ -21,10 +21,10 @@ from ..browser_retry import with_browser_retry
 _SAFE_PAGE_CSS_HEIGHT = 7000
 
 # 页面高度估算参数(与 card.html.jinja 紧凑版标定):
-# 正文 17px 字号、1.6 行高 ≈ 27px/行, 卡片内容宽 ~735px → ~43 全角字符/行;
-# 图文内嵌图模板限高 800px + 容器/内边距/alt ≈ 850px; 头部/标题/内边距固定开销 ~300px。
+# 正文 17px 字号、1.5 行高 ≈ 26px/行, 卡片内容宽 ~735px → ~43 全角字符/行;
+# 图文内嵌图模板限高 800px + 圆角容器/alt ≈ 850px; 头部/标题/内边距固定开销 ~300px。
 _CHARS_PER_LINE = 43
-_LINE_HEIGHT_PX = 27
+_LINE_HEIGHT_PX = 26
 _GRAPHICS_IMG_EST_PX = 850
 _PAGE_OVERHEAD_PX = 300
 
@@ -112,7 +112,7 @@ class HtmlRenderer(ImageRenderer):
 
         if isinstance(item, str):
             lines = max(1, math.ceil(len(item) / _CHARS_PER_LINE))
-            return lines * _LINE_HEIGHT_PX + 6  # 6px 段间距
+            return lines * _LINE_HEIGHT_PX + 4  # 4px 段间距
         return _GRAPHICS_IMG_EST_PX
 
     @classmethod

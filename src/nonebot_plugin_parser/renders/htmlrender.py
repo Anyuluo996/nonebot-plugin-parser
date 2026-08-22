@@ -14,10 +14,12 @@ from ..helper import UniHelper, UniMessage
 from ..parsers import ImageContent
 from ..browser_retry import with_browser_retry
 
-# htmlrender 0.7 起 template_to_pic 默认 device_scale_factor=2, 其共享浏览器实例
-# 的截图光栅面在 ~16384 物理px 后不再绘制内容(实测 dpr=2 时 1600x26462 的图
-# 只画到 y≈16381, 以下为纯背景; dpr=1 同内容画满)。安全页高按物理上限换算:
-# 16384 / 2 = 8192 CSS px, 再留余量取 7000。
+# 根因实测(2026-08-22 对照实验): card 模板的 backdrop-filter 毛玻璃层在
+# htmlrender 0.7 托管浏览器(dpr=2)下超过 ~16384 物理 px 纹理上限后不再绘制
+# —— 同一张 11271 CSS 卡片带 backdrop-filter 只画到 73%(y=16381), 去掉
+# backdrop-filter 后 100% 画满; 无 backdrop-filter 的 nga/tieba/zhihu 模板
+# 实测 17357 CSS(34714 物理)仍完整绘制。即安全页高 = 16384/2 = 8192 CSS px,
+# 再留余量取 7000。
 _SAFE_PAGE_CSS_HEIGHT = 7000
 
 # 页面高度估算参数(与 card.html.jinja 紧凑版标定):
@@ -32,11 +34,11 @@ _PAGE_OVERHEAD_PX = 300
 class HtmlRenderer(ImageRenderer):
     """HTML 渲染器（Playwright 截图）。
 
-    超长图文（如 B站 opus 长文，数百文字段落 + 多图）渲染成单张巨图时，Chromium
-    截图会超出光栅面上限（dpr=2 时 ~8192 CSS px）后不再绘制内容（画面留白但布局
-    高度仍在，表现为"内容截断 + 空白尾图"）。本渲染器对超长 graphics 分页：按
-    估算页高（文字行数 + 图片限高）拆成多块，每块单独渲染一张完整图，再各自切片
-    合并转发。
+    超长图文（如 B站 opus 长文，数百文字段落 + 多图）渲染成单张巨图时，card
+    模板的 backdrop-filter 大图层超过浏览器纹理上限（dpr=2 时 ~8192 CSS px）
+    后不再绘制内容（画面留白但布局高度仍在，表现为"内容截断 + 空白尾图"）。
+    本渲染器对超长 graphics 分页：按估算页高（文字行数 + 图片限高）拆成多块，
+    每块单独渲染一张完整图，再各自切片合并转发。
     """
 
     @override

@@ -474,17 +474,19 @@ async def test_picture_note_live_url_falls_back(monkeypatch):
     至少应返回 fallback 的静态图(同 test_note_empty_body_falls_back)。
 
     该测试不依赖 ttwid, 复现生产场景。
+    Bytespider 兜底加入后, 无 ttwid 时签名请求空 body 会换爬虫 UA 重试,
+    通常直接解出 4 段 dynamic; 爬虫通道也被风控时才降级 fallback 静态图。
     """
     from nonebot_plugin_parser.parsers import DouyinParser
 
     parser = DouyinParser()
-    # 不 mock PC detail, 让真实空 body 触发 fallback
-    # (若 ttwid 配置有效, 走 parse_slides 成功路径, 4 段 dynamic)
+    # 不 mock PC detail, 让真实空 body 触发 Bytespider 兜底链路
+    # (若 ttwid 配置有效, 走 parse_slides 签名成功路径, 4 段 dynamic)
     kw, m = parser.search_url(f"https://www.douyin.com/note/{PICTURE_NOTE_VID}")
     assert m
     result = await parser.parse(kw, m)
 
-    # 至少应有标题和内容 (ttwid 无时: 4 张静态图; 有时: 4 段 dynamic)
+    # 至少应有标题和内容 (Bytespider 兜底生效: 4 段 dynamic; 全风控: fallback 静态图)
     assert result.title, "标题不应为空"
     assert result.contents, "应至少返回静态图或 dynamic 视频"
 
@@ -753,3 +755,83 @@ async def test_detail_api_http_error_converted_to_parse_exception(monkeypatch):
 
     with pytest.raises(ParseException, match="detail API request failed"):
         await parser.parse_slides(NORMAL_VIDEO_VID)
+
+
+@pytest.mark.asyncio
+async def test_detail_empty_body_retries_with_bytespider(monkeypatch):
+    """回归: 签名请求被风控返回空 body 时, 换 Bytespider UA 免签名重打 detail API。
+
+    实测 (2026-08-23): 抖音 detail 接口对自家 Bytespider 爬虫免 a_bogus 签名与
+    登录态校验, 同机同 IP 仅换 UA 即返回完整 JSON; 浏览器 UA 则 200 + 空 body。
+    修复前: 空 body 直接 ParseException, note/video 只能走注定失败的分享页兜底
+    (slides 更是无路可退); 修复后: Bytespider 兜底返回与签名路径同构的数据,
+    解析正常完成, 不依赖用户配置 ttwid。
+    """
+    import json as _json
+    from typing import ClassVar
+
+    from nonebot_plugin_parser.parsers import DouyinParser
+
+    parser = DouyinParser()
+    raw = _json.dumps(_NORMAL_VIDEO_PAYLOAD).encode("utf-8")
+
+    class _EmptyResp:
+        status_code = 200
+        content = b""
+        text = ""
+        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+
+        @property
+        def url(self):
+            return "https://www.douyin.com/aweme/v1/web/aweme/detail/"
+
+    class _MockResp:
+        status_code = 200
+        content = raw
+        text = raw.decode("utf-8")
+        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+
+        @property
+        def url(self):
+            return "https://www.douyin.com/aweme/v1/web/aweme/detail/"
+
+    detail_calls: list[dict] = []
+
+    async def _fake_request(url, *args, **kwargs):
+        if "aweme/v1/web/aweme/detail" in str(url):
+            detail_calls.append({"headers": kwargs.get("headers"), "params": kwargs.get("params")})
+            # 第一次: 签名请求 (带 a_bogus) 被风控返回空 body; 之后: Bytespider 兜底返回完整数据
+            return _EmptyResp() if len(detail_calls) == 1 else _MockResp()
+        raise RuntimeError(f"unexpected URL: {url}")
+
+    # mock 下载层: 只验证兜底解析链路, 不实际下载视频/封面
+    async def _coro(*args, **kwargs):
+        return __import__("pathlib").Path("/fake/media")
+
+    def _stub_dl(*args, **kwargs):
+        return asyncio.create_task(_coro(*args, **kwargs))
+
+    monkeypatch.setattr(parser, "request", _fake_request)
+    monkeypatch.setattr(parser.downloader, "download_video", _stub_dl)
+    monkeypatch.setattr(parser.downloader, "download_img", _stub_dl)
+
+    result = await parser.parse_slides(NORMAL_VIDEO_VID)
+
+    # 兜底行为断言: 恰好两次 detail 请求, 首次签名, 二次 Bytespider UA 免签名
+    assert len(detail_calls) == 2, f"应恰好两次 detail 请求 (签名 + Bytespider 兜底), 实际 {len(detail_calls)}"
+    first_headers = detail_calls[0]["headers"] or {}
+    first_params = detail_calls[0]["params"] or {}
+    second_headers = detail_calls[1]["headers"] or {}
+    second_params = detail_calls[1]["params"] or {}
+    assert "a_bogus" in first_params, "首次请求应为带 a_bogus 的签名请求"
+    assert "Bytespider" not in (first_headers.get("User-Agent") or ""), "首次请求不应已是爬虫 UA"
+    assert "Bytespider" in (second_headers.get("User-Agent") or ""), "兜底请求应使用 Bytespider UA"
+    assert "a_bogus" not in second_params, "Bytespider 兜底应免签名"
+
+    # 解析结果断言: 兜底路径输出与签名路径同构 (1 个带封面视频)
+    assert len(result.video_contents) == 1, (
+        f"兜底应解出 1 个视频, 实际 contents={[type(c).__name__ for c in result.contents]}"
+    )
+    assert result.video_contents[0].cover is not None
+    assert result.title
+    assert "福建话" in result.title

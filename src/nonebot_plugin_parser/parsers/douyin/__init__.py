@@ -21,6 +21,12 @@ _PC_WEB_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
 
+# 抖音自家 SEO 爬虫 UA。detail 接口对 Bytespider 免 a_bogus 签名与登录态校验
+# (2026-08-23 实测: 同机同 IP 仅换 UA, 免签名请求即返回完整 aweme_detail JSON,
+# 浏览器 UA 则 200 + 空 body), 用作签名请求被风控时的免凭据兜底。
+# 注意: 字节若给爬虫加反查校验此路即失效, 只能当兜底不能当主力。
+_BYTE_SPIDER_UA = "Mozilla/5.0 (compatible; Bytespider; spider-feedback@bytedance.com; +https://zhanzhang.toutiao.com/)"
+
 # ABogus 签名器实例。内部状态在 get_value 调用时会 reset，实例可安全复用，
 # 避免每次 parse_slides 都重建对象（SM3 表/浏览器信息等初始化开销）。
 _ABOGUS = ABogus()
@@ -218,11 +224,33 @@ class DouyinParser(BaseParser):
         except httpx.HTTPError as e:
             raise ParseException(f"douyin detail API request failed for {video_id}: {e}") from e
 
-        # 空 body 防御: 抖音风控下 detail 接口常返回 200 + content-length: 0,
-        # 此时 msgspec 解码会抛 DecodeError(继承 ValueError), 这里主动转成
-        # ParseException, 由上层 note fallback 捕获后回退 parse_video。
+        # 空 body 防御: 抖音风控下 detail 接口常返回 200 + content-length: 0。
+        # 先换 Bytespider UA 免签名重打一次 (见 _BYTE_SPIDER_UA 注释), 仍空才转
+        # ParseException, 由上层 note/video fallback 捕获后回退 parse_video。
         if not response.content:
-            raise ParseException(f"douyin detail API returned empty body for {video_id} (likely risk-controlled)")
+            logger.warning(
+                f"douyin detail API returned empty body for {video_id} (likely risk-controlled), "
+                "retrying with Bytespider UA (no signature)"
+            )
+            try:
+                response = await self.request(
+                    detail_url,
+                    headers={"User-Agent": _BYTE_SPIDER_UA},
+                    params={
+                        "aweme_id": video_id,
+                        "aid": "6383",
+                        "version_code": "170400",
+                        "device_platform": "webapp",
+                    },
+                )
+            except httpx.HTTPError as e:
+                raise ParseException(
+                    f"douyin detail API empty body for {video_id}, Bytespider retry failed: {e}"
+                ) from e
+        if not response.content:
+            raise ParseException(
+                f"douyin detail API returned empty body for {video_id} after Bytespider retry (likely risk-controlled)"
+            )
 
         try:
             aweme_detail = slides.decode_aweme_detail(response.content)

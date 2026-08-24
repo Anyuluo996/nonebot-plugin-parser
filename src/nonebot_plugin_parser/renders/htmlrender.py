@@ -12,6 +12,7 @@ from . import resources
 from .base import ParseResult, ImageRenderer, pconfig
 from ..helper import UniHelper, UniMessage
 from ..parsers import ImageContent
+from ..parsers.data import path_to_data_uri
 from ..browser_retry import with_browser_retry
 
 # 根因实测(2026-08-22 对照实验): card 模板的 backdrop-filter 毛玻璃层在
@@ -48,10 +49,12 @@ class HtmlRenderer(ImageRenderer):
         await result.ensure_downloads_complete(img_only=True)
 
         logo = resources.RESOURCES_DIR / f"{result.platform.name}.png"
-        logo = logo.as_uri() if logo.exists() else None
+        # 0.8 渲染文档为 about:blank origin，file:// 子资源被 Chromium 拒绝
+        # （详见 parsers/data.py path_to_data_uri 注释），资源一律 data URI 内嵌。
+        logo = path_to_data_uri(logo) if logo.exists() else None
         font = pconfig.custom_font or resources.DEFAULT_FONT_PATH
-        font = font.as_uri() if font.exists() else None
-        play_button = resources.DEFAULT_VIDEO_BUTTON_PATH.as_uri()
+        font = path_to_data_uri(font) if font.exists() else None
+        play_button = path_to_data_uri(resources.DEFAULT_VIDEO_BUTTON_PATH)
 
         # 包裹 with_browser_retry：浏览器子进程崩溃导致 transport 关闭时，
         # 强制重建渲染 Application 并重试一次，避免单次解析失败。

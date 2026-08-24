@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import asyncio
+import mimetypes
 from typing import Any, TypedDict
 from asyncio import Task
 from pathlib import Path
@@ -11,6 +13,42 @@ from collections.abc import Iterator, Sequence, Awaitable
 from ..utils import fmt_duration
 from ..config import pconfig
 from ..exception import DownloadException
+
+# 模板内嵌资源（<img> / CSS @font-face）的 MIME 推断表，覆盖渲染链路常用类型。
+_MEDIA_MIME_BY_SUFFIX = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".ico": "image/x-icon",
+    ".ttf": "font/ttf",
+    ".otf": "font/otf",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+}
+
+
+def path_to_data_uri(path: Path) -> str | None:
+    """把本地文件读成 base64 data URI，供模板 img/@font-face 内嵌。
+
+    htmlrender 0.8 起渲染文档经 ``set_content`` 注入，document URL 为
+    about:blank、origin 为 null，Chromium 拒绝加载任何 ``file://`` 子资源
+    （实测本地图片破图、模板内 ``@font-face`` 字体回退到系统字体；而
+    ``goto(file://)`` 建 origin 的 0.7 行为在 0.8 顶层 API 无挂载入口）。
+    data URI 不依赖文档 origin，是与 0.8 渲染架构兼容的本地资源内嵌方式。
+    """
+    try:
+        payload = path.read_bytes()
+    except OSError:
+        return None
+    mime = (
+        _MEDIA_MIME_BY_SUFFIX.get(path.suffix.lower())
+        or mimetypes.guess_type(path.name)[0]
+        or "application/octet-stream"
+    )
+    return f"data:{mime};base64,{base64.b64encode(payload).decode('ascii')}"
 
 
 def repr_path_task(path_task: Path | Task[Path]) -> str:
@@ -43,8 +81,12 @@ class MediaContent:
 
     @property
     def path_uri(self):
+        """本地图片 data URI（htmlrender 0.8 渲染兼容）；未就绪/读取失败为 None。
+
+        仅媒体文件就绪（Path）时返回；下载中（Task）时为 None。
+        """
         if isinstance(self.path_task, Path):
-            return self.path_task.as_uri()
+            return path_to_data_uri(self.path_task)
 
     def __repr__(self) -> str:
         prefix = self.__class__.__name__
@@ -81,8 +123,9 @@ class VideoContent(MediaContent):
 
     @property
     def cover_path_uri(self):
+        """视频封面 data URI（htmlrender 0.8 渲染兼容）；未就绪/失败为 None。"""
         if isinstance(self.cover, Path):
-            return self.cover.as_uri()
+            return path_to_data_uri(self.cover)
 
     @property
     def display_duration(self) -> str:
@@ -140,8 +183,9 @@ class DynamicContent(MediaContent):
 
     @property
     def gif_path_uri(self):
+        """动图 data URI（htmlrender 0.8 渲染兼容）；未就绪/失败为 None。"""
         if isinstance(self.gif_path, Path):
-            return self.gif_path.as_uri()
+            return path_to_data_uri(self.gif_path)
 
     async def get_thumbnail_path(self) -> Path | None:
         """获取缩略图路径：优先封面，其次 GIF 首帧，最后从 ZIP 提取首帧"""
@@ -174,8 +218,9 @@ class DynamicContent(MediaContent):
 
     @property
     def cover_path_uri(self):
+        """封面/缩略图 data URI（htmlrender 0.8 渲染兼容）；未就绪/失败为 None。"""
         if isinstance(self.cover, Path):
-            return self.cover.as_uri()
+            return path_to_data_uri(self.cover)
 
     def __repr__(self) -> str:
         repr = f"DynamicContent({repr_path_task(self.path_task)}"
@@ -217,8 +262,9 @@ class Author:
 
     @property
     def avatar_path_uri(self):
+        """作者头像 data URI（htmlrender 0.8 渲染兼容）；未就绪/失败为 None。"""
         if isinstance(self.avatar, Path):
-            return self.avatar.as_uri()
+            return path_to_data_uri(self.avatar)
 
     def __repr__(self) -> str:
         repr = f"Author(name={self.name}"
@@ -273,8 +319,9 @@ class ParseResult:
 
     @property
     def cover_image_uri(self):
+        """渲染专用封面 data URI（htmlrender 0.8 渲染兼容）；未就绪/失败为 None。"""
         if isinstance(self.cover_image, Path):
-            return self.cover_image.as_uri()
+            return path_to_data_uri(self.cover_image)
 
     @property
     def header(self) -> str | None:

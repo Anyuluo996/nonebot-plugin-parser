@@ -49,8 +49,9 @@ class Renderer(ImageRenderer):
         await result.ensure_downloads_complete(img_only=True)
 
         from .resources import DEFAULT_AVATAR_PATH
+        from ..parsers.data import path_to_data_uri
 
-        default_avatar = DEFAULT_AVATAR_PATH.as_uri()
+        default_avatar = path_to_data_uri(DEFAULT_AVATAR_PATH)
         variables = {
             "result": result,
             "default_avatar": default_avatar,

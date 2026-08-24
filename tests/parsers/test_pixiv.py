@@ -190,6 +190,7 @@ async def test_pixiv_html_render(tmp_path):
             pytest.skip("chromium binary not installed (run: playwright install chromium)")
 
     from nonebot_plugin_parser.renders import resources
+    from nonebot_plugin_parser.parsers.data import path_to_data_uri
     from nonebot_plugin_parser.renders.base import pconfig
 
     parser = PixivParser()
@@ -202,10 +203,10 @@ async def test_pixiv_html_render(tmp_path):
     await result.ensure_downloads_complete()
 
     logo = resources.RESOURCES_DIR / f"{result.platform.name}.png"
-    logo_path = logo.as_uri() if logo.exists() else None
+    logo_path = path_to_data_uri(logo) if logo.exists() else None
     font = pconfig.custom_font or resources.DEFAULT_FONT_PATH
-    font_path = font.as_uri() if font.exists() else None
-    play_button = resources.DEFAULT_VIDEO_BUTTON_PATH.as_uri()
+    font_path = path_to_data_uri(font) if font.exists() else None
+    play_button = path_to_data_uri(resources.DEFAULT_VIDEO_BUTTON_PATH)
 
     templates_dir = Path(__file__).parent.parent.parent / "src" / "nonebot_plugin_parser" / "renders" / "templates"
 

@@ -192,14 +192,18 @@ jobs:
         uses: actions/cache@v6
         id: playwright-cache
         with:
+          # htmlrender 0.8 起浏览器二进制存放在 localstore 数据目录（插件在加载时
+          # 常驻设置 PLAYWRIGHT_BROWSERS_PATH 指向该目录），不再使用 ms-playwright
+          # 默认缓存目录
           path: |
-            ~/.cache/ms-playwright
-            ~/work/nonebot-plugin-parser/nonebot-plugin-parser/data/nonebot_plugin_htmlrender
+            ~/.local/share/nonebot2/nonebot_plugin_htmlrender
           key: ${{ runner.os }}-playwright-${{ hashFiles('**/uv.lock') }}
           restore-keys: ${{ runner.os }}-playwright-
 
       - name: Install Playwright browsers
         if: steps.playwright-cache.outputs.cache-hit != 'true'
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ~/.local/share/nonebot2/nonebot_plugin_htmlrender
         run: uv run playwright install chromium-headless-shell --with-deps
 
       - name: Run Pytest Render

@@ -21,7 +21,16 @@ async def test_screenshot_url_without_htmlrender(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_screenshot_url_real():
-    """真实截图（需 htmlrender + chromium + 网络），不可用则跳过"""
+    """真实截图（需 htmlrender + chromium + 网络），不可用则跳过
+
+    CI 的 Test job 不预装浏览器，htmlrender 0.8 的自动下载在 CI 上耗时不稳定
+    （~100MB 下载），故 CI 环境直接跳过，仅本地手测运行。
+    """
+    import os
+
+    if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
+        pytest.skip("CI 环境跳过真实截图（浏览器自动下载不稳定），本地手测运行")
+
     from nonebot_plugin_parser.browser import screenshot_url, is_browser_available
 
     if not is_browser_available():

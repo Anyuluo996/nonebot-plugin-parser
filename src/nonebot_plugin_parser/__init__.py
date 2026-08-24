@@ -20,6 +20,18 @@ os.environ.setdefault("RENDER__RESOURCES__LOCAL_ACCESS__ALLOW_ANY_PATH", "true")
 # 其模块级 require 不可靠，这里在插件加载时统一 require 一次。
 try:
     require("nonebot_plugin_htmlrender")
+    # htmlrender 0.8.1 缺陷规避: 自动安装的 `playwright install` 子进程不带
+    # PLAYWRIGHT_BROWSERS_PATH（装到 playwright 默认目录），而浏览器启动只认
+    # localstore 的 storage 目录，全新环境会陷入 install_required 循环。
+    # 常驻设置该变量统一两端路径（htmlrender 的 browsers_path_scope 对已
+    # 存在的值无副作用）。副作用: 同进程内直接使用 playwright 库的其他代码
+    # 也会在该目录找浏览器。
+    import nonebot_plugin_localstore as _store
+
+    os.environ.setdefault(
+        "PLAYWRIGHT_BROWSERS_PATH",
+        str(_store.get_data_dir("nonebot_plugin_htmlrender")),
+    )
 except Exception:  # 未安装 htmlrender extra 时走 htmlkit 回退，不阻塞插件加载
     logger.debug("nonebot_plugin_htmlrender 未安装，渲染将回退 htmlkit")
 

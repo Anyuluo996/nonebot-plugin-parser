@@ -26,6 +26,10 @@ try:
     # 常驻设置该变量统一两端路径（htmlrender 的 browsers_path_scope 对已
     # 存在的值无副作用）。副作用: 同进程内直接使用 playwright 库的其他代码
     # 也会在该目录找浏览器。
+    # 注意: import localstore 前必须 require——直接 import 会让 nonebot 的
+    # 插件管理器拒绝后续加载（Module ... is not loaded as a plugin），
+    # 且旧版 htmlrender(0.6/0.7 未装时)的 require 链不会加载 localstore。
+    require("nonebot_plugin_localstore")
     import nonebot_plugin_localstore as _store
 
     os.environ.setdefault(

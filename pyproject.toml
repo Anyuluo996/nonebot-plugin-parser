@@ -69,12 +69,12 @@ Repository = "https://github.com/fllesser/nonebot-plugin-parser"
 
 [project.optional-dependencies]
 htmlkit = ["nonebot-plugin-htmlkit>=0.1.0rc4"]
-htmlrender = ["nonebot-plugin-htmlrender[playwright]>=0.6.7,<0.8.0"]
+htmlrender = ["nonebot-plugin-htmlrender[playwright]>=0.8.1,<0.9.0"]
 ytdlp = ["yt-dlp[default]>=2026.3.17"]
 emosvg = ["emosvg>=0.1.7"]
 all = [
   "nonebot-plugin-htmlkit>=0.1.0rc4",
-  "nonebot-plugin-htmlrender[playwright]>=0.6.7,<0.8.0",
+  "nonebot-plugin-htmlrender[playwright]>=0.8.1,<0.9.0",
   "yt-dlp[default]>=2026.3.17",
   "emosvg>=0.1.7",
 ]
@@ -91,7 +91,7 @@ dev = [
 extras = [
   "emosvg>=0.1.7",
   "nonebot-plugin-htmlkit>=0.1.0rc4",
-  "nonebot-plugin-htmlrender[playwright]>=0.6.7,<0.8.0",
+  "nonebot-plugin-htmlrender[playwright]>=0.8.1,<0.9.0",
   "yt-dlp[default]>=2026.3.17",
   "types-yt-dlp>=2026.3.17.20260408",
 ]

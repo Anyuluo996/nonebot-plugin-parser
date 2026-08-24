@@ -170,6 +170,11 @@
 
     uv add "nonebot-plugin-parser[htmlrender]"
 
+> 自 `nonebot-plugin-htmlrender 0.8` 起, 浏览器二进制由 htmlrender 自行管理
+> (存放在 `localstore` 数据目录, 首次渲染自动下载), 无需再手动执行
+> `playwright install chromium`; 渲染 provider 与本地资源访问的默认值
+> 已由本插件在加载时自动注入, 无需额外配置
+
 现版本推荐组合
 
     uv add "nonebot-plugin-parser[ytdlp,emosvg]"
@@ -359,7 +364,8 @@ parser_emoji_cdn="https://emojicdn.elk.sh"
 parser_emoji_style="facebook"
 
 # [可选] 短链重定向到暂不支持解析的页面（如 B站会员购商城）时，是否启用浏览器截图兜底
-# 需安装 [htmlrender] extras: uv add "nonebot-plugin-parser[htmlrender]" 并执行 playwright install chromium
+# 需安装 [htmlrender] extras: uv add "nonebot-plugin-parser[htmlrender]"
+# (htmlrender 0.8 起浏览器首次渲染时自动下载, 无需手动 playwright install)
 parser_screenshot=True
 
 # [可选] 截图是否整页（默认仅首屏）

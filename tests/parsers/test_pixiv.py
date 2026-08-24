@@ -164,7 +164,7 @@ async def test_pixiv_html_render(tmp_path):
 
     注意: 此测试实为渲染/像素测试, 但放在 tests/parsers/ 下。CI 的 Test Parsers job
     只装 python 包 (uv sync) 不装 chromium 二进制 (playwright install), 而本测试调用
-    template_to_pic → get_browser → playwright.launch 必须有 chromium 才能跑。
+    render_template → playwright 必须有 chromium 才能跑。
     故 skip 需同时挡 python 包 import 和 chromium 二进制存在, 不能只 try import。
     """
     from pathlib import Path
@@ -177,7 +177,7 @@ async def test_pixiv_html_render(tmp_path):
         pytest.skip("playwright not available")
 
     try:
-        from nonebot_plugin_htmlrender import template_to_pic
+        from nonebot_plugin_htmlrender import render_template
     except Exception:
         pytest.skip("nonebot_plugin_htmlrender not available")
 
@@ -209,18 +209,19 @@ async def test_pixiv_html_render(tmp_path):
 
     templates_dir = Path(__file__).parent.parent.parent / "src" / "nonebot_plugin_parser" / "renders" / "templates"
 
-    png_bytes = await template_to_pic(
+    artifact = await render_template(
         template_path=str(templates_dir),
         template_name="card.html.jinja",
-        templates={
+        variables={
             "result": result,
             "logo": logo_path,
             "font": font_path,
             "play_button": play_button,
         },
-        pages={"viewport": {"width": 800, "height": 100}},
+        width=800,
     )
 
     out_path = tmp_path / "test_render_pixiv_html.png"
+    png_bytes = bytes(artifact)
     out_path.write_bytes(png_bytes)
     logger.info(f"HTML 渲染图片已保存: {out_path} ({len(png_bytes) / 1024:.1f} KB)")

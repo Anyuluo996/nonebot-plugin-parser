@@ -22,18 +22,13 @@ from .._format import format_num
 async def _fetch_token_id() -> str | None:
     """通过浏览器打开小黑盒首页，执行 JS 获取 x_xhh_tokenid。"""
     try:
-        from nonebot_plugin_htmlrender import get_new_page
+        from nonebot_plugin_htmlrender import get_default_application
     except ImportError:
         return None
     try:
-        # nonebot-plugin-htmlrender 0.7.x 的 get_new_page 返回类型标注为 object，
-        # 实际是 playwright Page，cast 收窄避免 basedpyright 误报。
-        from typing import cast
-
-        from playwright.async_api import Page
-
-        async with get_new_page(viewport={"width": 1280, "height": 800}) as raw_page:
-            page = cast(Page, raw_page)
+        # htmlrender 0.8: page() yield 的就是 playwright Page
+        app = get_default_application()
+        async with app.extensions.playwright.page(viewport={"width": 1280, "height": 800}) as page:
             await page.goto("https://www.xiaoheihe.cn/", wait_until="networkidle", timeout=20_000)
             await page.wait_for_timeout(1500)
             token = await page.evaluate("window.SMSdk && window.SMSdk.getDeviceId ? window.SMSdk.getDeviceId() : null")
@@ -49,18 +44,14 @@ async def _browser_fetch_link(link_id: str) -> dict | None:
     浏览器原生 TLS 指纹/JS/cookie 全带上，绕过风控最可靠（作为兜底）。
     """
     try:
-        from nonebot_plugin_htmlrender import get_new_page
+        from nonebot_plugin_htmlrender import get_default_application
     except ImportError:
         return None
     try:
         url = build_url(link_id)
-        # 同 _fetch_token_id，cast 绕过 htmlrender 0.7.x 的 object 返回类型。
-        from typing import cast
-
-        from playwright.async_api import Page
-
-        async with get_new_page(viewport={"width": 1280, "height": 800}) as raw_page:
-            page = cast(Page, raw_page)
+        # 同 _fetch_token_id，htmlrender 0.8 的 page() 直接返回 playwright Page
+        app = get_default_application()
+        async with app.extensions.playwright.page(viewport={"width": 1280, "height": 800}) as page:
             await page.goto("https://www.xiaoheihe.cn/", wait_until="networkidle", timeout=20_000)
             await page.wait_for_timeout(1500)
             data = await page.evaluate(

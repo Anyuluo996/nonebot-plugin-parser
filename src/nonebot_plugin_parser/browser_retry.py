@@ -1,17 +1,16 @@
 """Playwright 浏览器渲染的传输断连兜底重试。
 
-nonebot_plugin_htmlrender 维护一个全局浏览器单例（`_browser`），但其
-`get_browser()` 仅用 `_browser.is_connected()` 判断可用性。当浏览器子进程
-崩溃（OOM / 信号 / 容器资源限制）时，Python 侧 `is_connected()` 仍可能返回
-True，而底层 asyncio 传输（`WriteUnixTransport`）已经关闭，下一次
-`browser.new_page()` 会抛出：
+nonebot_plugin_htmlrender 0.8 的 playwright provider 用 ExecutionLeaseProvider
+管理全局浏览器 lease，`_acquire()` 时若 lease 已死会自动重建；但其存活判据
+仍是 `browser.is_connected()`——浏览器子进程崩溃（OOM / 信号 / 容器资源限制）
+时 Python 侧 `is_connected()` 可能仍返回 True，而底层 asyncio 传输
+（`WriteUnixTransport`）已经关闭，下一次操作会抛出：
 
     RuntimeError: Browser.new_page: unable to perform operation on
     <WriteUnixTransport closed=True ...>; the handler is closed
 
-本模块提供 `with_browser_retry`，在捕获此类"传输已关闭"错误时强制
-`shutdown_render()` + `startup_render()` 重启浏览器（nonebot-plugin-htmlrender
-0.7.x API；0.6.x 回退到 `shutdown_browser()` + `init_browser()`），然后重试一次。
+本模块提供 `with_browser_retry`，在捕获此类"传输已关闭"错误时强制重建渲染
+Application 并重试一次（nonebot-plugin-htmlrender 0.8 API）。
 """
 
 from typing import TypeVar
@@ -42,35 +41,27 @@ def _is_browser_dead_error(exc: BaseException) -> bool:
 
 
 async def _restart_global_browser() -> None:
-    """强制重启 nonebot_plugin_htmlrender 的全局浏览器实例。
+    """强制重建 nonebot_plugin_htmlrender 的渲染 Application。
 
-    nonebot-plugin-htmlrender 0.7.x 用 startup_render/shutdown_render 取代了
-    旧的 init_browser/shutdown_browser；为兼容两个版本，这里按可用性动态选择。
+    htmlrender 0.8 的 Application 在 aclose() 后不可复用（再 startup() 会
+    永久拒绝），重启 = aclose 旧实例 → 重置进程默认值（bootstrap 安装的
+    factory 会重新构建全新组合，浏览器子进程随之重建）→ startup()。
     """
-    try:
-        # 0.7.x: startup_render / shutdown_render
-        from nonebot_plugin_htmlrender import startup_render, shutdown_render  # type: ignore
-
-        shutdown = shutdown_render
-        startup = startup_render
-    except ImportError:
-        try:
-            # 0.6.x 回退: init_browser / shutdown_browser
-            from nonebot_plugin_htmlrender import init_browser, shutdown_browser  # type: ignore
-
-            shutdown = shutdown_browser  # type: ignore[assignment]
-            startup = init_browser  # type: ignore[assignment]
-        except ImportError:
-            logger.error("nonebot_plugin_htmlrender 未安装，无法重启浏览器")
-            return
+    from nonebot_plugin_htmlrender import (
+        get_default_application,
+        set_default_application,
+    )
 
     logger.warning("检测到浏览器传输已关闭，正在强制重启 Playwright…")
+    app = get_default_application()
     try:
-        await shutdown()
+        await app.aclose()  # 幂等；浏览器已死时 close 可能抛错，抑制
     except Exception as e:
-        logger.debug(f"shutdown 抑制异常: {e!r}")
+        logger.debug(f"aclose 抑制异常: {e!r}")
+    set_default_application(None)
+    new_app = get_default_application()
     try:
-        await startup()
+        await new_app.startup()
     except Exception:
         logger.exception("重启浏览器失败")
         raise
@@ -85,7 +76,7 @@ async def with_browser_retry(
     """执行一次浏览器渲染调用，传输断连时自动重启浏览器并重试。
 
     Args:
-        func: 无参异步可调用对象，内部真正发起一次 `template_to_pic` / `get_new_page` 调用。
+        func: 无参异步可调用对象，内部真正发起一次 `render_template` / `page()` 调用。
         retries: 遇到传输断连时的最大重试次数（每次重试前都会重启浏览器）。
 
     Raises:

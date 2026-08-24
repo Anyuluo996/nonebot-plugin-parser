@@ -60,22 +60,17 @@ async def screenshot_url(
     if not is_browser_available():
         raise RuntimeError("nonebot_plugin_htmlrender 未安装，无法截图")
 
-    from nonebot_plugin_htmlrender import get_new_page
+    from nonebot_plugin_htmlrender import get_default_application
 
     from .browser_retry import with_browser_retry
 
     logger.info(f"开始截图（手机模式）: {url}")
 
     async def _do_screenshot() -> tuple[bytes, str]:
-        # 注: nonebot-plugin-htmlrender 0.7.x 的 get_new_page 返回类型标注为
-        # AsyncIterator[object] (库自身类型缺陷)，但实际 yield 的是 playwright Page。
-        # 用 cast 把 page 收窄到 Page，避免 basedpyright 误报 attribute 访问。
-        from typing import cast
-
-        from playwright.async_api import Page
-
-        async with get_new_page(**_MOBILE_PAGE_KWARGS) as raw_page:
-            page = cast(Page, raw_page)
+        # htmlrender 0.8: app.extensions.playwright.page() 透传 Browser.new_page
+        # 签名，yield 的就是 playwright Page（0.7 需 cast 绕过 object 标注的问题已不存在）
+        app = get_default_application()
+        async with app.extensions.playwright.page(**_MOBILE_PAGE_KWARGS) as page:
             await page.goto(url, wait_until="networkidle", timeout=timeout_ms)
             if extra_wait_ms > 0:
                 await page.wait_for_timeout(extra_wait_ms)

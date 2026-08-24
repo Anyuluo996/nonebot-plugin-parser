@@ -6,7 +6,7 @@ from typing_extensions import override
 from nonebot import logger, require
 
 require("nonebot_plugin_htmlrender")
-from nonebot_plugin_htmlrender import template_to_pic
+from nonebot_plugin_htmlrender import render_template
 
 from . import resources
 from .base import ParseResult, ImageRenderer, pconfig
@@ -54,20 +54,23 @@ class HtmlRenderer(ImageRenderer):
         play_button = resources.DEFAULT_VIDEO_BUTTON_PATH.as_uri()
 
         # 包裹 with_browser_retry：浏览器子进程崩溃导致 transport 关闭时，
-        # 强制重启全局浏览器实例并重试一次，避免单次解析失败。
-        return await with_browser_retry(
-            lambda: template_to_pic(
+        # 强制重建渲染 Application 并重试一次，避免单次解析失败。
+        async def _render_card() -> bytes:
+            # htmlrender 0.8: render_template 返回 RenderedImage，取 .data 为 PNG bytes
+            artifact = await render_template(
                 template_path=str(self.templates_dir),
                 template_name="card.html.jinja",
-                templates={
+                variables={
                     "result": result,
                     "logo": logo,
                     "font": font,
                     "play_button": play_button,
                 },
-                pages={"viewport": {"width": 800, "height": 100}},
+                width=800,
             )
-        )
+            return bytes(artifact)
+
+        return await with_browser_retry(_render_card)
 
     @override
     async def render_messages(self, result: ParseResult):

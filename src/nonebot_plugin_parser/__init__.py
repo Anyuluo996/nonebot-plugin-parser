@@ -1,7 +1,27 @@
+import os
 import asyncio
 
 from nonebot import logger, require, get_driver
 from nonebot.plugin import PluginMetadata, inherit_supported_adapters
+
+# htmlrender 0.8 起渲染配置迁入 `render` 命名空间且默认不选 provider（无位图
+# 渲染能力）、默认拒绝一切本地路径读取（模板/字体加载直接失败）。parser 的
+# 渲染栈固定为 playwright（[htmlrender] extra 即 nonebot-plugin-htmlrender
+# [playwright]），模板在插件包内、字体/缓存路径用户可任意指定，无法用
+# allowed_paths 枚举。require htmlrender 前注入默认值保持 0.7 行为；
+# setdefault 不覆盖用户显式配置（如切换 takumi provider 的部署）。
+os.environ.setdefault("RENDER__PROVIDER", "playwright")
+os.environ.setdefault("RENDER__RESOURCES__LOCAL_ACCESS__ALLOW_ANY_PATH", "true")
+
+# htmlrender 0.8 的 playwright provider 经 localstore 取存储目录，localstore 按
+# 调用栈解析"caller 插件"——htmlrender 必须通过 require 注册为 nonebot 插件，
+# 直接 from nonebot_plugin_htmlrender import 只执行模块级 bootstrap 不注册，
+# 运行时会抛 "Cannot detect caller plugin"。渲染器模块都是延迟 import 的，
+# 其模块级 require 不可靠，这里在插件加载时统一 require 一次。
+try:
+    require("nonebot_plugin_htmlrender")
+except Exception:  # 未安装 htmlrender extra 时走 htmlkit 回退，不阻塞插件加载
+    logger.debug("nonebot_plugin_htmlrender 未安装，渲染将回退 htmlkit")
 
 require("nonebot_plugin_alconna")
 require("nonebot_plugin_uninfo")

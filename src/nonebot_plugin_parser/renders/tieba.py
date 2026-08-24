@@ -6,10 +6,9 @@ from nonebot import logger, require
 from .base import MAX_LONG_IMAGE_HEIGHT, UniHelper, UniMessage, ParseResult, ImageRenderer
 
 # 优先用 htmlrender（容器/默认渲染栈已安装），回退到 htmlkit
+_template_to_pic = None  # htmlkit 后端符号, 仅 _BACKEND == "htmlkit" 时被赋值
 try:
     require("nonebot_plugin_htmlrender")
-    from nonebot_plugin_htmlrender import template_to_pic as _template_to_pic
-
     _BACKEND = "htmlrender"
 except Exception:  # pragma: no cover - 依赖可选
     try:
@@ -18,7 +17,6 @@ except Exception:  # pragma: no cover - 依赖可选
 
         _BACKEND = "htmlkit"
     except Exception:
-        _template_to_pic = None  # type: ignore[assignment]
         _BACKEND = None
         logger.warning("贴吧渲染器: htmlrender 与 htmlkit 均不可用，将无法渲染长图")
 
@@ -32,36 +30,39 @@ class Renderer(ImageRenderer):
 
     @override
     async def render_image(self, result: ParseResult) -> bytes:
-        if _template_to_pic is None:
-            raise RuntimeError("贴吧渲染器: 无可用的 template_to_pic 后端 (htmlrender/htmlkit)")
+        if _BACKEND is None:
+            raise RuntimeError("贴吧渲染器: 无可用的渲染后端 (htmlrender/htmlkit)")
 
         # 回复楼层图片（extra["posts"].images / avatar）需在模板渲染前下完，
-        # 否则 template_to_pic 访问 .path_uri 时还是 Task，取不到本地路径。
+        # 否则渲染时访问 .path_uri 时还是 Task，取不到本地路径。
         # 仅等图片资源(img_only), 不等视频 — 视频由 render_contents 独立发送。
         await result.ensure_downloads_complete(img_only=True)
 
         from .resources import DEFAULT_AVATAR_PATH
 
         default_avatar = DEFAULT_AVATAR_PATH.as_uri()
+        variables = {
+            "result": result,
+            "default_avatar": default_avatar,
+        }
 
         if _BACKEND == "htmlrender":
-            return await _template_to_pic(
+            from nonebot_plugin_htmlrender import render_template
+
+            artifact = await render_template(
                 template_path=str(self.templates_dir),
                 template_name="tieba.html.jinja",
-                templates={
-                    "result": result,
-                    "default_avatar": default_avatar,
-                },
-                pages={"viewport": {"width": 720, "height": 100}},  # type: ignore[call-arg]
+                variables=variables,
+                width=720,
             )
+            return bytes(artifact)
         else:
+            if _template_to_pic is None:  # pragma: no cover - _BACKEND 守卫已排除
+                raise RuntimeError("贴吧渲染器: htmlkit 后端不可用")
             return await _template_to_pic(
                 self.templates_dir.as_posix(),
                 "tieba.html.jinja",
-                templates={
-                    "result": result,
-                    "default_avatar": default_avatar,
-                },
+                templates=variables,
             )
 
     @override

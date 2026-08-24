@@ -10,6 +10,11 @@ if Path(".env.test").exists():
 else:
     os.environ["ENVIRONMENT"] = "dev"
 
+# htmlrender 0.8: provider 默认 None（无位图渲染），显式选 playwright 保持
+# 与 0.7 默认行为一致。nonebot.init() 的 kwargs 在 env 文件存在时会被
+# pydantic-settings 的 extra 校验丢弃，环境变量才是可靠注入路径。
+os.environ.setdefault("RENDER__PROVIDER", "playwright")
+
 
 def pytest_collection_modifyitems(items: list[pytest.Item]):
     pytest_asyncio_tests = (item for item in items if is_async_test(item))
@@ -24,6 +29,9 @@ async def init_nonebot():
     from nonebot.adapters.onebot.v11 import Adapter as OnebotV11Adapter
 
     # 初始化 NoneBot
+    # htmlrender 0.8 起 provider 默认 None（无位图渲染能力），测试环境通过
+    # RENDER__PROVIDER 环境变量显式选 playwright（见模块顶层 os.environ），
+    # 与 0.7 默认行为一致；startup 默认 OFF = 首次渲染懒启动
     nonebot.init()
 
     # 加载适配器

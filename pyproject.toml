@@ -54,8 +54,9 @@ dependencies = [
   "bilibili-api-python>=17.4.2,<18.0.0",
   "qqmusic-api-python>=0.7.2,<1.0.0",
   # typing_extensions: qqmusic_api 0.7.2 需要 from typing_extensions import sentinel,
-  # 该符号自 4.13.0 起加入; qqmusic-api-python 元数据未声明此下界, 显式约束避免装到旧版
-  "typing_extensions>=4.13.0,<5.0.0",
+  # 该符号自 4.16.0 才加入 (逐版本探测 4.12.2/4.13.0/4.14.0/4.15.0 均无);
+  # qqmusic-api-python 元数据只声明 typing-extensions>=4.12.2, 显式约束避免装到旧版
+  "typing_extensions>=4.16.0,<5.0.0",
   "nonebot-plugin-alconna>=0.60.4,<1.0.0",
   "nonebot-plugin-apscheduler>=0.5.0,<1.0.0",
   "nonebot-plugin-localstore>=0.7.4,<1.0.0",

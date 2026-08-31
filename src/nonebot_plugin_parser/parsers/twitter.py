@@ -2,10 +2,11 @@ import re
 from typing import Literal, ClassVar
 
 from msgspec import Struct, field
+from nonebot import logger
 from msgspec.json import Decoder
 
 from .base import BaseParser, PlatformEnum, handle
-from .data import Platform, ParseResult, MediaContent
+from .data import Platform, ParseResult, ImageContent, MediaContent
 
 
 class MediaElement(Struct):
@@ -42,6 +43,78 @@ class VxTwitterResponse(Struct):
 
 decoder = Decoder(VxTwitterResponse)
 
+
+# ---- fxtwitter 文章结构 (X Articles, vxtwitter 只返回预览, 全文在 fxtwitter) ----
+
+
+class FxMediaInfo(Struct):
+    typename: str | None = field(default=None, name="__typename")
+    original_img_url: str | None = None
+
+
+class FxMediaEntity(Struct):
+    media_id: str
+    media_info: FxMediaInfo | None = None
+
+
+class FxCoverMedia(Struct):
+    media_info: FxMediaInfo | None = None
+
+
+class FxMediaItem(Struct):
+    media_id: str = field(name="mediaId")
+
+
+class FxEntityValueData(Struct):
+    media_items: list[FxMediaItem] = field(default_factory=list, name="mediaItems")
+    tweet_id: str | None = field(default=None, name="tweetId")
+
+
+class FxEntityValue(Struct):
+    type: str | None = None
+    data: FxEntityValueData = field(default_factory=FxEntityValueData)
+
+
+class FxEntity(Struct):
+    key: str
+    value: FxEntityValue
+
+
+class FxEntityRange(Struct):
+    key: int
+    offset: int = 0
+    length: int = 0
+
+
+class FxBlock(Struct):
+    type: str
+    text: str = ""
+    entityRanges: list[FxEntityRange] = field(default_factory=list)
+
+
+class FxArticleContent(Struct):
+    blocks: list[FxBlock] = field(default_factory=list)
+    entityMap: list[FxEntity] = field(default_factory=list)
+
+
+class FxArticle(Struct):
+    title: str | None = None
+    preview_text: str | None = None
+    cover_media: FxCoverMedia | None = None
+    content: FxArticleContent = field(default_factory=FxArticleContent)
+    media_entities: list[FxMediaEntity] = field(default_factory=list)
+
+
+class FxTweet(Struct):
+    article: FxArticle | None = None
+
+
+class FxTwitterResponse(Struct):
+    tweet: FxTweet | None = None
+
+
+fx_decoder = Decoder(FxTwitterResponse)
+
 # 转发链递归深度上限，防止循环引用/极深嵌套导致 RecursionError 崩溃
 MAX_REPOST_DEPTH = 5
 
@@ -60,9 +133,55 @@ class TwitterParser(BaseParser):
         api_url = url.replace("x.com", "api.vxtwitter.com")
         response = await self.request(api_url)
         data = decoder.decode(response.content)
-        return self._collect_result(data)
 
-    def _collect_result(self, data: VxTwitterResponse, depth: int = 0) -> ParseResult:
+        # 长文(文章)推文: vxtwitter 只给预览, 回源 fxtwitter 拿全文
+        article: FxArticle | None = None
+        if isinstance(data.article, Article):
+            try:
+                article = await self._fetch_fx_article(url)
+            except Exception as e:
+                logger.warning(f"获取 X 文章全文失败, 降级为预览: {e!r}")
+
+        return self._collect_result(data, article)
+
+    async def _fetch_fx_article(self, url: str) -> FxArticle | None:
+        api_url = url.replace("x.com", "api.fxtwitter.com")
+        response = await self.request(api_url)
+        data = fx_decoder.decode(response.content)
+        return data.tweet.article if data.tweet else None
+
+    def _article_to_graphics(self, article: FxArticle) -> list[str | ImageContent]:
+        """文章 blocks 转图文列表: 文本段落 + 内嵌图片(组), 供渲染器长文分页"""
+        graphics: list[str | ImageContent] = []
+        if article.cover_media and article.cover_media.media_info:
+            if cover_url := article.cover_media.media_info.original_img_url:
+                graphics.append(self.create_image_content(cover_url))
+
+        media_by_id = {m.media_id: m for m in article.media_entities}
+        entities = {e.key: e.value for e in article.content.entityMap}
+        for block in article.content.blocks:
+            if block.type == "atomic":
+                for entity_range in block.entityRanges:
+                    entity = entities.get(str(entity_range.key))
+                    if entity is None:
+                        continue
+                    if entity.type == "MEDIA":
+                        for item in entity.data.media_items:
+                            media = media_by_id.get(item.media_id)
+                            if media and media.media_info and media.media_info.original_img_url:
+                                graphics.append(self.create_image_content(media.media_info.original_img_url))
+                    elif entity.type == "TWEET" and entity.data.tweet_id:
+                        graphics.append(f"[内嵌推文] https://x.com/i/web/status/{entity.data.tweet_id}")
+            elif text := block.text.strip():
+                graphics.append(text)
+        return graphics
+
+    def _collect_result(
+        self,
+        data: VxTwitterResponse,
+        article: FxArticle | None = None,
+        depth: int = 0,
+    ) -> ParseResult:
         author = self.create_author(data.user_name, data.user_profile_image_url)
         title = data.article.title if isinstance(data.article, Article) else data.article
 
@@ -81,14 +200,26 @@ class TwitterParser(BaseParser):
             elif media.type == "image":
                 contents.append(self.create_image_content(media.url))
 
+        # 文章推文: 正文 + 内嵌图全部放进 graphics, 由渲染器分页出长图;
+        # text 里的原始内容只是文章链接, 丢弃
+        graphics: list[str | ImageContent] = []
+        text = data.text
+        if article is not None:
+            graphics = self._article_to_graphics(article)
+            text = None
+        elif isinstance(data.article, Article) and data.article.preview_text:
+            # fxtwitter 拿不到全文时至少展示预览
+            text = data.article.preview_text
+
         # 限制转发链递归深度，防止循环引用/极深嵌套导致 RecursionError 崩溃
-        repost = self._collect_result(data.qrt, depth + 1) if data.qrt and depth < MAX_REPOST_DEPTH else None
+        repost = self._collect_result(data.qrt, depth=depth + 1) if data.qrt and depth < MAX_REPOST_DEPTH else None
 
         return self.result(
             author=author,
             title=title,
-            text=data.text,
+            text=text,
             timestamp=data.date_epoch,
             contents=contents,
+            graphics=graphics,
             repost=repost,
         )

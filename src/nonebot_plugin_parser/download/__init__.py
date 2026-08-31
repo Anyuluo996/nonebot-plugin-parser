@@ -332,8 +332,13 @@ class StreamDownloader:
             file_name = generate_file_name(url)
         file_path = self.cache_dir / file_name
         if file_path.exists():
-            logger.debug(f"下载缓存命中: {file_path.name}")
-            return file_path
+            if file_path.stat().st_size == 0:
+                # 历史遗留的 0 字节缓存（下载中途被取消时 aiofiles 已建文件但未写入），
+                # 视为未下载重新拉取，否则坏缓存会被永久命中
+                logger.warning("下载缓存存在但为 0 字节, 重新下载: {}", file_path.name)
+            else:
+                logger.debug(f"下载缓存命中: {file_path.name}")
+                return file_path
 
         headers = {**self.headers, **(ext_headers or {})}
         if "Referer" not in headers:

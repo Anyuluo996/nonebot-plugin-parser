@@ -86,6 +86,34 @@ async def test_gif():
 
 
 @pytest.mark.asyncio
+async def test_article():
+    from nonebot_plugin_parser.parsers import TwitterParser
+
+    parser = TwitterParser()
+
+    url = "https://x.com/MANISH1027512/status/2094340907613176189?s=20"  # 长文(文章)
+
+    keyword, searched = parser.search_url(url)
+    assert searched, "无法匹配 URL"
+
+    logger.info(f"{url} | 开始解析推特文章")
+    result = await parser.parse(keyword, searched)
+    logger.debug(f"{url} | 解析结果: \n{result}")
+
+    assert result.title, "文章标题为空"
+    assert result.graphics, "文章图文内容为空"
+    # 文章 text 只是原始链接, 应置空
+    assert result.text is None, "文章 text 应为空"
+    paragraphs = [g for g in result.graphics if isinstance(g, str)]
+    images = [g for g in result.graphics if not isinstance(g, str)]
+    assert paragraphs, "文章正文段落为空"
+    assert images, "文章内嵌图片为空"
+    # 抽查首图可下载
+    path = await images[0].get_path()
+    assert path.exists(), "文章图片不存在"
+
+
+@pytest.mark.asyncio
 async def test_repost():
     from nonebot_plugin_parser.parsers import TwitterParser
 

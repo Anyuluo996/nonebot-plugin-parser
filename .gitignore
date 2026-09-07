@@ -177,3 +177,11 @@ scripts/
 # 本地 issue 分析草稿（同目录另有入库的分析文档）
 docs/issues/REPLY_FORCE_PARSE_AND_CARD_SUPPORT.md
 docs/issues/TelegramChatExportSlowScan.md
+
+# 测试运行时再生的调试输出（渲染管线缓存等）
+tests/pipeline_output/
+tests/render_output/
+render_result_combined.md
+success_桌面端_UA_+_Referer.json
+test_opus_1159504791855955984.json
+dynamic_api_response.json

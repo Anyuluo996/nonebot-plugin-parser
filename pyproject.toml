@@ -145,7 +145,9 @@ plugins = ["nonebot_plugin_parser"]
 
 [tool.poe.tasks]
 test-other = "pytest tests/others --cov=src --cov-report=xml --junitxml=junit.xml -n auto"
-test-parser = "pytest tests/parsers --cov=src --cov-report=xml --junitxml=junit.xml -n auto"
+# 真网络解析测试按 runner IP 吃平台风控(B站 412/-352、抖音数据中心 IP 全形态 403),
+# 失败自动重跑两次吸收瞬时抖动; rerunfailures 与 xdist 兼容, 重跑只发生在失败用例上
+test-parser = "pytest tests/parsers --cov=src --cov-report=xml --junitxml=junit.xml -n auto --reruns 2 --reruns-delay 20"
 test-render = "pytest tests/renders --cov=src --cov-report=xml --junitxml=junit.xml"
 bump = "bump-my-version bump"
 show-bump = "bump-my-version show-bump"

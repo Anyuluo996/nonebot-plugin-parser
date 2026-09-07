@@ -122,13 +122,11 @@ async def test_note():
 
 
 @pytest.mark.asyncio
-async def test_detail_403_falls_back_to_no_signature(monkeypatch):
-    """回归: 签名 detail 请求 403 时必须走免签名兜底, 而非直接整链失败。
+async def test_detail_open_api_primary_and_fallback_order(monkeypatch):
+    """open-api 是主力形态; 被风控时依次退回 签名 -> Bytespider。
 
-    2026-09-07 线上故障: 签名请求 403 直接转 ParseException, Bytespider 免签名
-    兜底只在 200+空 body 时触发, 且 m/iesdouyin 分享页 fallback 改版后已拿不到
-    数据, 造成偶发整链失败。修复后 403/超时也进免签名兜底, 首选 open-api 形态
-    (上游 #584 同款: {aweme_id, aid} + Origin/Referer open.douyin.com)。
+    2026-09-07 起请求链为 open-api -> 签名(a_bogus, 有凭据附 Cookie) ->
+    Bytespider; 旧 m/iesdouyin 分享页 parse_video 兜底已删除(改版后 0 成功)。
     """
     import json as _json
 
@@ -143,7 +141,7 @@ async def test_detail_403_falls_back_to_no_signature(monkeypatch):
                     "nickname": "fallback-tester",
                     "avatar_thumb": {"url_list": ["https://example.com/avatar.jpg"]},
                 },
-                "desc": "no-signature fallback regression",
+                "desc": "open-api primary regression",
                 "create_time": 1757200000,
                 "images": None,
                 "video": {
@@ -155,7 +153,7 @@ async def test_detail_403_falls_back_to_no_signature(monkeypatch):
         }
     ).encode()
 
-    calls: list[dict] = []
+    calls: list[str] = []
     detail_url = "https://www.douyin.com/aweme/v1/web/aweme/detail/"
 
     class _Resp:
@@ -172,14 +170,22 @@ async def test_detail_403_falls_back_to_no_signature(monkeypatch):
                     response=httpx.Response(self.status_code, request=self.request),
                 )
 
+    def _classify(headers: dict, params: dict) -> str:
+        if "a_bogus" in params:
+            return "signed"
+        if headers.get("Origin") == "https://open.douyin.com":
+            return "open-api"
+        if "Bytespider" in (headers.get("User-Agent") or ""):
+            return "bytespider"
+        return "unknown"
+
     async def fake_request(_self, url, *, headers=None, params=None, **_kwargs):
-        calls.append({"url": url, "headers": dict(headers or {}), "params": dict(params or {})})
-        if "a_bogus" in (params or {}):
-            # 模拟签名请求被风控 403 (修复前此处直接抛 ParseException 终止整链)
-            _Resp(b"", 403).raise_for_status()
-        if (headers or {}).get("Referer") == "https://open.douyin.com/":
+        form = _classify(dict(headers or {}), dict(params or {}))
+        calls.append(form)
+        if form == "bytespider":
+            # open-api 与签名被 403, Bytespider 返回完整数据
             return _Resp(detail_json)
-        return _Resp(b"")
+        _Resp(b"", 403).raise_for_status()
 
     monkeypatch.setattr(DouyinParser, "request", fake_request)
 
@@ -188,17 +194,12 @@ async def test_detail_403_falls_back_to_no_signature(monkeypatch):
     assert searched, "无法匹配 URL"
 
     result = await parser.parse(keyword, searched)
-    assert result.title == "no-signature fallback regression", "免签名兜底未返回解析结果"
+    assert result.title == "open-api primary regression", "退回链未解析出结果"
     assert result.author.name == "fallback-tester"
 
-    # 两次调用: 1) 签名请求(403) 2) open-api 免签名形态即成功
-    assert len(calls) == 2, f"预期签名+open-api 共 2 次请求, 实际 {len(calls)}: {calls}"
-    assert calls[0]["params"].get("a_bogus"), "第一次应为带签名的请求"
-    assert calls[1]["headers"].get("Origin") == "https://open.douyin.com"
-    assert calls[1]["headers"].get("Referer") == "https://open.douyin.com/"
-    assert set(calls[1]["params"]) == {"aweme_id", "aid"}, "open-api 形态应只带极简参数"
-    assert calls[1]["url"] == detail_url
-    logger.success("签名 403 后 open-api 免签名兜底解析成功")
+    # 依次退回: open-api(主力) -> 签名 -> Bytespider
+    assert calls == ["open-api", "signed", "bytespider"], f"退回顺序异常: {calls}"
+    logger.success("open-api 主力 + 依次退回链路验证通过")
 
 
 @pytest.mark.asyncio
@@ -209,7 +210,7 @@ async def test_slides():
     https://www.douyin.com/note/7450744229229235491 # 解析成 4 段实况照片视频
 
     slides 类型无可用兜底 (m/iesdouyin 分享页均无 _ROUTER_DATA),
-    note 类型 fallback 到 parse_video 时实况视频也会丢失, 因此整个 test_slides
+    note/slides 类型只有 detail API 一条路(分享页兜底已删除), 因此整个 test_slides
     都依赖 PC web detail 接口能拿到完整数据, 必须配置 parser_douyin_ttwid。
     """
     _needs_douyin_ttwid()

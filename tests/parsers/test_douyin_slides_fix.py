@@ -45,8 +45,6 @@ def _needs_douyin_ttwid():
 URL = "https://v.douyin.com/Gz4nn_2caaU"
 # 重定向成 note/ 的实况照片图文 (share_type=note, 含 live photo)
 LIVE_NOTE_URL = "https://v.douyin.com/PsRRzmKjer8/"
-# 对应的 note id (test_note_empty_body_falls_back_to_parse_video 用)
-LIVE_NOTE_VID = "7651838242916592867"
 
 
 @pytest.mark.asyncio
@@ -171,98 +169,6 @@ async def test_decoder_picks_live_video_for_note():
 
     dynamics = result.dynamic_contents
     assert dynamics, f"note 实况照片应解析出至少 1 段视频, 实际 {len(dynamics)}"
-
-
-@pytest.mark.asyncio
-async def test_note_empty_body_falls_back_to_parse_video(monkeypatch):
-    """回归3 (issue: DOuyin_Note_Slides_Decode_Failure): PC detail 接口返回
-    200 + 空 body 时, note 必须降级到 parse_video 而非 traceback。
-
-    修复前: msgspec.DecodeError 未被 note 的 ``except ParseException`` 捕获,
-    直接 traceback; 修复后: 空 body 主动转 ParseException, note fallback 生效。
-
-    注: 抖音 2026-08 改版后 m/iesdouyin 分享页 _ROUTER_DATA 不再含 videoInfoRes,
-    真实分享页无法提供数据; 本测试改为 mock 分享页返回有效 _ROUTER_DATA,
-    专注验证 "detail 空 body → fallback parse_video" 的回退逻辑本身,
-    不依赖外部网站可用性。
-    """
-    import json as _json
-
-    from nonebot_plugin_parser.parsers import DouyinParser
-
-    parser = DouyinParser()
-
-    # PC detail 接口返回空 body (模拟抖音风控)
-    class _EmptyResp:
-        def __init__(self) -> None:
-            self.status_code = 200
-            self.content = b""
-            self.text = ""
-            self.headers = {"content-type": "application/json"}
-
-        @property
-        def url(self):
-            return "https://www.douyin.com/aweme/v1/web/aweme/detail/"
-
-    # 分享页兜底返回有效 _ROUTER_DATA (含 images, 模拟改版前的分享页结构)
-    _router_data = _json.dumps(
-        {
-            "loaderData": {
-                "video_(id)/page": {
-                    "videoInfoRes": {
-                        "item_list": [
-                            {
-                                "create_time": 1700000000,
-                                "author": {
-                                    "nickname": "fallback-author",
-                                    "avatar_thumb": {"url_list": ["https://example.com/avatar.jpg"]},
-                                },
-                                "desc": "fallback note (分享页 _ROUTER_DATA)",
-                                "images": [{"url_list": ["https://example.com/img1.jpg"]}],
-                            }
-                        ]
-                    }
-                }
-            }
-        }
-    )
-
-    class _RouterDataResp:
-        def __init__(self) -> None:
-            self.status_code = 200
-            self.text = f"<script>window._ROUTER_DATA = {_router_data}</script>"
-            self.content = self.text.encode("utf-8")
-            self.headers = {"content-type": "text/html"}
-
-        @property
-        def url(self):
-            return "https://www.iesdouyin.com/share/note/"
-
-    async def _fake_request(url, *args, **kwargs):
-        if "aweme/v1/web/aweme/detail" in str(url):
-            return _EmptyResp()
-        if "share/note" in str(url) or "share/video" in str(url):
-            return _RouterDataResp()
-        raise RuntimeError(f"unexpected URL: {url}")
-
-    # mock 下载层: parse_video 的 create_image_contents 会调度 download_img
-    async def _coro(*args, **kwargs):
-        return __import__("pathlib").Path("/fake/img")
-
-    def _stub_dl(*args, **kwargs):
-        return asyncio.create_task(_coro(*args, **kwargs))
-
-    monkeypatch.setattr(parser, "request", _fake_request)
-    monkeypatch.setattr(parser.downloader, "download_img", _stub_dl)
-
-    # note 类型: PC detail 失败应 fallback 到 parse_video (mock 分享页)
-    keyword, searched = parser.search_url(f"https://www.iesdouyin.com/share/note/{LIVE_NOTE_VID}")
-    assert searched, "note URL 未匹配"
-    result = await parser.parse(keyword, searched)
-
-    # fallback 到 parse_video 后应返回标题 + 至少一些内容 (images 静态图)
-    assert result.title == "fallback note (分享页 _ROUTER_DATA)"
-    assert result.contents, "fallback 后应至少返回静态图内容"
 
 
 # === 回归4: isPicture=true 的 picture 类型图文 ===
@@ -471,7 +377,7 @@ async def test_picture_note_decodes_bgm_url(monkeypatch):
 @pytest.mark.asyncio
 async def test_picture_note_live_url_falls_back(monkeypatch):
     """回归4b: 真实 URL note/7450744229229235491 在 PC detail 风控时
-    至少应返回 fallback 的静态图(同 test_note_empty_body_falls_back)。
+    至少应返回兜底链(open-api/签名/Bytespider)的解析结果。
 
     该测试不依赖 ttwid, 复现生产场景。
     Bytespider 兜底加入后, 无 ttwid 时签名请求空 body 会换爬虫 UA 重试,
@@ -574,8 +480,8 @@ async def test_create_dynamic_contents_merges_bgm(monkeypatch):
 
 
 # === 回归5: 普通视频改由 PC detail API 解析 (2026-08 抖音改版) ===
-# 改版后 m/iesdouyin 分享页 _ROUTER_DATA 不再含 videoInfoRes, parse_video 兜底
-# 全线失效; 普通视频改走 parse_slides (detail API), 由 SlidesData 新增的 video
+# 改版后 m/iesdouyin 分享页 _ROUTER_DATA 不再含 videoInfoRes, 旧 parse_video 兜底
+# 已删除; 普通视频改走 parse_slides (detail API), 由 SlidesData 新增的 video
 # 字段输出 VideoContent。
 NORMAL_VIDEO_VID = "7672751899556311734"
 
@@ -610,7 +516,7 @@ async def test_normal_video_decodes_play_addr(monkeypatch):
 
     覆盖三个改版关键点:
     1. images=null 时 decode 不崩 (Optional 容忍, 非 key 缺失);
-    2. video_url 正确提取并去水印 (playwm→play, 对齐 parse_video);
+    2. video_url 正确提取并去水印 (playwm→play);
     3. parse_slides 的 video 分支输出 1 个带封面的 VideoContent。
     """
     import json as _json
@@ -675,7 +581,7 @@ async def test_normal_video_decodes_play_addr(monkeypatch):
 async def test_normal_video_parse_prefers_detail_api(monkeypatch):
     """video 类型走 _parse_douyin 时优先 PC detail API, 不触发分享页兜底。
 
-    改版后分享页 _ROUTER_DATA 无 videoInfoRes, parse_video 兜底必失败;
+    改版后分享页 _ROUTER_DATA 无 videoInfoRes, 分享页兜底已删除;
     _parse_douyin 的 video 分支应优先 parse_slides, 成功即返回。
     若误走兜底, _fake_request 对非 detail URL 会 raise 让测试失败。
     """
@@ -758,26 +664,32 @@ async def test_detail_api_http_error_falls_back_before_raise(monkeypatch):
     resp = httpx.Response(403, request=req)
     calls: list[str] = []
 
+    def _classify(headers: dict, params: dict) -> str:
+        if "a_bogus" in params:
+            return "signed"
+        if headers.get("Origin") == "https://open.douyin.com":
+            return "open-api"
+        return "bytespider"
+
     async def _fake_request(url, *args, **kwargs):
-        params = kwargs.get("params") or {}
-        calls.append("signed" if "a_bogus" in params else "no-signature")
+        calls.append(_classify(kwargs.get("headers") or {}, kwargs.get("params") or {}))
         raise httpx.HTTPStatusError("403 Forbidden", request=req, response=resp)
 
     monkeypatch.setattr(parser, "request", _fake_request)
 
     with pytest.raises(ParseException, match="detail API unavailable"):
         await parser.parse_slides(NORMAL_VIDEO_VID)
-    # 签名 + 两种免签名形态全部尝试后才放弃
-    assert calls == ["signed", "no-signature", "no-signature"], f"应依次尝试 3 种形态, 实际 {calls}"
+    # open-api(主力) -> 签名 -> Bytespider 全部尝试后才放弃
+    assert calls == ["open-api", "signed", "bytespider"], f"应依次尝试 3 种形态, 实际 {calls}"
 
 
 @pytest.mark.asyncio
-async def test_detail_empty_body_retries_open_api_then_bytespider(monkeypatch):
-    """回归: 签名请求被风控 (空 body 或 403) 时, 依次用 open-api / Bytespider
-    两种免签名形态重打 detail API。
+async def test_detail_empty_body_falls_back_through_forms(monkeypatch):
+    """回归: open-api 主力被风控 (空 body 或 403) 时, 依次用签名 / Bytespider
+    形态重打 detail API, 全部空 body 才放弃。
 
     实测: open.douyin.com 入口 (上游 #584 形态) 与 Bytespider UA 均免 a_bogus
-    签名与登录态校验; 2026-09-07 起兜底链为 签名 → open-api → Bytespider。
+    签名与登录态校验; 2026-09-07 起请求链为 open-api → 签名 → Bytespider。
     """
     import json as _json
     from typing import ClassVar
@@ -812,7 +724,7 @@ async def test_detail_empty_body_retries_open_api_then_bytespider(monkeypatch):
     async def _fake_request(url, *args, **kwargs):
         if "aweme/v1/web/aweme/detail" in str(url):
             detail_calls.append({"headers": kwargs.get("headers"), "params": kwargs.get("params")})
-            # 第 1 次: 签名请求被风控空 body; 第 2 次: open-api 也空; 第 3 次: Bytespider 返回完整数据
+            # 第 1 次: open-api 空 body; 第 2 次: 签名也空; 第 3 次: Bytespider 返回完整数据
             return _MockResp() if len(detail_calls) >= 3 else _EmptyResp()
         raise RuntimeError(f"unexpected URL: {url}")
 
@@ -829,19 +741,22 @@ async def test_detail_empty_body_retries_open_api_then_bytespider(monkeypatch):
 
     result = await parser.parse_slides(NORMAL_VIDEO_VID)
 
-    # 兜底行为断言: 恰好三次 detail 请求 (签名 → open-api → Bytespider)
-    assert len(detail_calls) == 3, f"应恰好三次 detail 请求 (签名+open-api+Bytespider), 实际 {len(detail_calls)}"
+    # 兜底行为断言: 恰好三次 detail 请求 (open-api → 签名 → Bytespider)
+    assert len(detail_calls) == 3, f"应恰好三次 detail 请求 (open-api+签名+Bytespider), 实际 {len(detail_calls)}"
+    first_headers = detail_calls[0]["headers"] or {}
     first_params = detail_calls[0]["params"] or {}
     second_headers = detail_calls[1]["headers"] or {}
     second_params = detail_calls[1]["params"] or {}
     third_headers = detail_calls[2]["headers"] or {}
     third_params = detail_calls[2]["params"] or {}
-    assert "a_bogus" in first_params, "首次请求应为带 a_bogus 的签名请求"
-    # open-api 形态: 极简参数 + open.douyin.com Origin/Referer, 免签名
-    assert second_headers.get("Origin") == "https://open.douyin.com", "第二次应为 open-api 形态"
-    assert second_headers.get("Referer") == "https://open.douyin.com/"
-    assert set(second_params) == {"aweme_id", "aid"}, "open-api 形态应只带极简参数"
-    # Bytespider 形态: 爬虫 UA, 免签名
+    # open-api 形态 (主力): 极简参数 + open.douyin.com Origin/Referer, 免签名
+    assert first_headers.get("Origin") == "https://open.douyin.com", "首次请求应为 open-api 形态"
+    assert first_headers.get("Referer") == "https://open.douyin.com/"
+    assert set(first_params) == {"aweme_id", "aid"}, "open-api 形态应只带极简参数"
+    # 签名形态 (次选): 完整参数 + a_bogus
+    assert "a_bogus" in second_params, "第二次请求应为带 a_bogus 的签名请求"
+    assert second_headers.get("X-Requested-With") == "XMLHttpRequest", "签名形态应带 X-Requested-With"
+    # Bytespider 形态 (最后保险): 爬虫 UA, 免签名
     assert "Bytespider" in (third_headers.get("User-Agent") or ""), "第三次应为 Bytespider UA"
     assert "a_bogus" not in third_params, "免签名兜底不应带 a_bogus"
 

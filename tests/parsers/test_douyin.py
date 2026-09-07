@@ -122,6 +122,86 @@ async def test_note():
 
 
 @pytest.mark.asyncio
+async def test_detail_403_falls_back_to_no_signature(monkeypatch):
+    """回归: 签名 detail 请求 403 时必须走免签名兜底, 而非直接整链失败。
+
+    2026-09-07 线上故障: 签名请求 403 直接转 ParseException, Bytespider 免签名
+    兜底只在 200+空 body 时触发, 且 m/iesdouyin 分享页 fallback 改版后已拿不到
+    数据, 造成偶发整链失败。修复后 403/超时也进免签名兜底, 首选 open-api 形态
+    (上游 #584 同款: {aweme_id, aid} + Origin/Referer open.douyin.com)。
+    """
+    import json as _json
+
+    import httpx
+
+    from nonebot_plugin_parser.parsers import DouyinParser
+
+    detail_json = _json.dumps(
+        {
+            "aweme_detail": {
+                "author": {
+                    "nickname": "fallback-tester",
+                    "avatar_thumb": {"url_list": ["https://example.com/avatar.jpg"]},
+                },
+                "desc": "no-signature fallback regression",
+                "create_time": 1757200000,
+                "images": None,
+                "video": {
+                    "play_addr": {"url_list": ["https://www.douyin.com/aweme/v1/play/?video_id=vtest"]},
+                    "cover": {"url_list": ["https://example.com/cover.jpg"]},
+                    "duration": 15000,
+                },
+            }
+        }
+    ).encode()
+
+    calls: list[dict] = []
+    detail_url = "https://www.douyin.com/aweme/v1/web/aweme/detail/"
+
+    class _Resp:
+        def __init__(self, content: bytes, status_code: int = 200):
+            self.status_code = status_code
+            self.content = content
+            self.request = httpx.Request("GET", detail_url)
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise httpx.HTTPStatusError(
+                    f"client error {self.status_code}",
+                    request=self.request,
+                    response=httpx.Response(self.status_code, request=self.request),
+                )
+
+    async def fake_request(_self, url, *, headers=None, params=None, **_kwargs):
+        calls.append({"url": url, "headers": dict(headers or {}), "params": dict(params or {})})
+        if "a_bogus" in (params or {}):
+            # 模拟签名请求被风控 403 (修复前此处直接抛 ParseException 终止整链)
+            _Resp(b"", 403).raise_for_status()
+        if (headers or {}).get("Referer") == "https://open.douyin.com/":
+            return _Resp(detail_json)
+        return _Resp(b"")
+
+    monkeypatch.setattr(DouyinParser, "request", fake_request)
+
+    parser = DouyinParser()
+    keyword, searched = parser.search_url("https://www.douyin.com/video/7681253720335650091")
+    assert searched, "无法匹配 URL"
+
+    result = await parser.parse(keyword, searched)
+    assert result.title == "no-signature fallback regression", "免签名兜底未返回解析结果"
+    assert result.author.name == "fallback-tester"
+
+    # 两次调用: 1) 签名请求(403) 2) open-api 免签名形态即成功
+    assert len(calls) == 2, f"预期签名+open-api 共 2 次请求, 实际 {len(calls)}: {calls}"
+    assert calls[0]["params"].get("a_bogus"), "第一次应为带签名的请求"
+    assert calls[1]["headers"].get("Origin") == "https://open.douyin.com"
+    assert calls[1]["headers"].get("Referer") == "https://open.douyin.com/"
+    assert set(calls[1]["params"]) == {"aweme_id", "aid"}, "open-api 形态应只带极简参数"
+    assert calls[1]["url"] == detail_url
+    logger.success("签名 403 后 open-api 免签名兜底解析成功")
+
+
+@pytest.mark.asyncio
 async def test_slides():
     """
     含视频的图集(实况照片/live photo)

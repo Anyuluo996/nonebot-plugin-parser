@@ -731,13 +731,13 @@ async def test_douyin_parser_download_headers_have_referer():
 
 
 @pytest.mark.asyncio
-async def test_detail_api_http_error_converted_to_parse_exception(monkeypatch):
-    """detail API 偶发 403 风控/超时 (httpx.HTTPError) 应转 ParseException 走 fallback,
-    而非 HTTPStatusError 直穿成 ERROR + traceback。
+async def test_detail_api_http_error_falls_back_before_raise(monkeypatch):
+    """签名 detail 请求 403 风控/超时 (httpx.HTTPError) 应先进免签名兜底,
+    open-api + Bytespider 全部失败后才转 ParseException。
 
-    回归: parse_slides 的 request 默认 raise_for_status=True, 403 抛 HTTPStatusError;
-    修复前未被 except (ParseException, ValueError) 捕获 → traceback; 修复后 parse_slides
-    主动捕获 httpx.HTTPError 转 ParseException, 上层 _parse_douyin fallback 生效。
+    回归1: HTTPStatusError 未被捕获直穿 traceback → parse_slides 转 ParseException。
+    回归2 (2026-09-07 线上): 403 时直接 raise 会绕过免签名兜底整链失败 →
+    修复后 403/超时也触发免签名重试, 仅在全部形态失败后抛 ParseException。
     """
     import httpx
 
@@ -747,25 +747,28 @@ async def test_detail_api_http_error_converted_to_parse_exception(monkeypatch):
     parser = DouyinParser()
     req = httpx.Request("GET", "https://www.douyin.com/aweme/v1/web/aweme/detail/")
     resp = httpx.Response(403, request=req)
+    calls: list[str] = []
 
-    async def _fake_request(*args, **kwargs):
+    async def _fake_request(url, *args, **kwargs):
+        params = kwargs.get("params") or {}
+        calls.append("signed" if "a_bogus" in params else "no-signature")
         raise httpx.HTTPStatusError("403 Forbidden", request=req, response=resp)
 
     monkeypatch.setattr(parser, "request", _fake_request)
 
-    with pytest.raises(ParseException, match="detail API request failed"):
+    with pytest.raises(ParseException, match="detail API unavailable"):
         await parser.parse_slides(NORMAL_VIDEO_VID)
+    # 签名 + 两种免签名形态全部尝试后才放弃
+    assert calls == ["signed", "no-signature", "no-signature"], f"应依次尝试 3 种形态, 实际 {calls}"
 
 
 @pytest.mark.asyncio
-async def test_detail_empty_body_retries_with_bytespider(monkeypatch):
-    """回归: 签名请求被风控返回空 body 时, 换 Bytespider UA 免签名重打 detail API。
+async def test_detail_empty_body_retries_open_api_then_bytespider(monkeypatch):
+    """回归: 签名请求被风控 (空 body 或 403) 时, 依次用 open-api / Bytespider
+    两种免签名形态重打 detail API。
 
-    实测 (2026-08-23): 抖音 detail 接口对自家 Bytespider 爬虫免 a_bogus 签名与
-    登录态校验, 同机同 IP 仅换 UA 即返回完整 JSON; 浏览器 UA 则 200 + 空 body。
-    修复前: 空 body 直接 ParseException, note/video 只能走注定失败的分享页兜底
-    (slides 更是无路可退); 修复后: Bytespider 兜底返回与签名路径同构的数据,
-    解析正常完成, 不依赖用户配置 ttwid。
+    实测: open.douyin.com 入口 (上游 #584 形态) 与 Bytespider UA 均免 a_bogus
+    签名与登录态校验; 2026-09-07 起兜底链为 签名 → open-api → Bytespider。
     """
     import json as _json
     from typing import ClassVar
@@ -800,8 +803,8 @@ async def test_detail_empty_body_retries_with_bytespider(monkeypatch):
     async def _fake_request(url, *args, **kwargs):
         if "aweme/v1/web/aweme/detail" in str(url):
             detail_calls.append({"headers": kwargs.get("headers"), "params": kwargs.get("params")})
-            # 第一次: 签名请求 (带 a_bogus) 被风控返回空 body; 之后: Bytespider 兜底返回完整数据
-            return _EmptyResp() if len(detail_calls) == 1 else _MockResp()
+            # 第 1 次: 签名请求被风控空 body; 第 2 次: open-api 也空; 第 3 次: Bytespider 返回完整数据
+            return _MockResp() if len(detail_calls) >= 3 else _EmptyResp()
         raise RuntimeError(f"unexpected URL: {url}")
 
     # mock 下载层: 只验证兜底解析链路, 不实际下载视频/封面
@@ -817,16 +820,21 @@ async def test_detail_empty_body_retries_with_bytespider(monkeypatch):
 
     result = await parser.parse_slides(NORMAL_VIDEO_VID)
 
-    # 兜底行为断言: 恰好两次 detail 请求, 首次签名, 二次 Bytespider UA 免签名
-    assert len(detail_calls) == 2, f"应恰好两次 detail 请求 (签名 + Bytespider 兜底), 实际 {len(detail_calls)}"
-    first_headers = detail_calls[0]["headers"] or {}
+    # 兜底行为断言: 恰好三次 detail 请求 (签名 → open-api → Bytespider)
+    assert len(detail_calls) == 3, f"应恰好三次 detail 请求 (签名+open-api+Bytespider), 实际 {len(detail_calls)}"
     first_params = detail_calls[0]["params"] or {}
     second_headers = detail_calls[1]["headers"] or {}
     second_params = detail_calls[1]["params"] or {}
+    third_headers = detail_calls[2]["headers"] or {}
+    third_params = detail_calls[2]["params"] or {}
     assert "a_bogus" in first_params, "首次请求应为带 a_bogus 的签名请求"
-    assert "Bytespider" not in (first_headers.get("User-Agent") or ""), "首次请求不应已是爬虫 UA"
-    assert "Bytespider" in (second_headers.get("User-Agent") or ""), "兜底请求应使用 Bytespider UA"
-    assert "a_bogus" not in second_params, "Bytespider 兜底应免签名"
+    # open-api 形态: 极简参数 + open.douyin.com Origin/Referer, 免签名
+    assert second_headers.get("Origin") == "https://open.douyin.com", "第二次应为 open-api 形态"
+    assert second_headers.get("Referer") == "https://open.douyin.com/"
+    assert set(second_params) == {"aweme_id", "aid"}, "open-api 形态应只带极简参数"
+    # Bytespider 形态: 爬虫 UA, 免签名
+    assert "Bytespider" in (third_headers.get("User-Agent") or ""), "第三次应为 Bytespider UA"
+    assert "a_bogus" not in third_params, "免签名兜底不应带 a_bogus"
 
     # 解析结果断言: 兜底路径输出与签名路径同构 (1 个带封面视频)
     assert len(result.video_contents) == 1, (

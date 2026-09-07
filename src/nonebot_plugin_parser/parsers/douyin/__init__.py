@@ -179,6 +179,48 @@ class DouyinParser(BaseParser):
             timestamp=video_data.create_time,
         )
 
+    async def _request_detail_fallback(self, video_id: str, detail_url: str):
+        """免签名请求 detail 接口, 依次尝试 open-api 与 Bytespider 两种形态。
+
+        Returns:
+            最后一次成功发出的响应 (可能为空 body), 每种形态都请求异常时为 None。
+            空 body / None 由调用方统一转 ParseException。
+        """
+        import httpx
+
+        variants: list[tuple[str, dict[str, str], dict[str, str]]] = [
+            (
+                "open-api",
+                {
+                    **self.headers,
+                    "Origin": "https://open.douyin.com",
+                    "Referer": "https://open.douyin.com/",
+                },
+                {"aweme_id": video_id, "aid": "6383"},
+            ),
+            (
+                "bytespider",
+                {"User-Agent": _BYTE_SPIDER_UA},
+                {
+                    "aweme_id": video_id,
+                    "aid": "6383",
+                    "version_code": "170400",
+                    "device_platform": "webapp",
+                },
+            ),
+        ]
+        response = None
+        for name, fb_headers, fb_params in variants:
+            try:
+                response = await self.request(detail_url, headers=fb_headers, params=fb_params)
+            except httpx.HTTPError as e:
+                logger.warning(f"douyin detail API no-signature fallback ({name}) failed for {video_id}: {e!r}")
+                continue
+            if response.content:
+                logger.info(f"douyin detail API no-signature fallback ({name}) succeeded for {video_id}")
+                break
+        return response
+
     async def parse_slides(self, video_id: str):
         from . import slides
 
@@ -214,42 +256,33 @@ class DouyinParser(BaseParser):
         }
         a_bogus = quote(_ABOGUS.get_value(params), safe="")
         params["a_bogus"] = a_bogus
-        # detail API 偶发 403 风控/限流或网络超时 (httpx.HTTPError), 转 ParseException
-        # 让上层 _parse_douyin 的 fallback 生效 (WARNING 级), 而非 HTTPStatusError 直穿成
-        # ERROR + traceback。分享页改版后 fallback 也失败, 但日志干净且重试机制照常兜底。
+        # detail API 偶发 403 风控/限流或网络超时 (httpx.HTTPError)。签名请求失败
+        # (含 403) 不直接抛 ParseException, 而是落到免签名兜底——2026-09-07 线上实测:
+        # 403 时直接 raise 会完全绕过免签名路径, 而 m/iesdouyin 分享页 fallback 在
+        # 2026-08 改版后已拿不到数据, 造成整链失败。
         import httpx
 
+        response: httpx.Response | None = None
         try:
             response = await self.request(detail_url, headers=headers, params=params)
         except httpx.HTTPError as e:
-            raise ParseException(f"douyin detail API request failed for {video_id}: {e}") from e
-
-        # 空 body 防御: 抖音风控下 detail 接口常返回 200 + content-length: 0。
-        # 先换 Bytespider UA 免签名重打一次 (见 _BYTE_SPIDER_UA 注释), 仍空才转
-        # ParseException, 由上层 note/video fallback 捕获后回退 parse_video。
-        if not response.content:
             logger.warning(
-                f"douyin detail API returned empty body for {video_id} (likely risk-controlled), "
-                "retrying with Bytespider UA (no signature)"
+                f"douyin detail API signed request failed for {video_id}: {e!r}, trying no-signature fallbacks"
             )
-            try:
-                response = await self.request(
-                    detail_url,
-                    headers={"User-Agent": _BYTE_SPIDER_UA},
-                    params={
-                        "aweme_id": video_id,
-                        "aid": "6383",
-                        "version_code": "170400",
-                        "device_platform": "webapp",
-                    },
-                )
-            except httpx.HTTPError as e:
-                raise ParseException(
-                    f"douyin detail API empty body for {video_id}, Bytespider retry failed: {e}"
-                ) from e
-        if not response.content:
+
+        # 免签名兜底: 签名请求异常 (403/限流/超时) 或返回空 body (风控, HTTP 200 +
+        # content-length: 0) 时, 依次尝试两种免签名形态, 任一拿到非空 body 即用:
+        #   1. open-api 形态 (上游 #584 同款): 极简参数 {aweme_id, aid} +
+        #      Origin/Referer 指向 open.douyin.com, 该入口不校验 a_bogus 签名;
+        #   2. Bytespider UA (见 _BYTE_SPIDER_UA 注释), detail 接口对自家爬虫
+        #      UA 免签名免登录 (2026-08-23 实测)。
+        if response is None or not response.content:
+            response = await self._request_detail_fallback(video_id, detail_url)
+
+        if response is None or not response.content:
             raise ParseException(
-                f"douyin detail API returned empty body for {video_id} after Bytespider retry (likely risk-controlled)"
+                f"douyin detail API unavailable for {video_id} "
+                "after signed and no-signature attempts (likely risk-controlled)"
             )
 
         try:

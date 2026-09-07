@@ -242,24 +242,15 @@ class TestPlatformEnum:
     """测试平台枚举"""
 
     def test_all_platforms(self):
-        """测试所有平台枚举值"""
+        """测试枚举平台与解析器注册表一一对应"""
         from nonebot_plugin_parser.constants import PlatformEnum
+        from nonebot_plugin_parser.parsers import PARSERS
 
-        expected = {
-            "acfun",
-            "bilibili",
-            "douyin",
-            "kuaishou",
-            "nga",
-            "tiktok",
-            "twitter",
-            "weibo",
-            "xiaohongshu",
-            "youtube",
-        }
-
-        actual = {p.value for p in PlatformEnum}
-        assert actual == expected
+        enum_values = {p.value for p in PlatformEnum}
+        registered = set(PARSERS)
+        # 枚举的每个平台都必须有解析器（防孤儿枚举）
+        # 注册表的每个平台都必须被枚举（防漏注册）
+        assert enum_values == registered
 
     def test_platform_enum_str(self):
         """测试平台枚举字符串化"""

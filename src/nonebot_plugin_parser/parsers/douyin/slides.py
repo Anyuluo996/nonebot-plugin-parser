@@ -50,7 +50,7 @@ class SlidesData(Struct):
     """抖音图文/实况照片/普通视频单条数据 (旧 isPicture=false 格式)
 
     普通视频自抖音 2026-08 改版起改由 PC detail API 提供 (m/iesdouyin 分享页
-    _ROUTER_DATA 不再含 videoInfoRes, parse_video 兜底失效), 故 SlidesData 也
+    _ROUTER_DATA 不再含 videoInfoRes, 旧 parse_video 兜底已删除), 故 SlidesData 也
     承载普通视频: 此时 images 为空, 顶层 video 含 play_addr/cover/duration,
     由 parse_slides 统一输出。
     """
@@ -132,10 +132,9 @@ class SlidesData(Struct):
     # --- 普通视频相关 property (images 为空、video 存在时使用) ---
     # video.py 的 Video 结构 (play_addr/cover/duration) 与 detail API 的
     # aweme_detail.video 字段同名同构, 直接复用; 去水印逻辑 (playwm→play)
-    # 对齐 video.py parse_video, 保证新旧链路输出一致。
     @property
     def video_url(self) -> str | None:
-        """普通 mp4 视频直链; 对齐 video.py parse_video 去水印 (playwm→play)。"""
+        """普通 mp4 视频直链; 去水印 (playwm→play)。"""
         if not self.video:
             return None
         return choice(self.video.play_addr.url_list).replace("playwm", "play")

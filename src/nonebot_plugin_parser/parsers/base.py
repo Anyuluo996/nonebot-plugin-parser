@@ -269,7 +269,7 @@ class BaseParser:
         client_timeout = timeout if timeout is not None else self.timeout
         client_kwargs: dict[str, Any] = {
             "headers": client_headers,
-            "verify": False,
+            "verify": pconfig.verify_ssl,
             "cookies": cookies,
             "follow_redirects": follow_redirects,
             "trust_env": trust_env,
@@ -298,7 +298,7 @@ class BaseParser:
         params: Any | None = None,
         timeout: float = 15,
         allow_redirects: bool = True,
-        verify: bool = False,
+        verify: bool | None = None,
         raise_for_status: bool = False,
     ):
         """带 TLS 指纹模拟的 HTTP GET 请求（curl_cffi），不可用时回退 httpx。
@@ -316,7 +316,7 @@ class BaseParser:
             params: 查询参数。
             timeout: 超时秒数。
             allow_redirects: 是否跟随重定向。
-            verify: 是否校验 TLS 证书。
+            verify: 是否校验 TLS 证书；None（默认）时跟随 ``parser_verify_ssl`` 配置。
             raise_for_status: 是否对 >= 400 的响应抛错。
 
         Returns:
@@ -326,6 +326,9 @@ class BaseParser:
             from curl_cffi.requests import AsyncSession
         except ImportError:
             AsyncSession = None  # type: ignore[assignment]
+
+        if verify is None:
+            verify = pconfig.verify_ssl
 
         if AsyncSession is not None:
             client_headers = headers if headers is not None else self.headers
@@ -375,7 +378,7 @@ class BaseParser:
         headers = headers or COMMON_HEADER.copy()
         client_kwargs: dict[str, Any] = {
             "headers": headers,
-            "verify": False,
+            "verify": pconfig.verify_ssl,
             "follow_redirects": False,
             "trust_env": False,
             "timeout": COMMON_TIMEOUT,
@@ -412,7 +415,7 @@ class BaseParser:
         headers = headers or COMMON_HEADER.copy()
         client_kwargs: dict[str, Any] = {
             "headers": headers,
-            "verify": False,
+            "verify": pconfig.verify_ssl,
             "follow_redirects": True,
             "trust_env": False,
             "timeout": COMMON_TIMEOUT,

@@ -284,10 +284,10 @@ class StreamDownloader:
         self.cache_dir: Path = pconfig.cache_dir
         proxy_url = pconfig.proxy
         proxy = Proxy(url=proxy_url) if proxy_url else None
-        self.client: AsyncClient = AsyncClient(timeout=DOWNLOAD_TIMEOUT, verify=False, proxy=proxy)
+        self.client: AsyncClient = AsyncClient(timeout=DOWNLOAD_TIMEOUT, verify=pconfig.verify_ssl, proxy=proxy)
         self.direct_client: AsyncClient = AsyncClient(
             timeout=DOWNLOAD_TIMEOUT,
-            verify=False,
+            verify=pconfig.verify_ssl,
             trust_env=False,
         )
 

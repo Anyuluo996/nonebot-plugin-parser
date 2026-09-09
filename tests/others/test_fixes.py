@@ -399,35 +399,35 @@ async def test_render_does_not_truncate_long_content():
 @pytest.mark.asyncio
 async def test_extract_video_thumbnail_returns_none_on_missing_ffmpeg(tmp_path, monkeypatch):
     """ffmpeg 不可用时降级返回 None，不抛异常。"""
-    from nonebot_plugin_parser import utils
+    from nonebot_plugin_parser.utils import media as utils_media
 
     async def fail_ffmpeg(cmd):
         raise RuntimeError("ffmpeg 未安装")
 
-    monkeypatch.setattr(utils, "exec_ffmpeg_cmd", fail_ffmpeg)
+    monkeypatch.setattr(utils_media, "exec_ffmpeg_cmd", fail_ffmpeg)
 
     fake_video = tmp_path / "fake.mp4"
     fake_video.write_bytes(b"not a real video")
 
-    result = await utils.extract_video_thumbnail(fake_video)
+    result = await utils_media.extract_video_thumbnail(fake_video)
     assert result is None
 
 
 @pytest.mark.asyncio
 async def test_extract_video_thumbnail_returns_none_when_file_not_produced(tmp_path, monkeypatch):
     """ffmpeg 成功执行但未生成输出文件时返回 None。"""
-    from nonebot_plugin_parser import utils
+    from nonebot_plugin_parser.utils import media as utils_media
 
     async def noop_ffmpeg(cmd):
         return None  # 假装成功，但不产生文件
 
-    monkeypatch.setattr(utils, "exec_ffmpeg_cmd", noop_ffmpeg)
+    monkeypatch.setattr(utils_media, "exec_ffmpeg_cmd", noop_ffmpeg)
 
     fake_video = tmp_path / "fake.mp4"
     fake_video.write_bytes(b"not a real video")
     out = tmp_path / "thumb.jpg"
 
-    result = await utils.extract_video_thumbnail(fake_video, output_path=out)
+    result = await utils_media.extract_video_thumbnail(fake_video, output_path=out)
     assert result is None
     assert not out.exists()
 
@@ -435,20 +435,20 @@ async def test_extract_video_thumbnail_returns_none_when_file_not_produced(tmp_p
 @pytest.mark.asyncio
 async def test_extract_video_thumbnail_success(tmp_path, monkeypatch):
     """ffmpeg 成功执行且生成文件时返回路径。"""
-    from nonebot_plugin_parser import utils
+    from nonebot_plugin_parser.utils import media as utils_media
 
     async def fake_ffmpeg(cmd):
         # 从 cmd 中找到输出路径（最后一个非选项参数），写入假图片
         output = Path(cmd[-1])
         output.write_bytes(b"\x89PNG fake thumbnail")
 
-    monkeypatch.setattr(utils, "exec_ffmpeg_cmd", fake_ffmpeg)
+    monkeypatch.setattr(utils_media, "exec_ffmpeg_cmd", fake_ffmpeg)
 
     fake_video = tmp_path / "video.mp4"
     fake_video.write_bytes(b"fake video")
     out = tmp_path / "thumb.jpg"
 
-    result = await utils.extract_video_thumbnail(fake_video, output_path=out)
+    result = await utils_media.extract_video_thumbnail(fake_video, output_path=out)
     assert result == out
     assert out.exists()
 
@@ -457,7 +457,6 @@ async def test_extract_video_thumbnail_success(tmp_path, monkeypatch):
 async def test_telegram_video_content_has_cover(tmp_path, monkeypatch):
     """端到端：Telegram 视频内容构造时，VideoContent 的 cover 是抽出的缩略图。"""
     from nonebot_plugin_parser.parsers.data import VideoContent
-    from nonebot_plugin_parser import utils
 
     # mock extract_video_thumbnail 返回一个假缩略图路径
     thumb = tmp_path / "thumb.jpg"
@@ -466,12 +465,10 @@ async def test_telegram_video_content_has_cover(tmp_path, monkeypatch):
     async def fake_extract(video_path, output_path=None):
         return thumb
 
-    monkeypatch.setattr(utils, "extract_video_thumbnail", fake_extract)
-
     # 直接验证 VideoContent 构造 + cover 解析逻辑
     video = tmp_path / "video.mp4"
     video.write_bytes(b"fake video")
-    content = VideoContent(video, cover=await utils.extract_video_thumbnail(video))
+    content = VideoContent(video, cover=await fake_extract(video))
 
     assert content.cover == thumb
     resolved = await content.get_cover_path()

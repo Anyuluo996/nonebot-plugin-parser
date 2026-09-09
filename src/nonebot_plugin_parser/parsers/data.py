@@ -8,6 +8,8 @@ from datetime import datetime
 from dataclasses import field, dataclass
 from collections.abc import Iterator, Sequence, Awaitable
 
+from nonebot import logger
+
 from ..utils import fmt_duration
 from ..config import pconfig
 from ..exception import DownloadException
@@ -158,7 +160,7 @@ class DynamicContent(MediaContent):
 
                 return extract_ugoira_thumbnail(gif_path.with_suffix(".zip"), self.frames)
             except Exception:
-                pass
+                logger.debug(f"ugoira 缩略图提取失败(GIF 帧路径): {gif_path.name}", exc_info=True)
 
         # 3. 最后从 ZIP 提取第一帧
         zip_path = await self.get_path()
@@ -168,7 +170,7 @@ class DynamicContent(MediaContent):
 
                 return extract_ugoira_thumbnail(zip_path, self.frames)
             except Exception:
-                pass
+                logger.debug(f"ugoira 缩略图提取失败(ZIP 路径): {zip_path.name}", exc_info=True)
 
         return None
 

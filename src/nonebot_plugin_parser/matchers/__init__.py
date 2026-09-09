@@ -85,6 +85,19 @@ def register_parser_matcher():
 # 缓存结果
 _RESULT_CACHE = LimitedSizeDict[str, ParseResult](max_size=50)
 
+
+async def safe_reaction(event: object, emoji: str) -> None:
+    """添加消息表情回应；失败仅记 debug（纯装饰，不支持表情的适配器属常态）。
+
+    供本模块与 ``matchers.music`` 等发送流程复用，收敛各处
+    ``try: message_reaction(...) except Exception: pass`` 样板。
+    """
+    try:
+        await UniHelper.message_reaction(event, emoji)  # type: ignore[arg-type]
+    except Exception:
+        logger.debug(f"表情回应失败(适配器可能不支持): {emoji}", exc_info=True)
+
+
 # 合并转发发送失败时，降级为逐条直发的上限条数，避免数百节点刷屏
 _MAX_FALLBACK_NODES = 20
 
@@ -191,10 +204,7 @@ async def parser_handler(
 
     # 3. 添加"处理中"表情
     event = current_event.get()
-    try:
-        await UniHelper.message_reaction(event, "resolving")
-    except Exception:
-        pass  # 如果不支持表情，忽略错误
+    await safe_reaction(event, "resolving")
 
     # 标记本次解析是否因顶层超时失败（由下方 wait_for 置位），
     # 用于 except 分支区分超时与普通异常——比 isinstance(e, TimeoutError) 更精确，
@@ -239,10 +249,7 @@ async def parser_handler(
         _cache_result(cache_key, result)
 
         # 8. 添加"完成"表情
-        try:
-            await UniHelper.message_reaction(event, "done")
-        except Exception:
-            pass
+        await safe_reaction(event, "done")
 
     except TipException as e:
         # 可恢复的用户提示：发消息，不冒泡成 ERROR
@@ -250,10 +257,7 @@ async def parser_handler(
             await UniMessage(e.message).send()
         except Exception:
             logger.exception("发送 TipException 提示失败")
-        try:
-            await UniHelper.message_reaction(event, "done")
-        except Exception:
-            pass
+        await safe_reaction(event, "done")
     except Exception as e:
         # 解析失败：记录到日志层（原仅存 failure_store，日志层完全不可见）
         if timed_out:
@@ -273,10 +277,7 @@ async def parser_handler(
             error=error_msg,
         )
         # 发生错误，添加"失败"表情
-        try:
-            await UniHelper.message_reaction(event, "fail")
-        except Exception:
-            pass
+        await safe_reaction(event, "fail")
         raise
 
 

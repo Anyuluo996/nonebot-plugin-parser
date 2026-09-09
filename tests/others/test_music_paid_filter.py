@@ -199,7 +199,7 @@ class TestNeteaseCredential:
         from nonebot_plugin_parser.parsers.netease import credential as netease_cred
 
         cred_file = tmp_path / "netease_credential.json"
-        monkeypatch.setattr(netease_cred, "_CRED_FILE", cred_file)
+        monkeypatch.setattr(netease_cred._STORE, "path", cred_file)
 
         assert netease_cred.load_credential() is None
         assert netease_cred.is_available() is False
@@ -217,7 +217,7 @@ class TestNeteaseCredential:
         from nonebot_plugin_parser.parsers.netease import credential as netease_cred
 
         cred_file = tmp_path / "netease_credential.json"
-        monkeypatch.setattr(netease_cred, "_CRED_FILE", cred_file)
+        monkeypatch.setattr(netease_cred._STORE, "path", cred_file)
         netease_cred.save_credential("__csrf=xyz; other=val")
         assert netease_cred.load_credential() is None
 

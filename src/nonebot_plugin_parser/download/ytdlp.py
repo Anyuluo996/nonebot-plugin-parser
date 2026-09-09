@@ -1,6 +1,7 @@
 import asyncio
 from typing import TYPE_CHECKING
 from pathlib import Path
+from contextlib import asynccontextmanager
 from collections import defaultdict
 
 import yt_dlp
@@ -53,6 +54,23 @@ class YtdlpDownloader:
             self._download_base_opts["proxy"] = proxy
             self._extract_base_opts["proxy"] = proxy
 
+    @asynccontextmanager
+    async def _url_lock(self, url: str):
+        """串行化同一 URL 的下载，无人持有时回收锁（防 defaultdict 无限增长）。
+
+        release 后的回收检查存在微小竞态（另一协程恰在 get 与 acquire 之间
+        拿到即将删除的锁），最坏后果是同 URL 并发下载一次，属良性退化。
+        """
+        lock = self._url_locks.get(url)
+        if lock is None:
+            lock = self._url_locks.setdefault(url, asyncio.Lock())
+        try:
+            async with lock:
+                yield
+        finally:
+            if self._url_locks.get(url) is lock and not lock.locked():
+                self._url_locks.pop(url, None)
+
     async def extract_video_info(self, url: str, cookiefile: Path | None = None) -> VideoInfo:
         """Get video info by yt-dlp"""
 
@@ -87,7 +105,7 @@ class YtdlpDownloader:
         if video_path.exists():
             return video_path
 
-        async with self._url_locks[url]:
+        async with self._url_lock(url):
             if video_path.exists():
                 return video_path
 
@@ -120,7 +138,7 @@ class YtdlpDownloader:
         if audio_path.exists():
             return audio_path
 
-        async with self._url_locks[url]:
+        async with self._url_lock(url):
             if audio_path.exists():
                 return audio_path
 

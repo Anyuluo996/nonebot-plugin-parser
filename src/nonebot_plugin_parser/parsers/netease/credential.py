@@ -9,29 +9,19 @@
 
 from __future__ import annotations
 
-import json
-
-from nonebot import logger
-
 from ...config import _data_dir
+from ...persist import JsonValueStore
 
-_CRED_FILE = _data_dir / "netease_credential.json"
+_STORE = JsonValueStore(_data_dir / "netease_credential.json", "cookie")
 
 
 def load_credential() -> str | None:
-    """读取并返回完整 cookie 字符串；文件不存在返回 None。
+    """读取并返回完整 cookie 字符串；文件不存在/不含 MUSIC_U 返回 None。
 
     网易云登录态核心是 ``MUSIC_U``，无明确过期时间（服务端按 cookie 有效期判定），
     这里不做本地过期推断 —— 调用方请求失败时由网易云返回 401/301 自行兜底。
     """
-    if not _CRED_FILE.exists():
-        return None
-    try:
-        data = json.loads(_CRED_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
-        logger.warning(f"网易云凭证读取失败,降级匿名: {e!r}")
-        return None
-    cookie = data.get("cookie") or ""
+    cookie = _STORE.load()
     if not cookie or "MUSIC_U" not in cookie:
         return None
     return cookie
@@ -39,18 +29,12 @@ def load_credential() -> str | None:
 
 def save_credential(cookie: str) -> None:
     """把完整 cookie 字符串写入本地 JSON 文件。"""
-    _CRED_FILE.write_text(
-        json.dumps({"cookie": cookie}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
+    _STORE.save(cookie)
 
 
 def clear_credential() -> bool:
     """删除本地凭证文件，返回是否原存在。"""
-    if _CRED_FILE.exists():
-        _CRED_FILE.unlink()
-        return True
-    return False
+    return _STORE.clear()
 
 
 def is_available() -> bool:

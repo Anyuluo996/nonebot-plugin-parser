@@ -18,13 +18,13 @@
 
 from __future__ import annotations
 
-import json
 import time
 
 from ...config import _data_dir
+from ...persist import JsonValueStore
 
-_TTWID_FILE = _data_dir / "douyin_ttwid.json"
-_COOKIE_FILE = _data_dir / "douyin_cookie.json"
+_TTWID_STORE = JsonValueStore(_data_dir / "douyin_ttwid.json", "ttwid")
+_COOKIE_STORE = JsonValueStore(_data_dir / "douyin_cookie.json", "cookie")
 
 
 def save_ttwid(value: str) -> None:
@@ -33,22 +33,12 @@ def save_ttwid(value: str) -> None:
     Args:
         value: ttwid 字符串（登录态凭据，从浏览器登录抖音后复制）。
     """
-    data = {"ttwid": value, "updated_at": int(time.time())}
-    _TTWID_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    _TTWID_STORE.save(value, updated_at=int(time.time()))
 
 
 def load_ttwid() -> str | None:
     """读取指令持久化的 ttwid；文件不存在/损坏/空值返回 None。"""
-    if not _TTWID_FILE.exists():
-        return None
-    try:
-        data = json.loads(_TTWID_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    ttwid = data.get("ttwid")
-    if isinstance(ttwid, str) and ttwid.strip():
-        return ttwid.strip()
-    return None
+    return _TTWID_STORE.load()
 
 
 def get_effective_ttwid() -> str | None:
@@ -80,22 +70,12 @@ def save_cookie(value: str) -> None:
         value: 完整 Cookie 字符串（含 ``sessionid``/``sid_guard``/``ttwid`` 等,
             从浏览器 F12 → Network → www.douyin.com → Cookie 整行复制）。
     """
-    data = {"cookie": value, "updated_at": int(time.time())}
-    _COOKIE_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    _COOKIE_STORE.save(value, updated_at=int(time.time()))
 
 
 def load_cookie() -> str | None:
     """读取指令持久化的完整 cookie；文件不存在/损坏/空值返回 None。"""
-    if not _COOKIE_FILE.exists():
-        return None
-    try:
-        data = json.loads(_COOKIE_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    cookie = data.get("cookie")
-    if isinstance(cookie, str) and cookie.strip():
-        return cookie.strip()
-    return None
+    return _COOKIE_STORE.load()
 
 
 def get_effective_cookie() -> str | None:

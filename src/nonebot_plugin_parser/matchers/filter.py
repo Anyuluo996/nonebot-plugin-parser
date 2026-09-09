@@ -1,6 +1,3 @@
-import json
-from pathlib import Path
-
 from nonebot import logger, on_command
 from nonebot.rule import to_me
 from nonebot.params import CommandArg
@@ -13,61 +10,48 @@ from nonebot_plugin_alconna.uniseg import UniMsg
 
 from ..config import pconfig
 from ..parsers import BaseParser
+from ..persist import load_json_or, atomic_write_json
 from ..constants import PlatformEnum
 
-_DISABLED_PLATFORMS_PATH: Path = pconfig.data_dir / "disabled_platforms.json"
-_ALL_PLATFORMS = {platform.value for platform in PlatformEnum}
+# 平台开关的存储/判定已下沉到中立模块 platform_switch（parsers 层也要用），
+# 此处 re-export 保持既有导入路径 `matchers.filter.X` 兼容。
+from ..platform_switch import (
+    _ALL_PLATFORMS as _ALL_PLATFORMS,
+)
+from ..platform_switch import (
+    _DISABLED_PLATFORMS_DICT as _DISABLED_PLATFORMS_DICT,
+)
+from ..platform_switch import (
+    get_group_key as get_group_key,
+)
+from ..platform_switch import (
+    is_platform_enabled as is_platform_enabled,
+)
+from ..platform_switch import (
+    save_disabled_platforms as save_disabled_platforms,
+)
+
 PARSER_CONTROL_PERMISSION = SUPERUSER | OWNER() | ADMIN()
 
-
-def load_or_initialize_dict() -> dict[str, set[str]]:
-    """加载或初始化关闭解析的配置
-
-    Returns:
-        dict[str, set[str]]: 群组标识 -> 禁用的平台名称集合
-    """
-    if not _DISABLED_PLATFORMS_PATH.exists():
-        _DISABLED_PLATFORMS_PATH.write_text(json.dumps({}))
-    data = json.loads(_DISABLED_PLATFORMS_PATH.read_text())
-    return {k: set(v) for k, v in data.items()}
-
-
-def save_disabled_platforms():
-    """保存关闭解析的配置"""
-    data = {k: list(v) for k, v in _DISABLED_PLATFORMS_DICT.items()}
-    _DISABLED_PLATFORMS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2))
-
-
-# 内存中关闭解析的配置，格式: {group_key: set(platform_names)}
-_DISABLED_PLATFORMS_DICT: dict[str, set[str]] = load_or_initialize_dict()
-
-
 # Telegram 解析白名单：被 SUPERUSER 授权可使用 Telegram 解析的用户 id 集合
-_TG_WHITELIST_PATH: Path = pconfig.data_dir / "tg_whitelist.json"
+_TG_WHITELIST_PATH = pconfig.data_dir / "tg_whitelist.json"
 
 
-def load_or_initialize_list() -> list[str]:
-    """加载或初始化 Telegram 解析白名单
-
-    Returns:
-        list[str]: 被授权的用户 id 列表
-    """
-    if not _TG_WHITELIST_PATH.exists():
-        _TG_WHITELIST_PATH.write_text(json.dumps([]))
-    try:
-        data = json.loads(_TG_WHITELIST_PATH.read_text())
-        return [str(x) for x in data]
-    except (json.JSONDecodeError, TypeError):
+def load_tg_whitelist() -> list[str]:
+    """加载 Telegram 解析白名单；文件不存在或损坏时返回空列表。"""
+    data = load_json_or(_TG_WHITELIST_PATH, [], context="Telegram 白名单持久化")
+    if not isinstance(data, list):
         return []
+    return [str(x) for x in data]
 
 
 def save_tg_whitelist() -> None:
-    """保存 Telegram 解析白名单"""
-    _TG_WHITELIST_PATH.write_text(json.dumps(list(_TG_WHITELIST_SET), ensure_ascii=False, indent=2))
+    """保存 Telegram 解析白名单（原子写）"""
+    atomic_write_json(_TG_WHITELIST_PATH, list(_TG_WHITELIST_SET))
 
 
 # 内存中的 Telegram 白名单
-_TG_WHITELIST_SET: set[str] = set(load_or_initialize_list())
+_TG_WHITELIST_SET: set[str] = set(load_tg_whitelist())
 
 
 def is_tg_authorized(user_id: str) -> bool:
@@ -100,33 +84,6 @@ def get_tg_whitelist() -> list[str]:
     return sorted(_TG_WHITELIST_SET)
 
 
-def migrate_old_data():
-    """迁移旧版本的禁用群组数据"""
-    old_path = pconfig.data_dir / "disabled_groups.json"
-    if old_path.exists():
-        old_data = set(json.loads(old_path.read_text()))
-        if old_data:
-            # 将旧数据迁移到新格式，标记为禁用所有平台
-            all_platforms = {p.value for p in PlatformEnum}
-            for group_key in old_data:
-                _DISABLED_PLATFORMS_DICT[group_key] = all_platforms
-            save_disabled_platforms()
-            # 删除旧文件
-            old_path.unlink()
-
-
-# 在模块加载时执行迁移
-migrate_old_data()
-
-
-def get_group_key(session: Session) -> str:
-    """获取群组的唯一标识符
-
-    由平台名称和会话场景 ID 组成，例如 `QQClient_123456789`。
-    """
-    return f"{session.scope}_{session.scene_path}"
-
-
 def _starts_with_force_prefix(message: UniMsg | None) -> bool:
     parse_prefix = pconfig.parse_prefix
     if not parse_prefix or message is None:
@@ -149,24 +106,6 @@ def is_enabled(message: UniMsg, session: Session = UniSession()) -> bool:
     group_key = get_group_key(session)
     disabled_platforms = _DISABLED_PLATFORMS_DICT.get(group_key, set())
     return not _ALL_PLATFORMS.issubset(disabled_platforms)
-
-
-def is_platform_enabled(session: Session, platform_name: str) -> bool:
-    """判断指定平台在当前会话中是否启用
-
-    Args:
-        session: 会话信息
-        platform_name: 平台名称
-
-    Returns:
-        bool: 平台是否启用
-    """
-    if session.scene.is_private:
-        return True
-
-    group_key = get_group_key(session)
-    disabled_platforms = _DISABLED_PLATFORMS_DICT.get(group_key, set())
-    return platform_name not in disabled_platforms
 
 
 def get_platform_display_name(platform_input: str) -> str | None:
@@ -236,17 +175,16 @@ async def enable_parser(matcher: Matcher, session: Session = UniSession(), args:
 
         # 解析平台名称
         platform_name = args.extract_plain_text().strip()
-        logger.warning(f"[开启解析] 原始参数: '{platform_name}', group_key: {group_key}")
+        logger.debug(f"[开启解析] 原始参数: '{platform_name}', group_key: {group_key}")
 
         if platform_name:
             # 尝试转换为标准平台名称
             standard_name = get_platform_display_name(platform_name)
-            available = check_platform_available(standard_name) if standard_name else "N/A"
-            logger.warning(f"[开启解析] 转换后平台名: {standard_name}, 可用: {available}")
             if standard_name is None:
                 await matcher.finish(f"未知的平台: {platform_name}")
             if not check_platform_available(standard_name):
                 await matcher.finish(f"平台 {platform_name} 暂不支持")
+            logger.debug(f"[开启解析] 转换后平台名: {standard_name}")
 
             # 启用指定平台
             if group_key not in _DISABLED_PLATFORMS_DICT:
@@ -274,25 +212,21 @@ async def enable_parser(matcher: Matcher, session: Session = UniSession(), args:
 async def disable_parser(matcher: Matcher, session: Session = UniSession(), args: Message = CommandArg()):
     """关闭解析"""
     try:
-        logger.warning(f"[关闭解析] 开始处理, session: {session.scope}/{session.scene_path}")
-        logger.warning(f"[关闭解析] is_private: {session.scene.is_private}")
-        logger.warning(f"[关闭解析] session 对象: {session}")
-
         group_key = get_group_key(session)
+        logger.debug(f"[关闭解析] group_key: {group_key}, is_private: {session.scene.is_private}")
 
         # 解析平台名称
         platform_name = args.extract_plain_text().strip()
-        logger.warning(f"[关闭解析] 原始参数: '{platform_name}', group_key: {group_key}")
+        logger.debug(f"[关闭解析] 原始参数: '{platform_name}', group_key: {group_key}")
 
         if platform_name:
             # 尝试转换为标准平台名称
             standard_name = get_platform_display_name(platform_name)
-            available = check_platform_available(standard_name) if standard_name else "N/A"
-            logger.warning(f"[关闭解析] 转换后平台名: {standard_name}, 可用: {available}")
             if standard_name is None:
                 await matcher.finish(f"未知的平台: {platform_name}")
             if not check_platform_available(standard_name):
                 await matcher.finish(f"平台 {platform_name} 暂不支持")
+            logger.debug(f"[关闭解析] 转换后平台名: {standard_name}")
 
             # 禁用指定平台
             if group_key not in _DISABLED_PLATFORMS_DICT:

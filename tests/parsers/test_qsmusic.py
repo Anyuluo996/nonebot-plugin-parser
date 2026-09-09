@@ -162,10 +162,11 @@ async def test_is_platform_allowed_with_session_and_disabled(monkeypatch):
         called.append(name)
         return False  # 模拟平台被禁用
 
-    # 函数内 `from nonebot_plugin_uninfo import get_session` 取模块属性，patch 模块即生效
+    # 函数内 `from nonebot_plugin_uninfo import get_session` 取模块属性，patch 模块即生效；
+    # is_platform_enabled 由 base.py 从 platform_switch 懒导入，patch 该模块即生效
     monkeypatch.setattr(nonebot_plugin_uninfo, "get_session", _fake_get_session)
     monkeypatch.setattr(
-        "nonebot_plugin_parser.matchers.filter.is_platform_enabled",
+        "nonebot_plugin_parser.platform_switch.is_platform_enabled",
         _fake_is_platform_enabled,
     )
 

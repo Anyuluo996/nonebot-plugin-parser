@@ -1,16 +1,12 @@
-import json
 import asyncio
 from re import Match
-from typing import Final, ClassVar
-from urllib.parse import urlparse
+from typing import ClassVar
 from collections.abc import AsyncGenerator
 
-from msgspec import MsgspecError, convert
 from nonebot import logger
 from bilibili_api import HEADERS, Credential, select_client, request_settings
 from bilibili_api.opus import Opus
-from bilibili_api.video import Video, VideoQuality
-from bilibili_api.login_v2 import QrCodeLogin, QrCodeLoginEvents
+from bilibili_api.video import Video
 
 from ..base import (
     BaseParser,
@@ -22,74 +18,24 @@ from ..base import (
     pconfig,
 )
 from ..data import Platform, ParseResult, ImageContent, MediaContent
-from ..cookie import ck2dict
 from .dynamic import DynamicInfo
+from .streams import (
+    _is_p2p_node as _is_p2p_node,
+)
+from .streams import (
+    safe_convert,
+    detect_best_streams_safe,
+)
+from .streams import (
+    _select_preferred_streams as _select_preferred_streams,
+)
+from .credential import BilibiliCredentialManager
+
+# 兼容别名: 旧代码/测试从包顶层导入 _safe_convert
+_safe_convert = safe_convert
 
 # 转发链递归深度上限，防止循环引用/极深嵌套导致 RecursionError 崩溃
 MAX_REPOST_DEPTH = 5
-
-# B站 P2P 边缘节点 host 特征。实测这些节点(os 已被伪装成 bcache, 只能靠 host 判别):
-#   - 速度仅 1-2M/s, 而正规 CDN(bilivideo.com)可达 5-25M/s
-#   - 频繁连接重置(Connection reset), 是 "下载异常重试" 日志的主要来源
-# backup_url 里必然存在正规 CDN, 主链命中 P2P 时优先换正规 CDN
-_P2P_HOST_MARKERS: Final[tuple[str, ...]] = (
-    "mcdn.bilivideo",  # xy116x196x156x92xy.mcdn.bilivideo.cn 等
-    "edge.mountaintoys",  # *.edge.mountaintoys.cn (mcdn 专属域名, 4483 端口)
-)
-
-
-def _is_p2p_node(url: str) -> bool:
-    """判断 URL 是否指向 P2P 边缘节点(mcdn 等), 这些节点质量差应优先回避"""
-    host = urlparse(url).hostname or ""
-    return any(marker in host for marker in _P2P_HOST_MARKERS)
-
-
-def _select_preferred_streams(primary: str, backups: list[str]) -> tuple[str, list[str]]:
-    """主链命中 P2P 节点时, 从 backup_url 里取第一个正规 CDN 提到主链位置。
-
-    返回 (优选主链, 完整备用列表)。备用列表保留全部链接(含原 P2P 主链)供下载层重试轮换。
-    全是 P2P 时保持主链(有总比没有强)。结果对 primary 去重(避免 B站偶发返回重复链接)。
-    """
-    if not _is_p2p_node(primary):
-        return primary, _dedup_backups(backups, primary)
-    for i, bu in enumerate(backups):
-        if not _is_p2p_node(bu):
-            # 把第一个正规 CDN 提到主链, 原 P2P 主链降级到 backup 首位
-            new_backups = [primary, *backups[:i], *backups[i + 1 :]]
-            logger.debug(f"主链命中 P2P 节点, 切换到正规 CDN: {_short_url(primary)} → {_short_url(bu)}")
-            return bu, _dedup_backups(new_backups, bu)
-    logger.warning(f"主链及所有 backup 均为 P2P 节点, 保持主链: {_short_url(primary)}")
-    return primary, _dedup_backups(backups, primary)
-
-
-def _dedup_backups(backups: list[str], primary: str) -> list[str]:
-    """去重并排除与主链相同的链接, 保持原顺序"""
-    seen: set[str] = {primary}
-    out: list[str] = []
-    for u in backups:
-        if u not in seen:
-            seen.add(u)
-            out.append(u)
-    return out
-
-
-def _short_url(url: str, n: int = 60) -> str:
-    """日志友好的 URL 截断"""
-    return url[:n] + ("..." if len(url) > n else "")
-
-
-def _safe_convert(raw, target_type, *, context: str):
-    """安全 msgspec 转换：API 返回结构变化时抛 ParseException 而非 ValidationError 崩溃。
-
-    B 站 API 在风控/改版中字段经常变动，msgspec.convert 缺字段/类型不符会抛
-    ValidationError，未捕获会让整条解析直接失败。
-    """
-    try:
-        return convert(raw, target_type)
-    except MsgspecError as e:
-        logger.warning(f"B站接口数据结构异常（{context}）: {e}")
-        raise ParseException(f"B站接口数据解析失败（{context}）") from e
-
 
 # 选择客户端
 select_client("curl_cffi")
@@ -104,8 +50,20 @@ class BilibiliParser(BaseParser):
     def __init__(self):
         super().__init__()
         self.headers = HEADERS.copy()
-        self._credential: Credential | None = None
-        self._cookies_file = pconfig.config_dir / "bilibili_cookies.json"
+        self._credentials = BilibiliCredentialManager(pconfig.config_dir / "bilibili_cookies.json")
+
+    @property
+    async def credential(self) -> Credential | None:
+        """哔哩哔哩登录凭证（校验有效性并按需刷新）"""
+        return await self._credentials.get()
+
+    async def login_with_qrcode(self) -> bytes:
+        """通过二维码登录获取哔哩哔哩登录凭证（返回二维码图片内容）"""
+        return await self._credentials.login_with_qrcode()
+
+    def check_qr_state(self) -> AsyncGenerator[str]:
+        """检查二维码登录状态"""
+        return self._credentials.check_qr_state()
 
     @handle("b23.tv", r"b23\.tv/[A-Za-z\d\._?%&+\-=/#]+")
     @handle("bili2233", r"bili2233\.cn/[A-Za-z\d\._?%&+\-=/#]+")
@@ -225,17 +183,20 @@ class BilibiliParser(BaseParser):
         from .video import VideoInfo, AIConclusion
 
         video = await self._get_video(bvid=bvid, avid=avid)
-        video_info = _safe_convert(await video.get_info(), VideoInfo, context="视频信息")
+        # _get_video 已触发过一次凭据校验/刷新, 此处复用结果,
+        # 避免同一次解析内对 check_valid/check_refresh 的重复网络请求
+        credential = await self.credential
+        video_info = safe_convert(await video.get_info(), VideoInfo, context="视频信息")
         # UP
         author = self.create_author(video_info.owner.name, video_info.owner.face)
         # 处理分 p
         page_info = video_info.extract_info_with_page(page_num)
 
         # 获取 AI 总结
-        if self._credential:
+        if credential:
             cid = await video.get_cid(page_info.index)
             ai_conclusion = await video.get_ai_conclusion(cid)
-            ai_conclusion = _safe_convert(ai_conclusion, AIConclusion, context="AI总结")
+            ai_conclusion = safe_convert(ai_conclusion, AIConclusion, context="AI总结")
             ai_summary = ai_conclusion.summary
         else:
             ai_summary: str = "哔哩哔哩 cookie 未配置或失效, 无法使用 AI 总结"
@@ -298,7 +259,7 @@ class BilibiliParser(BaseParser):
         if await dynamic.is_article():
             return await self._parse_bilibli_api_opus(dynamic.turn_to_opus())
 
-        dynamic_info = _safe_convert(await dynamic.get_info(), DynamicWrapper, context="动态信息").item
+        dynamic_info = safe_convert(await dynamic.get_info(), DynamicWrapper, context="动态信息").item
         return await self._parse_dynamic_info(dynamic_info)
 
     async def _parse_dynamic_info(self, dynamic_info: DynamicInfo, depth: int = 0):
@@ -343,7 +304,7 @@ class BilibiliParser(BaseParser):
         if not isinstance(opus_info, dict):
             raise ParseException("获取图文动态信息失败")
         # 转换为结构体
-        opus_data = _safe_convert(opus_info, OpusItem, context="图文动态")
+        opus_data = safe_convert(opus_info, OpusItem, context="图文动态")
         logger.debug(f"opus_data: {opus_data}")
         author = self.create_author(*opus_data.name_avatar)
 
@@ -371,7 +332,7 @@ class BilibiliParser(BaseParser):
         room = LiveRoom(room_display_id=room_id, credential=await self.credential)
         info_dict = await room.get_room_info()
 
-        room_data = _safe_convert(info_dict, RoomData, context="直播信息")
+        room_data = safe_convert(info_dict, RoomData, context="直播信息")
         contents: list[MediaContent] = []
         # 下载封面
         if cover := room_data.cover:
@@ -406,7 +367,7 @@ class BilibiliParser(BaseParser):
         if fav_dict["medias"] is None:
             raise ParseException("收藏夹内容为空, 或被风控")
 
-        favdata = _safe_convert(fav_dict, FavData, context="收藏夹")
+        favdata = safe_convert(fav_dict, FavData, context="收藏夹")
 
         author = self.create_author(favdata.info.upper.name, favdata.info.upper.face)
 
@@ -445,37 +406,17 @@ class BilibiliParser(BaseParser):
         主链已做 P2P 节点过滤(命中 mcdn 等坏节点时从 backup 提取正规 CDN 替换);
         backup 列表保留全部链接供下载层重试时轮换不同 CDN。
         """
-
         from bilibili_api.video import (
             AudioStreamDownloadURL,
             VideoStreamDownloadURL,
-            VideoDownloadURLDataDetecter,
         )
 
         if video is None:
             video = await self._get_video(bvid=bvid, avid=avid)
 
-        # 获取下载数据
+        # 获取下载数据（detect_best_streams 崩溃时由 detect_best_streams_safe 降级）
         download_url_data = await video.get_download_url(page_index=page_index)
-        detecter = VideoDownloadURLDataDetecter(download_url_data)
-        try:
-            streams = detecter.detect_best_streams(
-                video_max_quality=pconfig.bili_video_quality,
-                codecs=pconfig.bili_video_codes,
-                no_dolby_video=True,
-                no_hdr=True,
-            )
-        except AttributeError:
-            # bilibili_api detect_best_streams 排序时 codecs=None 的流会触发 AttributeError
-            # 上游 issue #1035: hvc1/hev1 等编码无法匹配 VideoCodecs.value("hev")
-            # → video_codecs 残留 None → 排序崩溃
-            # 降级: 从原始 dash 数据重新解析(用自定义 codec 映射识别 hvc1)，手动过滤再选最佳
-            logger.debug("detect_best_streams() failed (likely codecs=None), using fallback")
-            streams = self._fallback_select_streams(
-                download_url_data,
-                max_quality=pconfig.bili_video_quality,
-                allowed_codecs=pconfig.bili_video_codes,
-            )
+        streams = detect_best_streams_safe(download_url_data)
 
         video_stream = streams[0]
         if not isinstance(video_stream, VideoStreamDownloadURL):
@@ -491,224 +432,3 @@ class BilibiliParser(BaseParser):
         logger.debug(f"音频流质量: {audio_stream.audio_quality.name}")
         a_url, a_backups = _select_preferred_streams(audio_stream.url, list(audio_stream.backup_url or []))
         return v_url, v_backups, a_url, a_backups
-
-    # B站 dash 视频流 codecs 字符串 → VideoCodecs 映射
-    # 上游 issue #1035: VideoCodecs.HEV.value="hev" 无法匹配 "hvc1.x.x"，导致 codecs=None
-    # 这里用自定义前缀映射兜底识别 hvc1/hev1 等变体
-    _CODEC_PREFIX_MAP: ClassVar[dict[str, str]] = {
-        "hvc1": "HEV",
-        "hev1": "HEV",
-        "hvc": "HEV",
-        "avc1": "AVC",
-        "avc": "AVC",
-        "av01": "AV1",
-        "av1": "AV1",
-    }
-
-    @staticmethod
-    def _resolve_codecs(codecs_str: str):
-        """根据 dash 返回的 codecs 字符串识别 VideoCodecs，识别不了返回 None"""
-        from bilibili_api.video import VideoCodecs
-
-        if not codecs_str:
-            return None
-        lower = codecs_str.lower()
-        for prefix, name in BilibiliParser._CODEC_PREFIX_MAP.items():
-            if prefix in lower:
-                return getattr(VideoCodecs, name, None)
-        return None
-
-    @staticmethod
-    def _fallback_select_streams(
-        download_url_data: dict,
-        *,
-        max_quality: VideoQuality | int = 120,
-        allowed_codecs: list | None = None,
-    ) -> list:
-        """bilibili_api detect_best_streams 降级: 直接从 dash 原始数据重新解析选最佳流
-
-        绕开上游 issue #1035 中 detect() 把 hvc1 流的 video_codecs 置为 None 的问题：
-        VideoStreamDownloadURL 构造后并未保留原始 codecs 字符串，所以这里从 dash dict
-        重新提取，用 _resolve_codecs 自行识别编码。
-
-        上游修复后(VideoCodecs.HEV.value 变成 tuple) detect_best_streams 不再抛异常，
-        本方法不会被调用，自动成为 no-op。
-        """
-        from bilibili_api.video import (
-            AudioQuality,
-            AudioStreamDownloadURL,
-            VideoStreamDownloadURL,
-        )
-
-        max_qv = max_quality.value if isinstance(max_quality, VideoQuality) else max_quality
-        allowed = set(allowed_codecs) if allowed_codecs is not None else None
-
-        video_streams: list[VideoStreamDownloadURL] = []
-        audio_streams: list[AudioStreamDownloadURL] = []
-
-        dash = download_url_data.get("dash") or {}
-        # bangumi 数据可能多包一层 video_info
-        if not dash and download_url_data.get("video_info"):
-            dash = download_url_data["video_info"].get("dash") or {}
-
-        # bilibili-api 17.4.2 起 VideoStreamDownloadURL / AudioStreamDownloadURL
-        # 要求 backup_url / bandwidth / codecs / frame_rate / scale / sar /
-        # mime_type / segment_base_* 等字段; 缺失键给安全默认值兼容老/裁剪 dash 数据。
-        for vd in dash.get("video", []) or []:
-            try:
-                q = VideoQuality(vd["id"])
-            except (KeyError, ValueError):
-                continue
-            # 忽略 HDR/杜比/超 max 的清晰度
-            if q in (VideoQuality.HDR, VideoQuality.DOLBY):
-                continue
-            if q.value > max_qv:
-                continue
-            url = vd.get("baseUrl") or vd.get("base_url")
-            if not url:
-                continue
-            codecs_enum = BilibiliParser._resolve_codecs(vd.get("codecs", ""))
-            if codecs_enum is None:
-                # 识别不出编码的流直接丢弃，避免再次触发上游排序崩溃
-                continue
-            if allowed is not None and codecs_enum not in allowed:
-                continue
-            seg = vd.get("segment_base") or {}
-            sar_raw = vd.get("sar", "1:1")
-            try:
-                parts = [int(x) for x in str(sar_raw).split(":")] if ":" in str(sar_raw) else [1, 1]
-                # VideoStreamDownloadURL 要求 sar 为固定 2 元组 (width, height)
-                sar = (parts[0], parts[-1]) if len(parts) >= 2 else (1, 1)
-            except (TypeError, ValueError, IndexError):
-                sar = (1, 1)
-            try:
-                frame_rate = float(vd.get("frame_rate", 0.0))
-            except (TypeError, ValueError):
-                frame_rate = 0.0
-            video_streams.append(
-                VideoStreamDownloadURL(
-                    url=url,
-                    video_quality=q,
-                    video_codecs=codecs_enum,
-                    backup_url=list(vd.get("backup_url", [])),
-                    bandwidth=int(vd.get("bandwidth", 0) or 0),
-                    codecs=str(vd.get("codecs", "")),
-                    frame_rate=frame_rate,
-                    scale=(vd.get("width", 0), vd.get("height", 0)),
-                    sar=sar,
-                    mime_type=str(vd.get("mime_type", "")),
-                    segment_base_initialization=str(seg.get("initialization", "")),
-                    segment_base_index_range=str(seg.get("index_range", "")),
-                )
-            )
-
-        for ad in dash.get("audio", []) or []:
-            try:
-                q = AudioQuality(ad["id"])
-            except (KeyError, ValueError):
-                continue
-            url = ad.get("baseUrl") or ad.get("base_url")
-            if not url:
-                continue
-            if q.value > AudioQuality._192K.value:
-                continue
-            seg = ad.get("segment_base") or {}
-            audio_streams.append(
-                AudioStreamDownloadURL(
-                    url=url,
-                    audio_quality=q,
-                    backup_url=list(ad.get("backup_url", [])),
-                    bandwidth=int(ad.get("bandwidth", 0) or 0),
-                    codecs=str(ad.get("codecs", "")),
-                    mime_type=str(ad.get("mime_type", "")),
-                    segment_base_initialization=str(seg.get("initialization", "")),
-                    segment_base_index_range=str(seg.get("index_range", "")),
-                )
-            )
-
-        best_video = max(video_streams, key=lambda s: s.video_quality.value, default=None)
-        best_audio = max(audio_streams, key=lambda s: s.audio_quality.value, default=None)
-        return [best_video, best_audio]
-
-    def _save_credential(self):
-        """存储哔哩哔哩登录凭证"""
-        if self._credential is None:
-            return
-
-        self._cookies_file.write_text(json.dumps(self._credential.get_cookies()))
-
-    def _load_credential(self):
-        """从文件加载哔哩哔哩登录凭证"""
-        if not self._cookies_file.exists():
-            return
-
-        self._credential = Credential.from_cookies(json.loads(self._cookies_file.read_text()))
-
-    async def login_with_qrcode(self) -> bytes:
-        """通过二维码登录获取哔哩哔哩登录凭证"""
-        self._qr_login = QrCodeLogin()
-        await self._qr_login.generate_qrcode()
-
-        qr_pic = self._qr_login.get_qrcode_picture()
-        return qr_pic.content
-
-    async def check_qr_state(self) -> AsyncGenerator[str]:
-        """检查二维码登录状态"""
-        scan_tip_pending = True
-
-        for _ in range(30):
-            state = await self._qr_login.check_state()
-            match state:
-                case QrCodeLoginEvents.DONE:
-                    yield "登录成功"
-                    self._credential = self._qr_login.get_credential()
-                    self._save_credential()
-                    break
-                case QrCodeLoginEvents.CONF:
-                    if scan_tip_pending:
-                        yield "二维码已扫描, 请确认登录"
-                        scan_tip_pending = False
-                case QrCodeLoginEvents.TIMEOUT:
-                    yield "二维码过期, 请重新生成"
-                    break
-            await asyncio.sleep(2)
-        else:
-            yield "二维码登录超时, 请重新生成"
-
-    async def _init_credential(self):
-        """初始化哔哩哔哩登录凭证"""
-        if pconfig.bili_ck is None:
-            self._load_credential()
-            return
-
-        credential = Credential.from_cookies(ck2dict(pconfig.bili_ck))
-        if await credential.check_valid():
-            logger.info(f"`parser_bili_ck` 有效, 保存到 {self._cookies_file}")
-            self._credential = credential
-            self._save_credential()
-        else:
-            logger.info(f"`parser_bili_ck` 已过期, 尝试从 {self._cookies_file} 加载")
-            self._load_credential()
-
-    @property
-    async def credential(self) -> Credential | None:
-        """哔哩哔哩登录凭证"""
-
-        if self._credential is None:
-            await self._init_credential()
-            return self._credential
-
-        if not await self._credential.check_valid():
-            logger.warning("哔哩哔哩凭证已过期, 请重新配置")
-            return None
-
-        if await self._credential.check_refresh():
-            logger.info("哔哩哔哩凭证需要刷新")
-            if self._credential.has_ac_time_value() and self._credential.has_bili_jct():
-                await self._credential.refresh()
-                logger.info(f"哔哩哔哩凭证刷新成功, 保存到 {self._cookies_file}")
-                self._save_credential()
-            else:
-                logger.warning("哔哩哔哩凭证刷新需要包含 `SESSDATA`, `ac_time_value` 项")
-
-        return self._credential

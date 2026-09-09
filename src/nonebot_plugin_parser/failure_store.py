@@ -10,7 +10,6 @@
 - L3：reported 标记，由 failure_reporter 上报后置位
 """
 
-import json
 import time
 from typing import Any
 from pathlib import Path
@@ -18,6 +17,7 @@ from pathlib import Path
 from nonebot import logger
 
 from .config import pconfig
+from .persist import load_json_or, atomic_write_json
 
 _FAILURES_PATH: Path = pconfig.data_dir / "parse_failures.json"
 MAX_FAILURES = 200
@@ -25,15 +25,10 @@ MAX_FAILURES = 200
 
 def _load_or_initialize() -> dict[str, dict[str, Any]]:
     """从磁盘加载失败记录；文件不存在或损坏则初始化为空。"""
-    if not _FAILURES_PATH.exists():
-        return {}
-    try:
-        data = json.loads(_FAILURES_PATH.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            return data
-        logger.warning(f"parse_failures.json 结构异常（非 dict），已重置: {type(data)}")
-    except (json.JSONDecodeError, OSError) as e:
-        logger.warning(f"读取 parse_failures.json 失败，已重置: {e}")
+    data = load_json_or(_FAILURES_PATH, {}, context="解析失败记录持久化")
+    if isinstance(data, dict):
+        return data
+    logger.warning(f"parse_failures.json 结构异常（非 dict），已重置: {type(data)}")
     return {}
 
 
@@ -42,8 +37,8 @@ _failures: dict[str, dict[str, Any]] = _load_or_initialize()
 
 
 def _save() -> None:
-    """把内存缓存刷盘（同步，失败记录频率低）。"""
-    _FAILURES_PATH.write_text(json.dumps(_failures, ensure_ascii=False, indent=2), encoding="utf-8")
+    """把内存缓存刷盘（同步，失败记录频率低；原子写防截断）。"""
+    atomic_write_json(_FAILURES_PATH, _failures)
 
 
 def record_failure(url: str, platform: str, error: str) -> None:

@@ -80,7 +80,8 @@ async def _is_platform_allowed(platform_name: str) -> bool:
     if session is None:
         return True
 
-    from ..matchers.filter import is_platform_enabled
+    # 平台开关存储/判定在 platform_switch（中立模块），parsers 层不依赖 matchers 层
+    from ..platform_switch import is_platform_enabled
 
     return is_platform_enabled(session, platform_name)
 

@@ -3,8 +3,8 @@
 提供「按用户 + 受控项」的细粒度授权,以及全局黑名单。授权分两层:
 全局(跨群生效,白名单语义)+ 群组(本群独立),全局优先。
 
-数据持久化到 ``data_dir/user_grants.json`` 与 ``data_dir/user_blacklist.json``,
-沿用 :mod:`matchers.filter` 的同步 ``write_text`` 风格(数据量小,无需异步/锁)。
+数据持久化到 ``data_dir/user_grants.json`` 与 ``data_dir/user_blacklist.json``，
+经 :mod:`persist` 原子写 + 容错读（数据量小，无需异步/锁）。
 
 判定优先级:
 
@@ -15,7 +15,6 @@
 5. 否则 → 拒绝
 """
 
-import json
 from pathlib import Path
 
 from nonebot.rule import Rule
@@ -23,6 +22,8 @@ from nonebot.permission import SUPERUSER, Permission
 from nonebot_plugin_uninfo import Session, UniSession
 
 from ..config import gconfig, pconfig
+from ..persist import load_json_or, atomic_write_json
+from ..platform_switch import get_group_key as _get_group_key
 
 # ── 受控项语义键(不含前缀,与 parser_force_prefix 解耦)─────────
 # 授权/判定时统一用这些键, 不受命令前缀变化影响。
@@ -119,11 +120,7 @@ def _is_super(user_id: str) -> bool:
     return user_id in _SUPERUSERS
 
 
-# ── 群组键:复用 filter 的 get_group_key,避免重复 ──────────
-def _get_group_key(session: Session) -> str:
-    """群组唯一标识 ``{scope}_{scene_path}``(与 filter.get_group_key 一致)。"""
-    return f"{session.scope}_{session.scene_path}"
-
+# ── 群组键:复用 platform_switch 的 get_group_key(别名 _get_group_key)──
 
 # ════════════════════════════════════════════════════════════
 # 授权(grants):global + groups
@@ -139,13 +136,10 @@ _GRANTS: dict[str, dict] = {"global": {}, "groups": {}}
 
 
 def _load_grants() -> None:
-    """从磁盘加载授权数据,文件不存在则按空配置初始化。"""
+    """从磁盘加载授权数据,文件不存在或损坏则按空配置初始化。"""
     global _GRANTS
-    if not _GRANTS_PATH.exists():
-        _GRANTS_PATH.write_text(json.dumps({"global": {}, "groups": {}}, ensure_ascii=False))
-    try:
-        data = json.loads(_GRANTS_PATH.read_text())
-    except (json.JSONDecodeError, OSError):
+    data = load_json_or(_GRANTS_PATH, {}, context="用户授权持久化")
+    if not isinstance(data, dict):
         data = {}
     _GRANTS = {
         "global": {str(k): list(v) if v else [] for k, v in data.get("global", {}).items()},
@@ -157,8 +151,8 @@ def _load_grants() -> None:
 
 
 def _save_grants() -> None:
-    """持久化授权数据到磁盘。"""
-    _GRANTS_PATH.write_text(json.dumps(_GRANTS, ensure_ascii=False, indent=2))
+    """持久化授权数据到磁盘（原子写）。"""
+    atomic_write_json(_GRANTS_PATH, _GRANTS)
 
 
 _load_grants()
@@ -277,17 +271,14 @@ _BLACKLIST: set[str] = set()
 
 def _load_blacklist() -> None:
     global _BLACKLIST
-    if not _BLACKLIST_PATH.exists():
-        _BLACKLIST_PATH.write_text(json.dumps([]))
-    try:
-        data = json.loads(_BLACKLIST_PATH.read_text())
-        _BLACKLIST = {str(x) for x in data}
-    except (json.JSONDecodeError, OSError):
-        _BLACKLIST = set()
+    data = load_json_or(_BLACKLIST_PATH, [], context="用户黑名单持久化")
+    if not isinstance(data, list):
+        data = []
+    _BLACKLIST = {str(x) for x in data}
 
 
 def _save_blacklist() -> None:
-    _BLACKLIST_PATH.write_text(json.dumps(sorted(_BLACKLIST), ensure_ascii=False, indent=2))
+    atomic_write_json(_BLACKLIST_PATH, sorted(_BLACKLIST))
 
 
 _load_blacklist()

@@ -95,7 +95,7 @@ async def test_dynamic():
 def test_fallback_select_streams_filters_none_codecs():
     from bilibili_api.video import VideoCodecs, AudioQuality, VideoQuality
 
-    from nonebot_plugin_parser.parsers.bilibili import BilibiliParser
+    from nonebot_plugin_parser.parsers.bilibili.streams import _fallback_select_streams
 
     # 构造一份含 hvc1 流(上游 issue #1035 失败场景)的 dash 数据
     dash_data = {
@@ -114,13 +114,13 @@ def test_fallback_select_streams_filters_none_codecs():
     }
 
     # 默认全部编码允许 → 应恢复 hvc1 流并选最高清晰度 1080P
-    result = BilibiliParser._fallback_select_streams(dash_data, max_quality=VideoQuality._8K)
+    result = _fallback_select_streams(dash_data, max_quality=VideoQuality._8K)
     assert result[0].video_codecs is VideoCodecs.HEV
     assert result[0].video_quality is VideoQuality._1080P
     assert result[1].audio_quality is AudioQuality._192K
 
     # 限制编码白名单不含 HEV → hvc1 流被过滤，应选次高的 AVC 480P
-    result = BilibiliParser._fallback_select_streams(
+    result = _fallback_select_streams(
         dash_data,
         max_quality=VideoQuality._8K,
         allowed_codecs=[VideoCodecs.AVC, VideoCodecs.AV1],
@@ -129,7 +129,7 @@ def test_fallback_select_streams_filters_none_codecs():
     assert result[0].video_quality is VideoQuality._480P
 
     # 质量上限过滤(传枚举)
-    result = BilibiliParser._fallback_select_streams(dash_data, max_quality=VideoQuality._360P)
+    result = _fallback_select_streams(dash_data, max_quality=VideoQuality._360P)
     assert result[0].video_quality is VideoQuality._360P
 
     # 无法识别编码的流被丢弃
@@ -141,8 +141,8 @@ def test_fallback_select_streams_filters_none_codecs():
             "audio": [],
         }
     }
-    result = BilibiliParser._fallback_select_streams(bad_data)
+    result = _fallback_select_streams(bad_data)
     assert result[0] is None
 
     # 空数据
-    assert BilibiliParser._fallback_select_streams({}) == [None, None]
+    assert _fallback_select_streams({}) == [None, None]

@@ -61,8 +61,6 @@ def _build_base_args() -> list[str]:
 
 async def _run(cmd: list[str], timeout: float = 300.0) -> tuple[int, str, str]:
     """异步运行命令，返回 (returncode, stdout, stderr)。"""
-    import asyncio
-
     logger.debug(f"tdl run: {' '.join(cmd)}")
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -650,8 +648,6 @@ async def download_media(
                 while dest.exists():
                     dest = dest_dir / f"{src.stem}_{idx}{ext}"
                     idx += 1
-
-            import asyncio
 
             # 用 shutil.move 而非 Path.replace：临时目录和目标目录可能不在同一磁盘
             # （如 C: 的 tmp -> D: 的 cache），os.replace 在跨盘时会抛 WinError 17

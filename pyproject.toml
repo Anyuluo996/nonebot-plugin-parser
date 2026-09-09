@@ -176,7 +176,7 @@ executionEnvironments = [
 typeCheckingMode = "standard"
 disableBytesTypePromotions = true
 
-[tool.pytest]
+[tool.pytest.ini_options]
 addopts = [
   "--import-mode=prepend", # 导入模式
   "--strict-markers",      # 严格标记模式
@@ -187,8 +187,12 @@ addopts = [
   "--timeout=120",         # 每个用例上限 120s, 防网络挂起拖死 CI
 ]
 pythonpath = ["src"]
+testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
+markers = [
+  "network: 依赖外部平台接口/真实网络的测试（tests/parsers 下自动打标）。本地或 CI 排查纯回归时可用 `-m \"not network\"` 只跑单元层。",
+]
 
 [tool.ruff]
 line-length = 120

@@ -17,6 +17,14 @@ def pytest_collection_modifyitems(items: list[pytest.Item]):
     for async_test in pytest_asyncio_tests:
         async_test.add_marker(session_scope_marker, append=False)
 
+    # 测试分级: tests/parsers/ 下为真实网络测试(受平台风控影响, 风控时转 skip,
+    # CI 绿不等于解析可用), 自动打 network marker, 可用 `-m "not network"` 跳过;
+    # tests/others 与 tests/renders 为纯单元层(不依赖网络)。
+    network_marker = pytest.mark.network
+    for item in items:
+        if item.path.parent.name == "parsers":
+            item.add_marker(network_marker)
+
 
 @pytest_asyncio.fixture(scope="session", autouse=True)
 async def init_nonebot():

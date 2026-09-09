@@ -39,34 +39,11 @@ from .telegram import TelegramParser as TelegramParser
 from .xiaohongshu import XiaoHongShuParser as XiaoHongShuParser
 from ..download import YTDLP_DOWNLOADER
 
-# Parser 注册表
-PARSERS: dict[str, type[BaseParser]] = {
-    "nga": NGAParser,
-    "acfun": AcfunParser,
-    "weibo": WeiBoParser,
-    "douyin": DouyinParser,
-    "twitter": TwitterParser,
-    "bilibili": BilibiliParser,
-    "kuaishou": KuaiShouParser,
-    "telegram": TelegramParser,
-    "xiaohongshu": XiaoHongShuParser,
-    "zhihu": ZhiHuParser,
-    "netease": NCMParser,
-    "kugou": KuGouParser,
-    "qsmusic": QSMusicParser,
-    "hupu": HupuParser,
-    "coolapk": CoolapkParser,
-    "lofter": LofterParser,
-    "duitang": DuiTangParser,
-    "buff": BuffParser,
-    "heybox": HeyBoxParser,
-    "illu": IlluParser,
-    "tieba": TiebaParser,
-    "pixiv": PixivParser,
-}
-
-if _QQMUSIC_AVAILABLE:
-    PARSERS["qqmusic"] = QQMusicParser  # type: ignore[assignment]
+# Parser 注册表：从 BaseParser._registry 自动派生（__init_subclass__ 注册时自带
+# platform.name）。新增 parser 只要定义 platform 并被 import 到这里即生效，
+# 无需再手工登记；可选依赖不可用而未 import 的 parser（如 qqmusic 缺包、
+# tiktok/youtube 缺 ytdlp）自然缺席。
+PARSERS: dict[str, type[BaseParser]] = {str(cls.platform.name): cls for cls in BaseParser.get_all_subclass()}
 
 if YTDLP_DOWNLOADER is not None:
     from .tiktok import TikTokParser as TikTokParser

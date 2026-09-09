@@ -37,6 +37,13 @@ class Config(BaseModel):
     """[已弃用] 网易云音乐 API 地址，网易云现已直连官方接口，无需配置"""
     parser_proxy: str | None = None
     """代理"""
+    parser_verify_ssl: bool = False
+    """是否校验 HTTPS 证书（TLS 校验），默认 False（保持历史行为）。
+
+    部分平台接口 / CDN 证书链不完整（或部署环境缺系统根证书），历史上全局
+    ``verify=False``。出于安全默认收敛为可配置项：部署环境证书正常时建议开启
+    （True），防止下载内容与凭据被中间人劫持；开启后若某平台报证书错误再回退。
+    """
     parser_douyin_ttwid: str | None = None
     """抖音 PC web 详情接口用的登录态 ttwid Cookie（图文/实况照片解析）。
 
@@ -77,7 +84,7 @@ class Config(BaseModel):
     parser_use_base64: bool = False
     """是否使用 base64 编码发送图片，音频，视频"""
     parser_max_size: int = 90
-    """资源最大大小 默认 100 单位 MB"""
+    """资源最大大小 默认 90 单位 MB"""
     parser_duration_maximum: int = 480
     """视频/音频最大时长"""
     parser_video_send_timeout: int = 30
@@ -296,6 +303,11 @@ class Config(BaseModel):
     def proxy(self) -> str | None:
         """代理"""
         return self.parser_proxy
+
+    @property
+    def verify_ssl(self) -> bool:
+        """是否校验 HTTPS 证书"""
+        return self.parser_verify_ssl
 
     @property
     def douyin_ttwid(self) -> str | None:

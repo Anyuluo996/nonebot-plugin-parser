@@ -136,14 +136,14 @@ async def get_play_url(parser: "BaseParser", song_hash: str, quality: str = "128
         "x-router": "trackercdn.kugou.com",
     }
 
-    # request_curl: curl_cffi 绕过 SSA TLS 指纹检测，不可用时自动回退 httpx
+    # request_curl: curl_cffi 绕过 SSA TLS 指纹检测，不可用时自动回退 httpx；
+    # verify 未传，跟随 parser_verify_ssl 全局配置
     try:
         resp = await parser.request_curl(
             _PLAY_URL_API,
             params=params,
             headers=headers,
             timeout=15,
-            verify=False,
         )
     except Exception as exc:
         logger.warning(f"酷狗 get_play_url 异常: {exc!r}")

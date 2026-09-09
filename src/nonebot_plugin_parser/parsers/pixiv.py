@@ -4,6 +4,7 @@ from typing import Any, ClassVar
 
 from httpx import Proxy
 from msgspec import Struct
+from nonebot import logger
 from msgspec.json import Decoder
 
 from .base import BaseParser, handle
@@ -203,7 +204,7 @@ class PixivParser(BaseParser):
                 if not user_data.error:
                     avatar_url = user_data.body.get("image")
             except Exception:
-                pass
+                logger.debug(f"pixiv 作者头像获取失败: user_id={user_id}", exc_info=True)
 
         return self.create_author(
             user_name or "未知作者",

@@ -2,6 +2,8 @@
 
 from typing_extensions import override
 
+from nonebot import logger
+
 from .base import UniHelper, UniMessage, ParseResult, BaseRenderer
 from ..helper import Text, Segment
 
@@ -29,7 +31,7 @@ class DefaultRenderer(BaseRenderer):
             if cover_path := await result.cover_path():
                 segs.insert(1, UniHelper.img_seg(cover_path))
         except Exception:
-            pass
+            logger.debug("封面下载/插入失败, 转发消息不含封面", exc_info=True)
 
         if total_len > 300:
             yield UniMessage(UniHelper.construct_forward_message(segs))

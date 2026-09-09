@@ -187,12 +187,13 @@ async def _music_select(matcher: Matcher, session: Session = UniSession()):
 
     item = order.items[idx - 1]
 
+    # 懒导入规避循环依赖 (matchers/__init__ 末尾才 import music);
+    # 放 try 外保证 except 分支引用时已绑定
+    from . import safe_reaction
+
     # 选定后走对应 Parser 已有解析流程, 复用渲染流水线
     try:
-        try:
-            await UniHelper.message_reaction(event, "resolving")
-        except Exception:
-            pass
+        await safe_reaction(event, "resolving")
 
         parser = _get_music_parser(item.platform)
         if item.platform == "netease":
@@ -213,27 +214,18 @@ async def _music_select(matcher: Matcher, session: Session = UniSession()):
         # 选择成功后清理候选 (一次性消费, 避免重复选择同一列表)
         music_order.ORDER_STORE.clear(user_id, scene_id)
 
-        try:
-            await UniHelper.message_reaction(event, "done")
-        except Exception:
-            pass
+        await safe_reaction(event, "done")
 
     except TipException as e:
         try:
             await UniMessage(e.message).send()
         except Exception:
             logger.exception("发送 TipException 提示失败")
-        try:
-            await UniHelper.message_reaction(event, "done")
-        except Exception:
-            pass
+        await safe_reaction(event, "done")
     except Exception:
         logger.exception("点歌选择解析失败")
         try:
             await UniMessage("解析失败,请稍后重试").send()
         except Exception:
-            pass
-        try:
-            await UniHelper.message_reaction(event, "fail")
-        except Exception:
-            pass
+            logger.debug("发送解析失败提示也失败了", exc_info=True)
+        await safe_reaction(event, "fail")

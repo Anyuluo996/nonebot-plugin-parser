@@ -12,6 +12,8 @@
   IgnoreException 是语义性结果，重试无意义，立即上抛。
 - 超时（asyncio.TimeoutError）不重试：挂起型 parser 大概率重试同样挂起
   （见 curl_cffi 静默忽略 httpx.Timeout 的前科），且用户已等满整个超时预算。
+- B 站 -352 风控不重试：其窗口是分钟级（区别于 403 快进快出），秒级退避必然
+  落回同一窗口，立即上抛交给 L2 失败重试队列按分钟节奏处理。
 - Telegram 平台豁免：其解析阶段含媒体同步下载（tdl 自身 timeout=600s 兜底），
   失败重试会整段重下，代价过高；与 parse_timeout 的豁免口径一致。
 """
@@ -21,6 +23,7 @@ from re import Match
 from typing import TYPE_CHECKING
 
 from nonebot import logger
+from bilibili_api.exceptions import ResponseCodeException
 
 from .config import pconfig
 from .exception import TipException, ParseException, IgnoreException
@@ -51,6 +54,12 @@ async def parse_with_retry(parser: "BaseParser", keyword: str, searched: Match[s
         except Exception as e:
             if exempt or attempt >= retries:
                 # Telegram 豁免即时重试（重试=整段媒体重下）；重试次数用尽原样上抛
+                raise
+            if isinstance(e, ResponseCodeException) and e.code == -352:
+                # B 站 -352 风控窗口分钟级，秒级退避无意义，直接交 L2 队列
+                logger.warning(
+                    f"[{parser.platform.display_name}] -352 风控拦截（分钟级窗口），跳过即时重试，交由后台失败重试"
+                )
                 raise
             delay = base_delay * (2**attempt)
             logger.warning(

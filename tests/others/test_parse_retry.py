@@ -154,6 +154,21 @@ async def test_timeout_not_retried(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_bili_352_not_retried(monkeypatch):
+    """B 站 -352 是分钟级风控窗口，秒级退避必然落回同一窗口，立即上抛交 L2 队列。"""
+    from bilibili_api.exceptions import ResponseCodeException
+
+    _setup(monkeypatch, retry_max=3)
+    parser = _make_stub()
+    parser.exc = ResponseCodeException(-352, "-352")
+
+    with pytest.raises(ResponseCodeException):
+        await _run(parser)
+
+    assert parser.calls == 1  # 首次失败即上抛，不消耗重试预算
+
+
+@pytest.mark.asyncio
 async def test_telegram_exempt_from_retry(monkeypatch):
     """Telegram 解析阶段含媒体同步下载，失败重试=整段重下，豁免即时重试。"""
     from nonebot_plugin_parser.exception import ParseException

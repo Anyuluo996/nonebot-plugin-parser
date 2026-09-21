@@ -1,8 +1,10 @@
+import time
 import asyncio
 from re import Match
 from typing import ClassVar
 from collections.abc import AsyncGenerator
 
+import bilibili_api.utils.network as _bili_network
 from nonebot import logger
 from bilibili_api import HEADERS, Credential, select_client, request_settings
 from bilibili_api.opus import Opus
@@ -42,6 +44,30 @@ select_client("curl_cffi")
 # 模拟浏览器，第二参数数值参考 curl_cffi 文档
 # https://curl-cffi.readthedocs.io/en/latest/impersonate.html
 request_settings.set("impersonate", "chrome131")
+
+# 附带 bili_ticket 设备票据：B 站 07 月 C&D 后对无票据请求加大 -352 风控采样，
+# 匿名解析（无 SESSDATA 兜底）依赖此票据降低被拦概率（票据 3 天缓存，首次请求时获取）。
+# 注意 set 是导入期进程级全局开关，同进程其他使用 bilibili_api 的插件也会被附带票据。
+# 库内 _prepare_request 裸 await 票据获取且失败不缓存，票据端点一旦故障（被风控/超时）
+# 会让所有 B 站请求发不出去，因此包一层降级：失败后 10 分钟内不带票据直连。
+_orig_get_bili_ticket = _bili_network.get_bili_ticket
+_bili_ticket_fail_until = 0.0
+
+
+async def _safe_get_bili_ticket(credential=None):
+    global _bili_ticket_fail_until
+    if time.monotonic() < _bili_ticket_fail_until:
+        return "", "0"
+    try:
+        return await _orig_get_bili_ticket(credential)
+    except Exception as e:
+        _bili_ticket_fail_until = time.monotonic() + 600
+        logger.warning(f"获取 bili_ticket 失败, 10 分钟内降级为无票据直连: {e!r}")
+        return "", "0"
+
+
+_bili_network.get_bili_ticket = _safe_get_bili_ticket
+request_settings.set_enable_bili_ticket(True)
 
 
 class BilibiliParser(BaseParser):
@@ -252,11 +278,21 @@ class BilibiliParser(BaseParser):
     async def parse_dynamic_or_opus(self, dynamic_id: int):
         """解析动态或图文"""
         from bilibili_api.dynamic import Dynamic
+        from bilibili_api.exceptions import ResponseCodeException
 
         from .dynamic import DynamicWrapper
 
         dynamic = Dynamic(dynamic_id, await self.credential)
-        if await dynamic.is_article():
+        try:
+            is_article = await dynamic.is_article()
+        except ResponseCodeException as e:
+            if e.code != -352:
+                raise
+            # web-dynamic/v1/detail 与 opus/detail 是两个独立端点, B 站对二者
+            # 风控采样互不联动, detail 被拦时 opus/detail 往往仍可匿名直连
+            logger.warning(f"动态/图文 {dynamic_id} detail 接口触发 -352 风控, 回退 opus/detail 端点")
+            return await self.parse_opus_by_id(dynamic_id)
+        if is_article:
             return await self._parse_bilibli_api_opus(dynamic.turn_to_opus())
 
         dynamic_info = safe_convert(await dynamic.get_info(), DynamicWrapper, context="动态信息").item

@@ -1,6 +1,7 @@
 import re
 from typing import Literal, ClassVar
 
+import httpx
 from msgspec import Struct, field
 from nonebot import logger
 from msgspec.json import Decoder
@@ -118,6 +119,13 @@ fx_decoder = Decoder(FxTwitterResponse)
 # 转发链递归深度上限，防止循环引用/极深嵌套导致 RecursionError 崩溃
 MAX_REPOST_DEPTH = 5
 
+# 两家 API 的 Cloudflare 人机验证规则相反(2026-09-23 实测):
+# - vxtwitter: 数据中心出口 IP + 浏览器 UA 判定为伪装浏览器, 弹 "Just a moment"(403);
+#   如实声明 httpx 默认 UA 反而放行
+# - fxtwitter: 反 challenge 脚本 UA(python-httpx 等被拦), 浏览器 UA 或官方 FxTwitter UA 放行
+VX_API_HEADERS = {"User-Agent": f"python-httpx/{httpx.__version__}"}
+FX_API_HEADERS = {"User-Agent": "FxTwitter/1.0"}
+
 
 class TwitterParser(BaseParser):
     platform: ClassVar[Platform] = Platform(name=PlatformEnum.TWITTER, display_name="小蓝鸟")
@@ -131,7 +139,7 @@ class TwitterParser(BaseParser):
         """使用 vxtwitter API 解析 Twitter 链接"""
 
         api_url = url.replace("x.com", "api.vxtwitter.com")
-        response = await self.request(api_url)
+        response = await self.request(api_url, headers=VX_API_HEADERS)
         data = decoder.decode(response.content)
 
         # 长文(文章)推文: vxtwitter 只给预览, 回源 fxtwitter 拿全文
@@ -146,7 +154,7 @@ class TwitterParser(BaseParser):
 
     async def _fetch_fx_article(self, url: str) -> FxArticle | None:
         api_url = url.replace("x.com", "api.fxtwitter.com")
-        response = await self.request(api_url)
+        response = await self.request(api_url, headers=FX_API_HEADERS)
         data = fx_decoder.decode(response.content)
         return data.tweet.article if data.tweet else None
 

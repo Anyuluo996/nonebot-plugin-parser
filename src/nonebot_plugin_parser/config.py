@@ -88,11 +88,12 @@ class Config(BaseModel):
     parser_duration_maximum: int = 480
     """视频/音频最大时长"""
     parser_video_send_timeout: int = 30
-    """视频下载首包等待阈值（秒）。超时后先发送封面图，视频后台继续下完再补发。
+    """媒体后处理等待阈值（秒），0 表示不限时。
 
-    避免因 CDN 节点慢（如 B 站 mcdn P2P 节点）导致用户长时间干等。
-    实际下载重试仍按 download_file 的超时与 backup_urls 轮换进行，本阈值仅控制
-    "封面先发" 的触发时机。设为 0 可禁用此行为（恢复等视频下完一起发的旧行为）。
+    只约束下载完成之后的阶段: GIF 转换(palettegen+paletteuse)、渲染卡片取材
+    (超时跳过该素材但不取消下载)。下载段不限时, 由下载层自身的重试预算兜底,
+    两者不再互相截断(2026-09-25 推特 twimg 视频事故: 下载 35s 重试后成功,
+    却先被渲染层 30s 超时判死)。
     """
     parser_parse_timeout: int = 90
     """解析顶层超时（秒）。解析超时后记录失败并打 warning 日志，不再无限挂起。
@@ -229,7 +230,7 @@ class Config(BaseModel):
 
     @property
     def video_send_timeout(self) -> int:
-        """视频下载首包等待阈值（秒），超时先发封面"""
+        """媒体后处理等待阈值（秒），不约束下载段，0 表示不限时"""
         return self.parser_video_send_timeout
 
     @property

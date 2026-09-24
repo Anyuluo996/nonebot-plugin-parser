@@ -435,12 +435,26 @@ class CommonRenderer(ImageRenderer):
             logger.debug(f"加载封面失败: {e}")
             return None
 
+    async def _card_fetch(self, aw: Awaitable[Path | None]) -> Path | None:
+        """卡片取材: video_send_timeout 内拿不到就放弃该素材(跳过缩略图)。
+
+        shield 保护底层下载 task 不被取消, 下载层继续跑并落缓存, 消息阶段仍可复用;
+        卡片渲染则不必陪下载重试干等(2026-09-25 推特事故教训)。
+        """
+        timeout = pconfig.video_send_timeout
+        if timeout <= 0:
+            return await aw
+        try:
+            return await asyncio.wait_for(asyncio.shield(aw), timeout=timeout)
+        except Exception:
+            return None
+
     async def _render_image_grid(self, ctx: RenderContext) -> None:
         """渲染图片网格"""
         contents = ctx.result.img_contents
 
         async def fetch_path(content: ImageContent) -> Path | None:
-            return await content.get_path()
+            return await self._card_fetch(content.get_path())
 
         await self._render_grid(ctx, contents, fetch_path, draw_play_button=False)
 
@@ -449,7 +463,7 @@ class CommonRenderer(ImageRenderer):
         contents = ctx.result.dynamic_contents
 
         async def fetch_path(content: DynamicContent) -> Path | None:
-            thumb_path = await content.get_thumbnail_path()
+            thumb_path = await self._card_fetch(content.get_thumbnail_path())
             return thumb_path if thumb_path and thumb_path.exists() else None
 
         await self._render_grid(ctx, contents, fetch_path, draw_play_button=True)
@@ -582,8 +596,10 @@ class CommonRenderer(ImageRenderer):
     async def _render_img_in_graphics(self, ctx: RenderContext, image_content: ImageContent) -> None:
         """渲染图片"""
         try:
-            path = await image_content.get_path()
+            path = await self._card_fetch(image_content.get_path())
         except Exception:
+            return
+        if path is None:
             return
 
         with Image.open(path) as img:

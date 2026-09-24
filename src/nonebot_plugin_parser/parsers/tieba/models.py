@@ -542,11 +542,8 @@ class Contents(
                     nonlocal voice
                     voice = frag
                     yield frag
-                elif _type == 5:  # video
-                    frag = FragVideo.from_tbdata(proto)
-                    nonlocal video
-                    video = frag
-                    yield frag
+                elif _type == 5:  # video: PbContent 无视频字段, 视频统一在 video_info 中(见 Thread.from_tbdata)
+                    continue
                 # 35|36:tid=7769728331 / 37:tid=7760184147
                 elif _type in [35, 36, 37]:
                     frag = FragTiebaPlus.from_tbdata(proto)
@@ -1059,6 +1056,11 @@ class Thread:
             contents = Contents.from_tbdata(real_thread_proto)
             vote_info = VoteInfo.from_tbdata(real_thread_proto.poll_info)
             share_origin = ShareThread()
+            # 视频贴: 主楼视频在 video_info 中, PbContent 碎片不含视频字段
+            if real_thread_proto.HasField("video_info") and real_thread_proto.video_info.video_width:
+                video = FragVideo.from_tbdata(real_thread_proto.video_info)
+                contents.objs.append(video)
+                contents.video = video
         else:
             contents = Contents()
             vote_info = VoteInfo()

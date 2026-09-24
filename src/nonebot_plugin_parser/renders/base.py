@@ -1,6 +1,5 @@
 import io
 import uuid
-import asyncio
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar
 from pathlib import Path
@@ -47,23 +46,11 @@ class BaseRenderer(ABC):
             try:
                 match cont:
                     case VideoContent():
-                        timeout = pconfig.video_send_timeout
-                        if timeout > 0:
-                            try:
-                                path = await asyncio.wait_for(cont.get_path(), timeout=timeout)
-                            except asyncio.TimeoutError:
-                                # 视频未在阈值内下完: 不再先发封面图(渲染卡片已含视频缩略图, 视觉重复)。
-                                # 视频任务不被取消(底层 task 仍存活), 继续等其完成:
-                                # 给 3 倍超时上限避免无限挂起(下载层最坏 4×60s≈4分钟, 这里 3×30s=90s 兜底)。
-                                # 仍超时则放弃, 转 DownloadException 计入失败计数。
-                                # 下载层的 backup_urls 轮换仍在后台进行。
-                                try:
-                                    path = await asyncio.wait_for(cont.get_path(), timeout=timeout * 3)
-                                except asyncio.TimeoutError:
-                                    logger.warning("视频补发仍超时, 放弃 | url: {}", result.display_url)
-                                    raise DownloadException("视频下载超时")
-                        else:
-                            path = await cont.get_path()
+                        # 渲染卡片(含视频缩略图)已先行发送, 这里直接等下载完成再补发视频。
+                        # 下载层自带重试预算(重试耗尽才抛 DownloadException), 不设渲染层
+                        # 超时——wait_for 会 cancel 底层 task, 把仍在重试、马上就会成功的
+                        # 下载判死(2026-09-25 推特 twimg 视频事故)。
+                        path = await cont.get_path()
                         yield UniMessage(UniHelper.video_seg(path))
                     case AudioContent():
                         path = await cont.get_path()

@@ -34,13 +34,11 @@ class MediaContent:
     async def get_path(self) -> Path:
         if isinstance(self.path_task, Path):
             return self.path_task
-        timeout = pconfig.video_send_timeout
-        try:
-            self.path_task = (
-                await self.path_task if timeout <= 0 else await asyncio.wait_for(self.path_task, timeout=timeout)
-            )
-        except asyncio.TimeoutError as e:
-            raise DownloadException("媒体下载超时") from e
+        # 下载段不设渲染层超时: 下载层自带重试预算(重试耗尽才抛 DownloadException),
+        # 是下载耗时的唯一预算方。渲染层 wait_for 会 cancel 底层下载 task, 把仍在
+        # 重试、马上就会成功的下载拦腰截断(2026-09-25 推特: twimg 视频重试 35s 后
+        # 成功, 却先被 30s 超时判死, 整条解析报"媒体下载失败")。
+        self.path_task = await self.path_task
         return self.path_task
 
     @property
@@ -119,13 +117,20 @@ class DynamicContent(MediaContent):
             return None
         if isinstance(self.gif_path, Path):
             return self.gif_path
+        # 下载段不限时(与 get_path 同理, 下载层自带重试预算);
+        # video_send_timeout 只约束转换段(palettegen+paletteuse 两遍 ffmpeg, 秒级)。
+        await self.get_path()
         timeout = pconfig.video_send_timeout
         try:
             self.gif_path = (
                 await self.gif_path if timeout <= 0 else await asyncio.wait_for(self.gif_path, timeout=timeout)
             )
         except asyncio.TimeoutError as e:
-            raise DownloadException("动图下载超时") from e
+            raise DownloadException("动图转换超时") from e
+        except DownloadException:
+            raise
+        except Exception as e:
+            raise DownloadException(f"GIF 转换失败: {e!r}") from e
         return self.gif_path
 
     async def get_cover_path(self) -> Path | None:

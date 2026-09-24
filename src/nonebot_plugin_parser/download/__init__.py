@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from urllib.parse import urljoin, urlparse
 
 import aiofiles
-from httpx import Proxy, HTTPError, AsyncClient
+from httpx import Proxy, HTTPError, AsyncClient, HTTPStatusError
 from nonebot import logger
 from rich.progress import (
     Progress,
@@ -480,18 +480,22 @@ class StreamDownloader:
                 await asyncio.sleep(wait)
                 continue
 
-            except HTTPError:
+            except HTTPError as e:
+                # HTTP 状态错误带状态码, 传输层错误(超时/连错)带异常类名, 便于排查
+                reason = f"HTTP {e.response.status_code}" if isinstance(e, HTTPStatusError) else type(e).__name__
                 if attempt == max_retries:
                     await safe_unlink(file_path)
                     logger.exception(
-                        "下载失败 | url: {}, file_path: {}",
+                        "下载失败 {} | url: {}, file_path: {}",
+                        reason,
                         current_url,
                         file_path,
                     )
                     raise DownloadException("媒体下载失败")
                 wait = 2**attempt
                 logger.warning(
-                    "下载异常, {}s 后重试 ({}/{}) | url: {}",
+                    "下载异常 {}, {}s 后重试 ({}/{}) | url: {}",
+                    reason,
                     wait,
                     attempt + 1,
                     max_retries,

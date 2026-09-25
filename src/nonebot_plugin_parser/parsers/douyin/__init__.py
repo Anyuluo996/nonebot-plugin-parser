@@ -179,6 +179,8 @@ class DouyinParser(BaseParser):
 
     async def parse_slides(self, video_id: str):
         from . import slides
+        from ...utils import ffmpeg_available
+        from ...config import pconfig
 
         response = await self._request_detail(video_id)
         if response is None or not response.content:
@@ -201,9 +203,20 @@ class DouyinParser(BaseParser):
 
         contents = []
 
+        # bgm_url 是随机 choice 的, 只取一次: 幻灯片与实况分支共用同一条 URL,
+        # 同一 BGM 走同一缓存文件, 不重复下载
+        bgm_url = aweme_detail.bgm_url
+
         # 添加图片内容 (纯静态图, 实况照片由 dynamic_urls 单独处理)
         if image_urls := aweme_detail.image_urls:
-            contents.extend(self.create_image_contents(image_urls))
+            if bgm_url and pconfig.douyin_note_slideshow and ffmpeg_available():
+                # 图文在 App 内是随 BGM 轮播的幻灯片视频: 有 BGM 时合成单条视频
+                # 发送; 开关关闭或 ffmpeg 不可用时回退逐张发图 (旧行为)
+                contents.append(
+                    self.create_slideshow_content(image_urls, bgm_url, cache_key=f"douyin-slideshow-{video_id}")
+                )
+            else:
+                contents.extend(self.create_image_contents(image_urls))
 
         # 添加动态内容 (实况照片对应的 mp4 视频)
         if dynamic_urls := aweme_detail.dynamic_urls:
@@ -211,7 +224,7 @@ class DouyinParser(BaseParser):
                 self.create_dynamic_contents(
                     dynamic_urls,
                     cover_urls=aweme_detail.dynamic_cover_urls,
-                    bgm_url=aweme_detail.bgm_url,
+                    bgm_url=bgm_url,
                 )
             )
 

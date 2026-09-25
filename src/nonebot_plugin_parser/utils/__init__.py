@@ -29,13 +29,22 @@ from .media import (
     exec_ffprobe_cmd as exec_ffprobe_cmd,
 )
 from .media import (
+    ffmpeg_available as ffmpeg_available,
+)
+from .media import (
     has_audio_stream as has_audio_stream,
+)
+from .media import (
+    images_to_slideshow as images_to_slideshow,
 )
 from .media import (
     convert_video_to_gif as convert_video_to_gif,
 )
 from .media import (
     encode_video_to_h264 as encode_video_to_h264,
+)
+from .media import (
+    probe_media_duration as probe_media_duration,
 )
 from .media import (
     extract_video_thumbnail as extract_video_thumbnail,

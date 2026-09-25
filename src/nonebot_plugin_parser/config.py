@@ -79,6 +79,16 @@ class Config(BaseModel):
     不通（如海外 / 受网络限制的服务器，表现为下载超时或 Connection reset），
     设为 True 让这些域名改走 ``parser_proxy`` 代理。
     """
+    parser_douyin_note_slideshow: bool = True
+    """抖音纯图文（静态图 + BGM）是否合成幻灯片视频发送。
+
+    抖音图文在 App 内以随 BGM 轮播的幻灯片视频形式播放，逐张发静态图会丢掉
+    音乐氛围。开启后，解析到图文带 ``music.play_url`` 时，下载图片与 BGM 并用
+    ffmpeg 合成轮播视频，作为单条视频消息发送；每张图时长 = BGM 时长/图片数，
+    限制在 2~8 秒（BGM 缺失时降级无声、每图 3 秒）。
+    关闭本开关、无 BGM 或 ffmpeg 不可用时，回退为逐张发图（旧行为）。
+    实况照片（live photo）不受影响：仍按原逻辑逐条发视频并合并 BGM。
+    """
     parser_need_upload: bool = False
     """是否需要上传音频文件"""
     parser_use_base64: bool = False
@@ -332,6 +342,11 @@ class Config(BaseModel):
     def douyin_cdn_via_proxy(self) -> bool:
         """抖音 CDN 域名是否走代理下载"""
         return self.parser_douyin_cdn_via_proxy
+
+    @property
+    def douyin_note_slideshow(self) -> bool:
+        """抖音纯图文是否合成幻灯片视频发送"""
+        return self.parser_douyin_note_slideshow
 
     @property
     def need_upload(self) -> bool:

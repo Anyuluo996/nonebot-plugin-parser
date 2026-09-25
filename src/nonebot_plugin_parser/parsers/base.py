@@ -461,11 +461,8 @@ class BaseParser:
 
         return VideoContent(url_or_task, cover_task, duration)
 
-    def create_image_contents(
-        self,
-        image_urls: list[str],
-    ):
-        """创建图片内容列表
+    def _download_img_tasks(self, image_urls: list[str]) -> list[Task[Path]]:
+        """并发受限的图片下载任务列表（发图 / 幻灯片合成共用）。
 
         单次解析内并发下载受 ``download._DOWNLOAD_SEM`` 限制（默认 8），
         避免长帖几十张图瞬间打爆目标域名。
@@ -478,11 +475,16 @@ class BaseParser:
             async with _DOWNLOAD_SEM:
                 return await DOWNLOADER.download_img(url, ext_headers=self.headers)
 
-        contents: list[ImageContent] = []
-        for url in image_urls:
-            task = asyncio.create_task(_download_with_sem(url))
-            contents.append(ImageContent(task))
-        return contents
+        return [asyncio.create_task(_download_with_sem(url)) for url in image_urls]
+
+    def create_image_contents(
+        self,
+        image_urls: list[str],
+    ):
+        """创建图片内容列表"""
+        from .data import ImageContent
+
+        return [ImageContent(task) for task in self._download_img_tasks(image_urls)]
 
     def create_image_content(
         self,
@@ -620,6 +622,96 @@ class BaseParser:
             return video_path
         logger.debug(f"BGM 合并完成: {output.name}")
         return output
+
+    def create_slideshow_content(
+        self,
+        image_urls: list[str],
+        bgm_url: str,
+        *,
+        cache_key: str | None = None,
+    ):
+        """把静态图列表 + BGM 合成为轮播视频内容（抖音图文）。
+
+        抖音图文在 App 内是随 BGM 轮播的幻灯片视频，逐张发静态图会丢掉音乐
+        氛围，故有 BGM 时改为合成单条视频发送（与逐张发图互斥，由调用方决策）。
+        图片/BGM 下载与 ffmpeg 合成打包成一个 Task[Path]，对渲染层就是普通
+        VideoContent；合成失败抛 DownloadException，该内容跳过（与视频下载
+        失败同待遇）。封面复用首图下载任务，但套 shield 隔离：渲染层取封面
+        的 30s 超时只 cancel 包装层，不波及合成链正在 await 的底层下载。
+        """
+        import asyncio
+        from hashlib import md5
+
+        from .data import VideoContent
+
+        if not image_urls:
+            raise ValueError("image_urls 为空")
+
+        image_tasks = self._download_img_tasks(image_urls)
+        audio_task = DOWNLOADER.download_audio(bgm_url, ext_headers=self.headers)
+
+        if cache_key is None:
+            cache_key = "slideshow:" + "|".join(image_urls)
+        # 不用 generate_file_name: 它按 URL path 取后缀, cache_key 里拼进的
+        # 图片 URL 会让产物得到 .jpg 之类错误后缀（ffmpeg 按后缀选 muxer）
+        output = pconfig.cache_dir / f"{md5(cache_key.encode()).hexdigest()[:16]}.mp4"
+
+        compose_task = asyncio.create_task(self._compose_slideshow(image_tasks, audio_task, output))
+
+        # shield 返回 Future, 再包一层协程保持 Task 类型(data.is_pending_path_task
+        # 按 Task 判定): 渲染层对封面 wait_for 超时只取消包装层, 首图下载照常
+        # 供 compose 使用, 不静默丢掉幻灯片第一张
+        async def _shielded_cover() -> Path:
+            return await asyncio.shield(image_tasks[0])
+
+        cover_task = asyncio.create_task(_shielded_cover())
+        return VideoContent(compose_task, cover=cover_task)
+
+    async def _compose_slideshow(
+        self,
+        image_tasks: list[Task[Path]],
+        audio_task: Task[Path],
+        output: Path,
+    ) -> Path:
+        """等待图片/BGM 下载并合成幻灯片视频（create_slideshow_content 的执行体）。
+
+        降级链：单张图失败用剩余图继续；BGM 失败降级为无声视频；全部图失败或
+        ffmpeg 合成失败抛 DownloadException，渲染层跳过该视频、不阻塞其它内容。
+        """
+        import asyncio
+
+        from nonebot import logger
+
+        from ..utils import images_to_slideshow
+        from ..config import pconfig
+
+        results = await asyncio.gather(*image_tasks, return_exceptions=True)
+        image_paths = [r for r in results if isinstance(r, Path)]
+        failed = len(image_tasks) - len(image_paths)
+        if failed:
+            logger.warning(f"幻灯片 {failed}/{len(image_tasks)} 张图下载失败, 用剩余 {len(image_paths)} 张继续合成")
+        if not image_paths:
+            # BGM 任务已启动, 取消以丢弃无谓的磁盘 IO 与 "exception never retrieved" 告警
+            audio_task.cancel()
+            raise DownloadException("幻灯片图片全部下载失败")
+
+        audio_path = None
+        try:
+            audio_path = await audio_task
+        except Exception:
+            # BGM 拿不到只损失氛围，不值得丢掉整个图文
+            logger.warning("幻灯片 BGM 下载失败, 降级为无声视频")
+
+        # 至此下载段结束, 剩下纯 ffmpeg 转换段: 按契约套 video_send_timeout
+        # （与 GIF 转换同待遇; 0/负值不限时）。超时取消会 kill 子进程
+        timeout = pconfig.video_send_timeout
+        try:
+            if timeout > 0:
+                return await asyncio.wait_for(images_to_slideshow(image_paths, audio_path, output), timeout=timeout)
+            return await images_to_slideshow(image_paths, audio_path, output)
+        except (RuntimeError, FileNotFoundError, OSError, asyncio.TimeoutError, ValueError) as e:
+            logger.error(f"幻灯片视频合成失败: {e!r}")
+            raise DownloadException("幻灯片视频合成失败") from e
 
     def create_audio_content(
         self,

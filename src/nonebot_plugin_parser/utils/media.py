@@ -5,6 +5,7 @@
 """
 
 import asyncio
+from uuid import uuid4
 from typing import Any
 from pathlib import Path
 
@@ -98,6 +99,202 @@ async def exec_ffprobe_cmd(cmd: list[str]) -> str:
         raise RuntimeError(f"ffprobe 执行失败: {error_msg}")
 
     return stdout.decode(errors="replace")
+
+
+_ffmpeg_available_cache: bool | None = None
+
+
+def ffmpeg_available() -> bool:
+    """ffmpeg/ffprobe 是否可用（按 PATH 探测，进程内缓存）。
+
+    抖音图文合成幻灯片视频前需据此决定是否走视频路径；任一缺失时解析层
+    直接回退逐张发图，而不是等合成协程失败后连图也丢（合成还需要 ffprobe
+    探测 BGM 时长与画布尺寸）。
+    """
+    global _ffmpeg_available_cache
+    if _ffmpeg_available_cache is None:
+        from shutil import which
+
+        _ffmpeg_available_cache = which("ffmpeg") is not None and which("ffprobe") is not None
+    return _ffmpeg_available_cache
+
+
+async def probe_media_duration(path: Path) -> float | None:
+    """ffprobe 探测媒体时长（秒），失败或输出非数值返回 None"""
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "csv=p=0",
+        str(path),
+    ]
+    try:
+        output = await exec_ffprobe_cmd(cmd)
+        return float(output.strip())
+    except (RuntimeError, ValueError):
+        logger.debug(f"探测媒体时长失败: {path.name}")
+        return None
+
+
+async def _probe_image_size(path: Path) -> tuple[int, int] | None:
+    """ffprobe 探测图片宽高，失败返回 None"""
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height",
+        "-of",
+        "csv=p=0",
+        str(path),
+    ]
+    try:
+        output = await exec_ffprobe_cmd(cmd)
+    except RuntimeError:
+        return None
+    parts = output.strip().split(",")
+    if len(parts) != 2:
+        return None
+    try:
+        return int(parts[0]), int(parts[1])
+    except ValueError:
+        return None
+
+
+def _check_concat_safe(*paths: Path) -> None:
+    """校验路径可安全写入 ffconcat 脚本。
+
+    concat demuxer 的引号内转义在多数 ffmpeg build 上不被支持（实测 4.3 与
+    2026 git build）：路径含单引号时文件打不开、**退出码仍为 0**，静默产出
+    残缺视频并被 exists() 快速路径永久缓存。图片/输出文件名是 md5 hex，
+    特殊字符只能来自 cache_dir（如 Windows 用户名 ``O'Brien``）；命中即
+    显式失败，让解析层跳过该内容、日志可排查。
+    """
+    for p in paths:
+        if "'" in str(p):
+            raise RuntimeError(f"路径含单引号, 无法生成 ffconcat: {p}")
+
+
+async def images_to_slideshow(
+    image_paths: list[Path],
+    audio_path: Path | None = None,
+    output_path: Path | None = None,
+    *,
+    min_per_image: float = 2.0,
+    max_per_image: float = 8.0,
+    default_per_image: float = 3.0,
+    fps: int = 10,
+) -> Path:
+    """静态图序列 + 可选 BGM 合成轮播幻灯片视频（抖音图文用）。
+
+    每张图展示时长 = clamp(BGM时长/图片数, min_per_image, max_per_image)，
+    BGM 缺失/探测失败用 default_per_image（BGM 探不出时长视为损坏，降级
+    无声）；BGM 短于视频时循环、长时截断。
+    画布取所有图中最大宽/高（上限 1920、对齐偶数），小图黑边居中。
+    输出 h264(+aac) mp4，先写随机后缀临时文件、编码成功且时长校验通过后
+    原子替换，避免中断残留半截文件被下次的 exists() 快速路径误判为可用。
+
+    Raises:
+        RuntimeError: ffmpeg 不可用/合成失败/产物时长异常/路径含单引号/
+            无法探测任何图片尺寸。
+        ValueError: image_paths 为空。
+    """
+    if not image_paths:
+        raise ValueError("image_paths 为空")
+    if output_path is None:
+        output_path = image_paths[0].with_name(f"{image_paths[0].stem}_slideshow.mp4")
+    if output_path.exists():
+        return output_path
+
+    _check_concat_safe(output_path, *image_paths, *([audio_path] if audio_path else ()))
+
+    n = len(image_paths)
+    audio_duration = None
+    if audio_path:
+        audio_duration = await probe_media_duration(audio_path)
+        if audio_duration is None:
+            # BGM 下载"成功"但探不出时长（如 403 HTML 存成 .mp3）：交给 ffmpeg
+            # 大概率解码失败丢掉整个图文，降级为无声更符合「BGM 拿不到只损失氛围」
+            logger.warning(f"BGM 无法探测时长, 疑似损坏, 降级为无声视频: {audio_path.name}")
+            audio_path = None
+    if audio_duration and audio_duration > 0.1:
+        per_image = min(max(audio_duration / n, min_per_image), max_per_image)
+    else:
+        per_image = default_per_image
+    total = per_image * n
+
+    canvas_w = canvas_h = 0
+    for size in await asyncio.gather(*(_probe_image_size(p) for p in image_paths)):
+        if size:
+            canvas_w = max(canvas_w, size[0])
+            canvas_h = max(canvas_h, size[1])
+    if canvas_w <= 0 or canvas_h <= 0:
+        raise RuntimeError("无法探测任何图片尺寸")
+    canvas_w = max(2, min(canvas_w, 1920)) // 2 * 2
+    canvas_h = max(2, min(canvas_h, 1920)) // 2 * 2
+
+    # concat 脚本：每张图一条 duration；末尾重复最后一张（concat demuxer
+    # 不给最后一条 duration 记账，不重复会丢片尾一帧的时长）。
+    # 临时文件名带随机后缀：同一 note 并发合成时固定名会互相踩踏/被另一方
+    # 的 finally 删掉正被读的输入，触发下面的 rc=0 静默截断
+    tag = uuid4().hex[:8]
+    lines = ["ffconcat version 1.0"]
+    for p in image_paths:
+        lines.append(f"file '{p.as_posix()}'")
+        lines.append(f"duration {per_image:.3f}")
+    lines.append(f"file '{image_paths[-1].as_posix()}'")
+    list_path = output_path.with_name(f"{output_path.stem}_{tag}_ffconcat.txt")
+    list_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    tmp_path = output_path.with_name(f"{output_path.stem}_{tag}_tmp.mp4")
+    vf = (
+        f"scale={canvas_w}:{canvas_h}:force_original_aspect_ratio=decrease,"
+        f"pad={canvas_w}:{canvas_h}:(ow-iw)/2:(oh-ih)/2:color=black,"
+        f"fps={fps},format=yuv420p"
+    )
+    cmd: list[str] = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(list_path)]
+    if audio_path:
+        # BGM 短于视频时无限循环，靠输出 -t 在视频末端精确截断
+        cmd += ["-stream_loop", "-1", "-i", str(audio_path), "-c:a", "aac", "-b:a", "128k"]
+    cmd += [
+        "-vf",
+        vf,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-crf",
+        "23",
+        "-tune",
+        "stillimage",
+        "-movflags",
+        "+faststart",
+        "-t",
+        f"{total:.3f}",
+        str(tmp_path),
+    ]
+
+    try:
+        await exec_ffmpeg_cmd(cmd)
+        # concat demuxer 输入打开失败时 ffmpeg 仍 rc=0（静默产出残缺视频），
+        # 用产物时长兜底校验：半截视频不允许 replace 进缓存被 exists() 永久命中
+        got = await probe_media_duration(tmp_path)
+        if got is None or got < total * 0.5:
+            raise RuntimeError(f"合成产物时长异常: 期望 ~{total:.1f}s, 实际 {got}")
+        await asyncio.to_thread(tmp_path.replace, output_path)
+    except BaseException:
+        await safe_unlink(tmp_path)
+        raise
+    finally:
+        await safe_unlink(list_path)
+
+    logger.success(f"幻灯片视频合成成功: {output_path.name}, {n} 图 × {per_image:.1f}s, {fmt_size(output_path)}")
+    return output_path
 
 
 async def has_audio_stream(video_path: Path) -> bool:

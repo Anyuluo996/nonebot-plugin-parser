@@ -4,6 +4,7 @@
 视频/音频合并、GIF 转换与优化、H.264 转码、缩略图抽取。
 """
 
+import re
 import asyncio
 from uuid import uuid4
 from typing import Any
@@ -327,6 +328,50 @@ async def has_audio_stream(video_path: Path) -> bool:
         return False
 
 
+async def has_audible_audio_stream(video_path: Path, *, silent_below_db: float = -45.0) -> bool:
+    """检测视频是否含「可闻」音频流（BGM 合并决策专用）。
+
+    与 has_audio_stream 的差异: 抖音实况照片的 mp4 普遍带一条**全静音**
+    AAC 轨（volumedetect 实测 mean=max=-91.0 dB 的数字零样本），只查流
+    存在性会把它当成原声跳过 BGM 合并、发出无声视频。这里用 volumedetect
+    的 max_volume 判定：无音轨或低于阈值都返回 False（视为需要补 BGM）；
+    探测失败（解码错误等）保守返回 True，宁可不合并也不误删可闻原声。
+
+    Args:
+        video_path: 视频文件路径。
+        silent_below_db: max_volume 低于该分贝值视为静音，默认 -45。
+
+    Returns:
+        是否含可闻音频流。
+    """
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-i",
+        str(video_path),
+        "-map",
+        "0:a:0",
+        "-af",
+        "volumedetect",
+        "-f",
+        "null",
+        "-",
+    ]
+    try:
+        _rc, _stdout, stderr = await _run_subprocess(cmd)
+    except FileNotFoundError:
+        # ffmpeg 缺失时无从判定, 视为有原声 (与旧 has_audio_stream 决策一致)
+        return True
+    text = stderr.decode(errors="replace")
+    m = re.search(r"max_volume:\s*(-?\d+(?:\.\d+)?)\s*dB", text)
+    if not m:
+        # 无音轨: ffmpeg 对 -map 0:a:0 报 "matches no streams" 且 rc != 0
+        if "matches no streams" in text:
+            return False
+        return True
+    return float(m.group(1)) >= silent_below_db
+
+
 async def extract_video_thumbnail(video_path: Path, output_path: Path | None = None) -> Path | None:
     """从视频抽取首帧作为缩略图（用于无封面 URL 的视频，如 Telegram）。
 
@@ -482,8 +527,20 @@ async def merge_av(
     v_path: Path,
     a_path: Path,
     output_path: Path,
+    shortest: bool = False,
+    cleanup_inputs: bool = True,
 ) -> None:
-    """合并视频和音频"""
+    """合并视频和音频
+
+    Args:
+        v_path: 视频文件 (输入)
+        a_path: 音频文件 (输入)
+        output_path: 输出文件
+        shortest: 音频比视频长时截到视频长。抖音实况照片的 BGM 是整曲
+            而视频只有单张照片级时长, 不截会产出视频定格的拖尾长音频。
+        cleanup_inputs: 合并成功后删除输入文件; 输入是下载缓存文件时必须
+            False —— 删除会破坏缓存, 且并发合并共享同一 BGM 文件时互相踩。
+    """
     logger.info(f"Merging {v_path.name} and {a_path.name} to {output_path.name}")
 
     cmd = [
@@ -499,11 +556,19 @@ async def merge_av(
         "0:v:0",
         "-map",
         "1:a:0",
-        str(output_path),
     ]
+    if shortest:
+        cmd.append("-shortest")
+    # 固定输出名并发合并同一目标会互相写坏产物, 写随机后缀临时文件、
+    # 成功后原子替换 (与 images_to_slideshow 同套路)
+    tag = uuid4().hex[:8]
+    tmp_path = output_path.with_name(f"{output_path.stem}_{tag}_tmp.mp4")
+    cmd.append(str(tmp_path))
 
     await exec_ffmpeg_cmd(cmd)
-    await asyncio.gather(safe_unlink(v_path), safe_unlink(a_path))
+    await asyncio.to_thread(tmp_path.replace, output_path)
+    if cleanup_inputs:
+        await asyncio.gather(safe_unlink(v_path), safe_unlink(a_path))
     logger.success(f"Merged {output_path.name}, {fmt_size(output_path)}")
 
 

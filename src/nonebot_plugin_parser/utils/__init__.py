@@ -49,6 +49,9 @@ from .media import (
 from .media import (
     extract_video_thumbnail as extract_video_thumbnail,
 )
+from .media import (
+    has_audible_audio_stream as has_audible_audio_stream,
+)
 from ._common import (
     LimitedSizeDict as LimitedSizeDict,
 )

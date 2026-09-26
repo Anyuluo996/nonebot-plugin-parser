@@ -382,3 +382,151 @@ async def test_images_to_slideshow_no_audio(tmp_path):
     assert duration is not None
     assert abs(duration - 3.0) < 1.0, f"单图无声应 3s, 实际 {duration}"
     assert not await has_audio_stream(out)
+
+
+# ---------------------------------------------------------------------------
+# 实况照片 BGM 合并: 静音 AAC 轨必须被替换 (2026-09-27 线上事故)
+# 抖音实况照片 mp4 带一条 -91dB 全静音 AAC 轨, 旧逻辑 has_audio_stream
+# 只查流存在性 → 误判"已含原声"跳过合并, 发出的视频全程无声。
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(ffmpeg_missing, reason="本机无 ffmpeg/ffprobe")
+async def test_merge_bgm_replaces_silent_track(tmp_path):
+    """静音 AAC 轨不算原声: 必须被 BGM 替换, 且 BGM 长于视频时截到视频长。"""
+    from nonebot_plugin_parser.utils import media as media_mod
+    from nonebot_plugin_parser.utils import (
+        has_audio_stream,
+        probe_media_duration,
+        has_audible_audio_stream,
+    )
+    from nonebot_plugin_parser.parsers import DouyinParser
+
+    # 3s 视频 + 全静音立体声 AAC (模拟实况照片)
+    video = tmp_path / "live.mp4"
+    await media_mod.exec_ffmpeg_cmd(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=3:size=320x240:rate=10",
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=44100:cl=stereo",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            "-shortest",
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            str(video),
+        ]
+    )
+    assert await has_audio_stream(video), "前置: 静音轨也是音频流"
+    assert not await has_audible_audio_stream(video), "前置: 静音轨应判为不可闻"
+
+    # 10s 可闻 BGM (440Hz 正弦, aac 编码避免构建缺 libmp3lame)
+    audio = tmp_path / "bgm.m4a"
+    await media_mod.exec_ffmpeg_cmd(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=10",
+            "-c:a",
+            "aac",
+            str(audio),
+        ]
+    )
+
+    async def _video() -> Path:
+        return video
+
+    async def _bgm() -> Path:
+        return audio
+
+    parser = DouyinParser()
+    out = await parser._merge_bgm(asyncio.create_task(_video()), asyncio.create_task(_bgm()))
+
+    assert out != video, "静音轨应被合并替换"
+    assert out.exists()
+    assert await has_audible_audio_stream(out), "合并产物应含可闻音频"
+    duration = await probe_media_duration(out)
+    assert duration is not None, "合并产物应探出时长"
+    assert duration < 5.5, f"BGM(10s) 应被 -shortest 截到视频(3s)长, 实际 {duration}s"
+    assert video.exists(), "下载缓存输入不应被删除 (cleanup_inputs=False)"
+    assert audio.exists(), "下载缓存输入不应被删除 (cleanup_inputs=False)"
+
+    # 重复解析(缓存命中)走产物快速路径, 不重跑 ffmpeg
+    again = await parser._merge_bgm(asyncio.create_task(_video()), asyncio.create_task(_bgm()))
+    assert again == out
+
+
+@pytest.mark.skipif(ffmpeg_missing, reason="本机无 ffmpeg/ffprobe")
+async def test_merge_bgm_keeps_audible_track(tmp_path):
+    """可闻原声必须保留, 不被 BGM 覆盖。"""
+    from nonebot_plugin_parser.utils import media as media_mod
+    from nonebot_plugin_parser.utils import has_audible_audio_stream
+    from nonebot_plugin_parser.parsers import DouyinParser
+
+    # 3s 视频带 440Hz 可闻音轨 (模拟含原声的实况)
+    video = tmp_path / "orig.mp4"
+    await media_mod.exec_ffmpeg_cmd(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc=duration=3:size=320x240:rate=10",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=440:duration=3",
+            "-c:v",
+            "libx264",
+            "-c:a",
+            "aac",
+            "-shortest",
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            str(video),
+        ]
+    )
+    assert await has_audible_audio_stream(video)
+
+    audio = tmp_path / "bgm.m4a"
+    await media_mod.exec_ffmpeg_cmd(
+        [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            "sine=frequency=880:duration=10",
+            "-c:a",
+            "aac",
+            str(audio),
+        ]
+    )
+
+    async def _video() -> Path:
+        return video
+
+    async def _bgm() -> Path:
+        return audio
+
+    parser = DouyinParser()
+    out = await parser._merge_bgm(asyncio.create_task(_video()), asyncio.create_task(_bgm()))
+    assert out == video, "可闻原声应跳过合并返回原视频"
+    assert not (tmp_path / "orig_bgm.mp4").exists()

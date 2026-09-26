@@ -588,34 +588,49 @@ class BaseParser:
     async def _merge_bgm(self, video_task: Task[Path], audio_task: Task[Path]) -> Path:
         """合并实况照片视频与 BGM 音频。
 
-        抖音实况照片(live photo)的视频轨本身静音, BGM 在 aweme_detail.music.play_url。
-        本方法下载并合并二者, 输出含 BGM 的 mp4; 已含音轨(部分实况含原声)则跳过。
+        抖音实况照片(live photo)的 mp4 普遍带一条**全静音**的 AAC 轨
+        (volumedetect 实测 -91.0 dB, 2026-09-27 线上样本), BGM 在
+        aweme_detail.music.play_url。用 has_audible_audio_stream 区分真原声
+        与静音轨: 静音轨照常被 BGM 替换, 可闻原声(部分实况含原声)才跳过。
+        BGM 常比视频长(整曲 vs 单张照片级时长), -shortest 截到视频长;
+        输入是下载缓存文件, 不删除(cleanup_inputs=False)。
 
         Args:
             video_task: 视频下载任务 (静音轨)
             audio_task: BGM 音频下载任务
 
         Returns:
-            合并后的视频路径; 视频已含音轨或 ffmpeg 不可用时返回原视频路径
+            合并后的视频路径; 视频已含可闻音轨或 ffmpeg 不可用时返回原视频路径
         """
         from nonebot import logger
 
-        from ..utils import merge_av, has_audio_stream
+        from ..utils import merge_av, has_audible_audio_stream
 
         video_path = await video_task
 
-        # 已含音轨(部分实况含原声)则跳过, 避免 merge_av 丢失原声
-        if await has_audio_stream(video_path):
-            logger.debug(f"视频已含音轨, 跳过 BGM 合并: {video_path.name}")
+        output = video_path.with_name(f"{video_path.stem}_bgm.mp4")
+        # 下载缓存命中的重复解析直接复用上次合并产物, 跳过探测与 ffmpeg
+        if output.exists():
+            return output
+
+        # 已含可闻音轨(部分实况含原声)则跳过, 避免 merge_av 丢失原声;
+        # 全静音轨不算原声, 继续走合并
+        if await has_audible_audio_stream(video_path):
+            logger.debug(f"视频已含可闻音轨, 跳过 BGM 合并: {video_path.name}")
             # BGM 任务已在调度, 取消以释放并发槽位 (Task 已启动不可真正中止,
             # 但丢弃其结果避免无谓的磁盘 IO; download_audio 自带缓存不影响)
             audio_task.cancel()
             return video_path
 
         audio_path = await audio_task
-        output = video_path.with_name(f"{video_path.stem}_bgm.mp4")
         try:
-            await merge_av(v_path=video_path, a_path=audio_path, output_path=output)
+            await merge_av(
+                v_path=video_path,
+                a_path=audio_path,
+                output_path=output,
+                shortest=True,
+                cleanup_inputs=False,
+            )
         except (RuntimeError, FileNotFoundError) as e:
             # ffmpeg 不可用或合并失败: 不阻塞发送, 降级为无声视频
             logger.warning(f"BGM 合并失败, 降级为无声视频: {e!r}")

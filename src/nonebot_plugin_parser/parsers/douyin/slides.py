@@ -40,10 +40,20 @@ class Author(Struct):
 class Music(Struct):
     """背景音乐 (BGM), 实况照片视频轨本身不含 BGM, 需单独提取后合并。
 
-    music.play_url.url_list 与 Video.play_addr 同构, 复用 PlayAddr。
+    与 Video.play_addr 同构的 url_list 在 music 下出现过两种字段名:
+    - play_url: open-api 形态实测 (2026-09-27, slides/7689698548245879931,
+      直链为 sf*-cdn-tos.douyinstatic.com 的 ies-music mp3);
+    - play_addr: issue dump 的 picture 类型响应 (note/7450744229229235491)。
+    msgspec 忽略未声明键, 只声明其一会静默丢掉另一形态的 BGM (幻灯片合成
+    与实况 BGM 合并双双失效), 故两个字段名都声明, bgm_url 优先 play_url。
     """
 
+    play_url: PlayAddr | None = None
     play_addr: PlayAddr | None = None
+
+    @property
+    def any_addr(self) -> PlayAddr | None:
+        return self.play_url or self.play_addr
 
 
 class SlidesData(Struct):
@@ -77,8 +87,8 @@ class SlidesData(Struct):
     @property
     def bgm_url(self) -> str | None:
         """实况照片对应的 BGM URL, 无则 None"""
-        if self.music and self.music.play_addr:
-            return choice(self.music.play_addr.url_list)
+        if self.music and (addr := self.music.any_addr) and addr.url_list:
+            return choice(addr.url_list)
         return None
 
     @property
@@ -226,8 +236,8 @@ class PictureSlidesData(Struct):
     @property
     def bgm_url(self) -> str | None:
         """实况照片对应的 BGM URL, 无则 None"""
-        if self.music and self.music.play_addr:
-            return choice(self.music.play_addr.url_list)
+        if self.music and (addr := self.music.any_addr) and addr.url_list:
+            return choice(addr.url_list)
         return None
 
     @property

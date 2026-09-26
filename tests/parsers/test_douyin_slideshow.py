@@ -19,7 +19,9 @@ import pytest
 
 # nonebot 插件加载依赖 conftest 先初始化, 插件内模块一律在测试函数内导入
 
-# 纯静态图文（旧 slides 格式）: 3 张无 video 的图 + music.play_addr
+# 纯静态图文（旧 slides 格式）: 3 张无 video 的图 + music.play_url。
+# 字段名是 open-api 形态实测真实形状 (2026-09-27 slides/7689698548245879931);
+# 曾误写成 play_addr (Video 侧字段名), msgspec 静默丢弃导致线上 BGM 恒丢。
 _STATIC_NOTE_PAYLOAD = {
     "aweme_detail": {
         "author": {
@@ -30,7 +32,8 @@ _STATIC_NOTE_PAYLOAD = {
         "create_time": 1734761606,
         "images": [{"url_list": [f"https://p3-pc-sign.douyinpic.com/slides{i}.jpg"]} for i in range(3)],
         "music": {
-            "play_addr": {
+            "play_url": {
+                "uri": "https://sf6-cdn-tos.douyinstatic.com/obj/ies-music/bgm_001.mp3",
                 "url_list": ["https://www.douyin.com/aweme/v1/play/?music_id=bgm_001"],
             }
         },
@@ -240,9 +243,7 @@ async def test_compose_slideshow_conversion_timeout(monkeypatch):
 
     parser = DouyinParser()
     with pytest.raises(DownloadException):
-        await parser._compose_slideshow(
-            [asyncio.create_task(_ok())], asyncio.create_task(_ok()), Path("/fake/out.mp4")
-        )
+        await parser._compose_slideshow([asyncio.create_task(_ok())], asyncio.create_task(_ok()), Path("/fake/out.mp4"))
 
 
 async def test_compose_slideshow_wraps_oserror(monkeypatch):
@@ -261,9 +262,7 @@ async def test_compose_slideshow_wraps_oserror(monkeypatch):
 
     parser = DouyinParser()
     with pytest.raises(DownloadException):
-        await parser._compose_slideshow(
-            [asyncio.create_task(_ok())], asyncio.create_task(_ok()), Path("/fake/out.mp4")
-        )
+        await parser._compose_slideshow([asyncio.create_task(_ok())], asyncio.create_task(_ok()), Path("/fake/out.mp4"))
 
 
 async def test_slideshow_rejects_quote_in_path(monkeypatch, tmp_path):

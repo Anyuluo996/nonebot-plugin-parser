@@ -357,10 +357,12 @@ async def test_picture_note_decodes_picture_list(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_picture_note_decodes_bgm_url(monkeypatch):
-    """回归: music.play_url 必须被 decode, bgm_url 返回非 None。
+    """回归: music 的 BGM 字段无论 play_url 还是 play_addr 都必须 decode 出 bgm_url。
 
-    实况照片视频轨静音, BGM 在 aweme_detail.music.play_url;
-    修复前 slides.py 未解析 music 字段, bgm_url 恒为 None, 合并逻辑无法触发。
+    实况照片视频轨静音, BGM 在 aweme_detail.music;
+    修复前 slides.py 只声明 play_addr, 而 open-api 形态实测返回 play_url
+    (2026-09-27 slides/7689698548245879931), msgspec 静默丢弃致 bgm_url 恒
+    None, 幻灯片合成与实况 BGM 合并双双失效; play_addr 见下方 picture dump。
     """
     import json as _json
 
@@ -372,6 +374,28 @@ async def test_picture_note_decodes_bgm_url(monkeypatch):
     assert aweme_detail is not None, "decode 失败"
     assert aweme_detail.bgm_url is not None, "music 字段未解析, bgm_url 应非 None"
     assert "music_id=tgm_bgm_001" in aweme_detail.bgm_url
+
+    # open-api 形态真实形状: music.play_url (uri + url_list),
+    # 只声明 play_addr 的旧代码在这里解出 bgm_url=None
+    real_shape = {
+        "aweme_detail": {
+            "nickname": "二刺螈仙人",
+            "desc": "现在随时哼上这么一句",
+            "createTime": 1790430000000,
+            "pictureList": [],
+            "music": {
+                "play_url": {
+                    "height": 720,
+                    "uri": "https://sf6-cdn-tos.douyinstatic.com/obj/ies-music/7689498750057827113.mp3",
+                    "url_list": ["https://sf6-cdn-tos.douyinstatic.com/obj/ies-music/7689498750057827113.mp3"],
+                }
+            },
+        }
+    }
+    aweme_real = slides.decode_aweme_detail(_json.dumps(real_shape).encode("utf-8"))
+    assert aweme_real is not None, "play_url 形态 decode 失败"
+    assert aweme_real.bgm_url is not None, "play_url 形态 bgm_url 应非 None (线上事故根因)"
+    assert "ies-music" in aweme_real.bgm_url
 
 
 @pytest.mark.asyncio

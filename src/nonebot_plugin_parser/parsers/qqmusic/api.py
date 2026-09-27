@@ -335,7 +335,14 @@ async def get_song_detail(parser: "BaseParser", song_mid: str) -> dict:
     """
     want = song_mid.strip()
     if protocol is None:
-        return await _builtin_song_detail(want) if want else {}
+        if not want:
+            return {}
+        try:
+            return await _builtin_song_detail(want)
+        except Exception as e:
+            # 查不到(404)/接口异常统一返回 {}，与引擎路径契约一致
+            logger.debug(f"QQ音乐: 详情接口失败 {e!r}")
+            return {}
 
     client = _get_client()
     if client is None or not want:

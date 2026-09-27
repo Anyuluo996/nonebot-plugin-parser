@@ -30,6 +30,14 @@ def qqcred(qqapi):
     return cred
 
 
+@pytest.fixture
+def isolated_cred_file(qqcred, tmp_path, monkeypatch):
+    """凭证文件隔离到 tmp——xdist 并发下避免与其它 worker 的读写互踩。"""
+    path = tmp_path / "qqmusic_credential.json"
+    monkeypatch.setattr(qqcred, "_CRED_FILE", path)
+    return path
+
+
 def _require_engine(qqapi) -> None:
     """增强引擎未安装时跳过（引擎专属路径）。"""
     if qqapi.protocol is None:
@@ -196,14 +204,14 @@ class TestQrcToLrc:
 # --------------------------------------------------------------------------- #
 # 凭证持久化
 # --------------------------------------------------------------------------- #
-def test_anonymous_when_no_file(qqcred) -> None:
+def test_anonymous_when_no_file(qqcred, isolated_cred_file) -> None:
     cred = qqcred.load_credential_raw()
     assert not qqcred.is_available()
     # 引擎模式返回匿名凭证；内置模式返回 None
     assert cred is None or not cred.logged_in
 
 
-def test_save_and_load_round_trip(qqapi, qqcred) -> None:
+def test_save_and_load_round_trip(qqapi, qqcred, isolated_cred_file) -> None:
     _require_engine(qqapi)
     cred = qqapi.protocol.Credential(musickey="TESTKEY", musicid=12345, qq="12345")
     qqcred.save_credential(cred)
@@ -217,7 +225,7 @@ def test_save_and_load_round_trip(qqapi, qqcred) -> None:
     assert not qqcred.is_available()
 
 
-def test_save_fills_time_fields(qqapi, qqcred) -> None:
+def test_save_fills_time_fields(qqapi, qqcred, isolated_cred_file) -> None:
     """扫码库不写有效期字段，这里补上，否则加载时被误判过期。"""
     _require_engine(qqapi)
     qqcred.save_credential(qqapi.protocol.Credential(musickey="K2"))
@@ -230,7 +238,7 @@ def test_save_fills_time_fields(qqapi, qqcred) -> None:
         qqcred.clear_credential()
 
 
-def test_accepts_legacy_qqmusic_api_object(qqcred) -> None:
+def test_accepts_legacy_qqmusic_api_object(qqcred, isolated_cred_file) -> None:
     """兼容扫码库（qqmusic-api-python）产出的对象形态。"""
 
     class Legacy:
@@ -257,7 +265,7 @@ def test_accepts_legacy_qqmusic_api_object(qqcred) -> None:
         qqcred.clear_credential()
 
 
-def test_clear_credential_returns_bool(qqapi, qqcred) -> None:
+def test_clear_credential_returns_bool(qqapi, qqcred, isolated_cred_file) -> None:
     assert qqcred.clear_credential() is False
     if qqapi.protocol is not None:
         qqcred.save_credential(qqapi.protocol.Credential(musickey="K3"))
@@ -267,7 +275,7 @@ def test_clear_credential_returns_bool(qqapi, qqcred) -> None:
     qqcred.clear_credential()
 
 
-def test_expired_credential_degrades_to_anonymous(qqapi, qqcred) -> None:
+def test_expired_credential_degrades_to_anonymous(qqapi, qqcred, isolated_cred_file) -> None:
     """过期凭证必须降级匿名，而不是拿一个必然 104003 的登录态去请求。"""
     _require_engine(qqapi)
     cred = qqapi.protocol.Credential(musickey="OLD")

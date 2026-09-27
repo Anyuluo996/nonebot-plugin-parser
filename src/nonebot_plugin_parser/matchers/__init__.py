@@ -101,6 +101,9 @@ async def safe_reaction(event: object, emoji: str) -> None:
 # 合并转发发送失败时，降级为逐条直发的上限条数，避免数百节点刷屏
 _MAX_FALLBACK_NODES = 20
 
+# 单节点消息发送失败后的重试等待秒数（权衡说明见 _send_parse_result）
+_SEND_RETRY_DELAY = 3.0
+
 
 def _get_cached_result(cache_key: str) -> ParseResult | None:
     result = _RESULT_CACHE.get(cache_key)
@@ -128,7 +131,7 @@ def clear_result_cache():
 
 
 async def _send_parse_result(result: ParseResult) -> None:
-    """渲染并逐条发送 ``ParseResult``（含合并转发失败降级逻辑）。
+    """渲染并逐条发送 ``ParseResult``（含单节点重试与合并转发降级逻辑）。
 
     抽自 :func:`parser_handler`,供「点歌选择后复用现有渲染流水线」场景调用
     (见 :mod:`matchers.music`), 避免渲染+发送代码重复。
@@ -138,25 +141,36 @@ async def _send_parse_result(result: ParseResult) -> None:
         try:
             await message.send()
         except Exception as send_err:
-            # 合并转发发送失败 (如 NTQQ sendMsg 超时) 时, 降级为逐条直接发送,
-            # 提升协议端兼容性; 非合并转发消息的重发失败才向上抛出。
             nodes = UniHelper.extract_forward_nodes(message)
             if len(nodes) <= 1:
-                # 不是合并转发或仅单节点, 重发无意义, 抛出原异常
-                raise
-            # 降级直发上限：避免数百节点刷屏（如 opus 长文图文字段落）
-            fallback_nodes = nodes[:_MAX_FALLBACK_NODES]
-            logger.warning(f"合并转发发送失败({send_err!r}), 降级为逐条直接发送 {len(fallback_nodes)}/{len(nodes)} 条")
-            for node_msg in fallback_nodes:
-                try:
-                    await node_msg.send()
-                except Exception:
-                    logger.warning(f"降级发送单条消息失败, 跳过该条: {send_err!r}")
-            if len(nodes) > _MAX_FALLBACK_NODES:
-                try:
-                    await UniMessage(f"（合并转发失败，仅显示前 {_MAX_FALLBACK_NODES} 条，共 {len(nodes)} 条）").send()
-                except Exception:
-                    logger.warning("降级提示发送失败，跳过")
+                # 单节点消息: 协议端存在「假失败」——如 NapCat/NTQQ sendMsg 回调
+                # 超时(retcode=1200, EventRet result=0, 消息实际已发出), 短暂等待
+                # 后重试一次, 网络抖动等真失败也可被救回; 代价是假失败场景可能
+                # 重复发送同一条, 属已接受的权衡 (2026-09-27 yun 排查结论)。
+                # 二次仍失败则上抛二次异常, __context__ 自动链上首次异常。
+                logger.warning(f"消息发送失败({send_err!r}), {_SEND_RETRY_DELAY:g}s 后重试一次")
+                await asyncio.sleep(_SEND_RETRY_DELAY)
+                await message.send()
+            else:
+                # 合并转发发送失败 (如 NTQQ sendMsg 超时) 时, 降级为逐条直接发送,
+                # 提升协议端兼容性; 转发整体重发有整包重复风险, 直接降级不重试。
+                # 降级直发上限：避免数百节点刷屏（如 opus 长文图文字段落）
+                fallback_nodes = nodes[:_MAX_FALLBACK_NODES]
+                logger.warning(
+                    f"合并转发发送失败({send_err!r}), 降级为逐条直接发送 {len(fallback_nodes)}/{len(nodes)} 条"
+                )
+                for node_msg in fallback_nodes:
+                    try:
+                        await node_msg.send()
+                    except Exception:
+                        logger.warning(f"降级发送单条消息失败, 跳过该条: {send_err!r}")
+                if len(nodes) > _MAX_FALLBACK_NODES:
+                    try:
+                        await UniMessage(
+                            f"（合并转发失败，仅显示前 {_MAX_FALLBACK_NODES} 条，共 {len(nodes)} 条）"
+                        ).send()
+                    except Exception:
+                        logger.warning("降级提示发送失败，跳过")
 
 
 async def parser_handler(
@@ -243,7 +257,21 @@ async def parser_handler(
             logger.debug(f"命中缓存: {cache_key[:80]}")
 
         # 6. 渲染内容消息并发送
-        await _send_parse_result(result)
+        # 发送段(含渲染/媒体处理)失败与解析段分开记录: 协议端 ActionFailed
+        # (如 NapCat NTQQ sendMsg 回调假超时 retcode=1200)曾被统一误标为
+        # 「解析失败」, 误导排查方向 (2026-09-27 案例)。与原异常路径行为一致:
+        # 不缓存结果、不置完成表情、置失败表情; 不再向上冒泡, 由本处收口记录。
+        try:
+            await _send_parse_result(result)
+        except Exception as send_err:
+            logger.exception(f"发送失败 [{parser.platform.display_name}]: {sr.searched.group(0)[:80]}")
+            record_failure(
+                url=sr.searched.group(0),
+                platform=parser.platform.name,
+                error=f"发送段 {type(send_err).__name__}: {send_err!s}",
+            )
+            await safe_reaction(event, "fail")
+            return
 
         # 7. 缓存解析结果
         _cache_result(cache_key, result)

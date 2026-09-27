@@ -20,9 +20,9 @@ from .duitang import DuiTangParser as DuiTangParser
 from .netease import NCMParser as NCMParser
 from .qsmusic import QSMusicParser as QSMusicParser
 
-# QQ 音乐解析依赖 qqmusic-api-python（主依赖，但允许缺包降级：缺时仅 QQ 音乐解析
-# 不可用，其余平台照常启动）。导入失败由 parsers/qqmusic/api.py 顶层对
-# qqmusic_api 的 import 触发，这里捕获后置哨兵，不阻塞整个插件加载。
+# QQ 音乐解析的可选增强引擎缺失时不影响插件加载（api.py 会自动回退内置实现）；
+# 这里兜底捕获导入异常（如主依赖 qqmusic-api-python 整个缺失），
+# 置哨兵后其余平台照常启动。
 try:
     from .qqmusic import QQMusicParser as QQMusicParser
 

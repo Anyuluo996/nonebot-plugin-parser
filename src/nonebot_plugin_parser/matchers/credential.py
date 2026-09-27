@@ -62,16 +62,26 @@ async def _netease_logout(matcher: Matcher):
 
 
 async def _qqmusic_login(matcher: Matcher):
-    """QQ 音乐扫码登录（依赖 qqmusic-api-python）。"""
+    """QQ 音乐扫码登录。
+
+    扫码走 ``qqmusic-api-python``（MQTT over WebSocket）；
+    解析与点歌走 App 协议。两者产出的凭证字段名一致，共用同一份本地 JSON。
+    """
     from ..parsers import _QQMUSIC_AVAILABLE
 
     if not _QQMUSIC_AVAILABLE:
-        await matcher.finish("qqmusic-api-python 未安装，该指令不可用。请先 `pip install qqmusic-api-python`")
+        await matcher.finish("QQ 音乐功能不可用，该指令不可用")
         return
-    from qqmusic_api import Client
-    from qqmusic_api.models.login import QRLoginType
-    from qqmusic_api.modules.login_utils import QRCodeLoginSession
 
+    try:
+        from qqmusic_api import Client
+        from qqmusic_api.models.login import QRLoginType
+        from qqmusic_api.modules.login_utils import QRCodeLoginSession
+    except ImportError:
+        await matcher.finish("扫码登录依赖 qqmusic-api-python 未安装。请先 `pip install qqmusic-api-python`")
+        return
+
+    from ..parsers.qqmusic import api as qqmusic_api
     from ..parsers.qqmusic import credential as qq_cred
 
     await matcher.send("正在生成 QQ 音乐登录二维码…")
@@ -93,8 +103,10 @@ async def _qqmusic_login(matcher: Matcher):
         logger.exception("QQ音乐登录异常")
         await matcher.finish(f"登录未完成: {e}")
         return
-    logger.info(f"QQ音乐登录: 成功 (musicid={cred.musicid})")
-    await matcher.finish(f"✅ QQ 音乐登录成功 (musicid={cred.musicid})，VIP 歌曲现可解析")
+    # 登录态变了，协议层共享客户端要重建才能带上新 musickey
+    qqmusic_api.reset_client()
+    logger.info(f"QQ音乐登录: 成功 (musicid={getattr(cred, 'musicid', '?')})")
+    await matcher.finish(f"✅ QQ 音乐登录成功 (musicid={getattr(cred, 'musicid', '?')})，VIP 歌曲现可解析")
 
 
 async def _qqmusic_logout(matcher: Matcher):
@@ -102,11 +114,13 @@ async def _qqmusic_logout(matcher: Matcher):
     from ..parsers import _QQMUSIC_AVAILABLE
 
     if not _QQMUSIC_AVAILABLE:
-        await matcher.finish("qqmusic-api-python 未安装，该指令不可用。请先 `pip install qqmusic-api-python`")
+        await matcher.finish("QQ 音乐功能不可用，该指令不可用")
         return
+    from ..parsers.qqmusic import api as qqmusic_api
     from ..parsers.qqmusic import credential as qq_cred
 
     if qq_cred.clear_credential():
+        qqmusic_api.reset_client()
         logger.info("QQ音乐: 已清除登录态")
         await matcher.finish("已清除 QQ 音乐登录态，后续仅能解析免费歌曲")
     await matcher.finish("当前未保存 QQ 音乐登录态")

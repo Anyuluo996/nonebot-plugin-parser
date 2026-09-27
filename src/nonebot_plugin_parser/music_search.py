@@ -12,10 +12,10 @@
 | 服务   | 接口                              | id 字段 | 歌名字段     | 歌手字段            | 付费字段          |
 | ------ | --------------------------------- | ------- | ------------ | ------------------- | ----------------- |
 | 网易云 | ``/api/search/get/web``           | ``id``  | ``name``     | ``artists[].name``  | ``fee`` (1=VIP)   |
-| QQ音乐 | ``qqmusic_api.general_search``    | ``mid`` | ``name``     | ``singer[].name``   | ``pay.pay_play``  |
+| QQ音乐 | App 接口搜索                      | ``mid`` | ``name``     | ``singer[].name``   | ``pay_type``/``fee`` |
 | 酷狗   | ``/api/v3/search/song``           | ``hash``| ``songname`` | ``singername``      | ``pay_type`` (3)  |
 
-VIP 过滤：未登录时搜索结果自动剔除付费歌曲（fee/pay_play/pay_type 判定），
+VIP 过滤：未登录时搜索结果自动剔除付费歌曲（fee/pay_type 判定），
 并多搜补齐至 ``per_service_limit`` 条免费曲；已登录（凭证可用）则保留 VIP，
 后续解析阶段用登录态获取真实播放地址。
 """
@@ -178,47 +178,40 @@ async def search_netease(
 async def search_qqmusic(
     parser: "BaseParser", keyword: str, limit: int = DEFAULT_PER_SERVICE_LIMIT
 ) -> list[SearchItem]:
-    """QQ 音乐搜索（``qqmusic_api``）。未安装库或失败均静默返回 ``[]``。
+    """QQ 音乐搜索（App 接口）。
 
-    QQ 音乐解析依赖 ``qqmusic-api-python``,缺包时该服务直接降级为空结果,
-    不影响网易云/酷狗。未登录时自动过滤付费歌曲（pay.pay_play==1）。
+    搜索失败均静默返回 ``[]``，不影响网易云/酷狗（``par点歌`` 是三服务并发）。
+
+    未登录时自动过滤付费歌曲并多搜补齐：登录后保留 VIP，
+    后续解析阶段用登录态取真实播放地址。
     """
     try:
-        from qqmusic_api import Client
-    except ImportError:
-        logger.debug("qqmusic-api-python 未安装,QQ 音乐搜索降级为空")
+        from .parsers.qqmusic import api as qqmusic_api
+    except ImportError as e:
+        logger.debug(f"QQ 音乐搜索不可用,降级为空: {e!r}")
         return []
 
     try:
         filter_paid = _is_paid_filter_enabled("qqmusic")
         search_limit = limit * _FILTER_SEARCH_MULTIPLIER if filter_paid else limit
-        async with Client() as client:
-            resp = await client.search.general_search(keyword, page=1, num=search_limit)
-        # qqmusic_api 的 num 参数实测不生效(固定返回 30 条),这里显式截断
-        items_list = (resp.song.items if resp.song else [])[:search_limit]
+        raw_songs = await qqmusic_api.search_songs(keyword, search_limit)
     except Exception as e:
         logger.debug(f"QQ 音乐搜索失败,静默跳过: {e!r}")
         return []
 
     items: list[SearchItem] = []
-    for it in items_list:
+    for raw in raw_songs:
         try:
-            if filter_paid and getattr(it, "pay", None) and it.pay.pay_play == 1:
+            if filter_paid and raw.get("is_paid"):
                 continue
-            singers = [s.name for s in (it.singer or []) if s.name]
-            # cover_url 是方法,需调用取值; album 可能为 None
-            pic_url = ""
-            if it.album and it.album.cover_url:
-                cover = it.album.cover_url
-                pic_url = cover() if callable(cover) else str(cover)
             items.append(
                 SearchItem(
                     platform="qqmusic",
-                    song_id=it.mid or "",
-                    name=it.name or it.title or "未知歌曲",
-                    artist=" / ".join(singers) or "未知歌手",
-                    duration=float(it.interval or 0),  # 秒
-                    pic_url=pic_url,
+                    song_id=raw.get("mid") or "",
+                    name=raw.get("name") or "未知歌曲",
+                    artist=raw.get("artist") or "未知歌手",
+                    duration=float(raw.get("duration") or 0),
+                    pic_url=raw.get("pic_url") or "",
                 )
             )
         except Exception:

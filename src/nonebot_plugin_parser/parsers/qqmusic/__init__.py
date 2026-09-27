@@ -1,6 +1,7 @@
-"""QQ音乐解析器（基于 ``qqmusic-api-python``，开箱即用、无需 Meting 容器）。
+"""QQ音乐解析器（App 协议直连，增强引擎缺失时自动回退内置实现）。
 
 支持链接格式：
+
 - 长链 y.qq.com/n/ryqq/songDetail/数字、y.qq.com/n/ryqq/v2/songDetail/数字
 - 短链 c*.y.qq.com/base/fcgi-bin/u?__=xxx（需重定向解析）
 

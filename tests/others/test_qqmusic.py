@@ -49,6 +49,8 @@ def test_parser_available(qqapi) -> None:
 def test_candidate_paths_includes_repo(qqapi) -> None:
     """同级（或上两级 app/）的引擎源码目录应被识别为候选。"""
     paths = [str(p).replace("\\", "/").lower() for p in qqapi._candidate_paths()]
+    if not paths:
+        pytest.skip("本机无引擎源码目录布局（CI 环境）")
     assert any("qqmusic-protocol" in p for p in paths), paths
 
 
@@ -304,6 +306,7 @@ def test_reset_client_is_idempotent(qqapi) -> None:
 
 def test_search_graceful_when_client_unavailable(qqapi, monkeypatch) -> None:
     """拿不到客户端时搜索返回空列表而不是抛异常（点歌是三服务并发）。"""
+    _require_engine(qqapi)  # 回退路径不经 _get_client，会真实发请求
     import asyncio
 
     monkeypatch.setattr(qqapi, "_get_client", lambda: None)

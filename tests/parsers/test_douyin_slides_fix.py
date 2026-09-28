@@ -773,6 +773,154 @@ async def test_extract_filter_reason():
     assert slides.extract_filter_reason(b'{"filter_detail": {"filter_reason": ""}}') == ""
 
 
+# === 回归7: 故事内容经模拟器采集服务解析 (2026-09-28) ===
+# 配置 parser_douyin_story_service 后, story filter 响应转调常驻采集服务
+# (MuMu 模拟器 + frida Fresco hook 管线), 服务返回签名直链时组装图片结果;
+# 服务未配置/不可用/返回空图时回退 TipException 提示。
+_STORY_SERVICE_RESP = {
+    "ok": True,
+    "aweme_id": "7690512266148431202",
+    "images": [
+        "https://p26-sign.douyinpic.com/tos-cn-p-0015c000-ce/tok1~tplv-noop.image?x-expires=1&x-signature=s1",
+        "https://p11-sign.douyinpic.com/tos-cn-p-0015/tok2~tplv-dy-360p.jpeg?x-expires=1&x-signature=s2",
+    ],
+    "avatars": ["https://p3.douyinpic.com/aweme/100x100/aweme-avatar/tos-cn-avt-0015_x.jpeg"],
+    "desc": "故事文案",
+    "nickname": "",
+    "ts": 1790600000,
+}
+
+
+def _story_detail_mock(monkeypatch):
+    """给 parser.request 喂 story filter 响应 (aweme_detail=null)。"""
+    import json as _json
+    from typing import ClassVar
+
+    from nonebot_plugin_parser.parsers import DouyinParser
+
+    parser = DouyinParser()
+    raw = _json.dumps(_STORY_FILTER_PAYLOAD).encode("utf-8")
+
+    class _MockResp:
+        status_code = 200
+        content = raw
+        text = raw.decode("utf-8")
+        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+
+        @property
+        def url(self):
+            return "https://www.douyin.com/aweme/v1/web/aweme/detail/"
+
+    async def _fake_request(url, *args, **kwargs):
+        return _MockResp()
+
+    monkeypatch.setattr(parser, "request", _fake_request)
+    return parser
+
+
+def _stub_downloads(monkeypatch, parser):
+    async def _coro(*args, **kwargs):
+        return __import__("pathlib").Path("/fake/media")
+
+    def _stub_dl(*args, **kwargs):
+        return asyncio.create_task(_coro(*args, **kwargs))
+
+    monkeypatch.setattr(parser.downloader, "download_img", _stub_dl)
+
+
+@pytest.mark.asyncio
+async def test_story_via_service_returns_images(monkeypatch):
+    """配置采集服务时, story filter 应转服务调用, 返回图片内容而非提示。"""
+    import nonebot_plugin_parser.parsers.douyin as dy_mod
+    from nonebot_plugin_parser.config import pconfig
+
+    parser = _story_detail_mock(monkeypatch)
+    _stub_downloads(monkeypatch, parser)
+
+    calls: list[dict] = []
+
+    async def _fake_fetch(service, params):
+        calls.append({"service": service, "params": params})
+        return dict(_STORY_SERVICE_RESP)
+
+    monkeypatch.setattr(dy_mod, "_request_story_service", _fake_fetch)
+    monkeypatch.setattr(pconfig, "parser_douyin_story_service", "http://10.1.1.1:18230/")
+    monkeypatch.setattr(pconfig, "parser_douyin_story_token", None)
+
+    result = await parser.parse_slides("7690512266148431202")
+
+    # 服务 URL 尾斜杠被 property 剥掉; 参数只带 id
+    assert calls[0]["service"] == "http://10.1.1.1:18230", f"尾斜杠未剥: {calls[0]['service']}"
+    assert calls[0]["params"] == {"id": "7690512266148431202"}
+
+    # 2 张签名直链 → 2 个图片内容; desc → title; 空 nickname → 默认作者名
+    assert len(result.img_contents) == 2, f"应输出 2 张图片, 实际 {[type(c).__name__ for c in result.contents]}"
+    assert result.title == "故事文案"
+    assert result.author is not None
+    assert result.author.name == "抖音用户"
+
+
+@pytest.mark.asyncio
+async def test_story_via_service_failure_falls_back_tip(monkeypatch):
+    """服务不可用 (fetch None) 时回退 TipException, 不冒泡成 ParseException。"""
+    import nonebot_plugin_parser.parsers.douyin as dy_mod
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.exception import TipException
+
+    parser = _story_detail_mock(monkeypatch)
+
+    async def _fake_fetch(service, params):
+        return None
+
+    monkeypatch.setattr(dy_mod, "_request_story_service", _fake_fetch)
+    monkeypatch.setattr(pconfig, "parser_douyin_story_service", "http://10.1.1.1:18230")
+
+    with pytest.raises(TipException, match="故事"):
+        await parser.parse_slides("7690512266148431202")
+
+
+@pytest.mark.asyncio
+async def test_story_via_service_empty_images_falls_back_tip(monkeypatch):
+    """服务 ok 但 images 空 (模拟器采集失败) 同样回退 TipException。"""
+    import nonebot_plugin_parser.parsers.douyin as dy_mod
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.exception import TipException
+
+    parser = _story_detail_mock(monkeypatch)
+
+    async def _fake_fetch(service, params):
+        return {"ok": True, "images": []}
+
+    monkeypatch.setattr(dy_mod, "_request_story_service", _fake_fetch)
+    monkeypatch.setattr(pconfig, "parser_douyin_story_service", "http://10.1.1.1:18230")
+
+    with pytest.raises(TipException, match="故事"):
+        await parser.parse_slides("7690512266148431202")
+
+
+@pytest.mark.asyncio
+async def test_story_service_params_include_token(monkeypatch):
+    """配置 token 时服务请求参数必须携带 token (服务端 X-Token 校验对应)。"""
+    import nonebot_plugin_parser.parsers.douyin as dy_mod
+    from nonebot_plugin_parser.config import pconfig
+
+    parser = _story_detail_mock(monkeypatch)
+    _stub_downloads(monkeypatch, parser)
+
+    calls: list[dict] = []
+
+    async def _fake_fetch(service, params):
+        calls.append(dict(params))
+        return dict(_STORY_SERVICE_RESP)
+
+    monkeypatch.setattr(dy_mod, "_request_story_service", _fake_fetch)
+    monkeypatch.setattr(pconfig, "parser_douyin_story_service", "http://10.1.1.1:18230")
+    monkeypatch.setattr(pconfig, "parser_douyin_story_token", "secret-token")
+
+    await parser.parse_slides("7690512266148431202")
+    assert calls[0] == {"id": "7690512266148431202", "token": "secret-token"}
+
+
 @pytest.mark.asyncio
 async def test_detail_api_http_error_falls_back_before_raise(monkeypatch):
     """签名 detail 请求 403 风控/超时 (httpx.HTTPError) 应先进免签名兜底,

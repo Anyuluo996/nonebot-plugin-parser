@@ -1,4 +1,5 @@
 import re
+import time
 import secrets
 from typing import ClassVar
 from urllib.parse import quote
@@ -63,6 +64,24 @@ _PC_WEB_COMMON_PARAMS: dict[str, str] = {
     "screen_width": "2195",
     "screen_height": "1235",
 }
+
+
+async def _request_story_service(service: str, params: dict[str, str]) -> dict | None:
+    """请求故事采集服务 (MuMu 模拟器 + frida 常驻管线), 任何失败返回 None。
+
+    服务侧单次采集含模拟器驱动最长 ~90s, 客户端超时 95s; 部署时需保证
+    ``parser_parse_timeout`` 大于该值, 否则解析层先超时。
+    """
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(95.0)) as client:
+            resp = await client.get(f"{service}/story", params=params)
+        data = resp.json()
+    except Exception as e:
+        logger.warning(f"douyin story service request failed ({service}): {e!r}")
+        return None
+    return data if isinstance(data, dict) else None
 
 
 class DouyinParser(BaseParser):
@@ -178,6 +197,46 @@ class DouyinParser(BaseParser):
                 break
         return response
 
+    async def _parse_story_via_service(self, video_id: str):
+        """「故事」内容经模拟器采集服务解析, 服务未配置/失败返回 None。
+
+        服务契约: GET {service}/story?id={aweme_id}[&token=...] →
+        ``{"ok": true, "images": [签名直链...], "avatars": [url],
+        "desc": str, "nickname": str}``; 图片为 14 天有效的 douyinpic
+        签名直链 (App 渠道采集, 见记忆 douyin-mumu-frida-pipeline)。
+        """
+        from ...config import pconfig
+
+        service = pconfig.douyin_story_service
+        if not service:
+            return None
+        params: dict[str, str] = {"id": video_id}
+        if token := pconfig.douyin_story_token:
+            params["token"] = token
+        data = await _request_story_service(service, params)
+        if not data or not data.get("ok"):
+            logger.warning(f"douyin story service no result for {video_id}: {str(data)[:200]}")
+            return None
+        raw_images = data.get("images") or []
+        images = [u for u in raw_images if isinstance(u, str) and u.startswith("http")]
+        if not images:
+            return None
+        avatars = data.get("avatars") or []
+        avatar = avatars[0] if isinstance(avatars, list) and isinstance(avatars[0], str) else None
+        nickname = data.get("nickname")
+        author = self.create_author(
+            nickname if isinstance(nickname, str) and nickname else "抖音用户",
+            avatar,
+        )
+        desc = data.get("desc")
+        return self.result(
+            title=desc if isinstance(desc, str) and desc else "抖音「故事」",
+            author=author,
+            contents=self.create_image_contents(images),
+            # 采集时刻近似发布时间 (服务侧无 create_time, 卡片仅显示日期)
+            timestamp=int(time.time()),
+        )
+
     async def parse_slides(self, video_id: str):
         from . import slides
         from ...utils import ffmpeg_available
@@ -205,6 +264,9 @@ class DouyinParser(BaseParser):
             # (parse_retry 对 TipException 不重试, matchers 发提示消息)
             if reason := slides.extract_filter_reason(response.content):
                 if reason.startswith("story"):
+                    # 故事内容优先走模拟器采集服务 (配置了才有), 失败回退提示
+                    if (story_result := await self._parse_story_via_service(video_id)) is not None:
+                        return story_result
                     raise TipException("该内容是抖音「故事」，仅在抖音 App 内可见，无法解析")
                 raise TipException(f"抖音未向网页端开放该内容（{reason}），无法解析")
             raise ParseException(f"can't find aweme_detail in PC detail API: {video_id}")

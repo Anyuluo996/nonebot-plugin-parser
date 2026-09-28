@@ -89,6 +89,19 @@ class Config(BaseModel):
     关闭本开关、无 BGM 或 ffmpeg 不可用时，回退为逐张发图（旧行为）。
     实况照片（live photo）不受影响：仍按原逻辑逐条发视频并合并 BGM。
     """
+    parser_douyin_story_service: str | None = None
+    """抖音「故事」采集服务地址（MuMu 模拟器 + frida 常驻管线）。
+
+    故事类内容被抖音服务端渠道过滤 (story_25_filter), web 端全链路拿不到
+    数据。配置本项 (形如 ``http://10.x.x.x:18230``) 后, 解析器遇到故事内容
+    时改调该服务在模拟器里驱动抖音 App 采集图片签名直链 (14 天有效)。
+    服务不可用/采集失败时回退 TipException 提示, 不影响其它内容解析。
+
+    注意: 采集含模拟器驱动, 最长 ~95 秒, 建议同时把 ``parser_parse_timeout``
+    调到 110 以上, 否则解析层会先于采集完成而超时。留空 (默认) 不启用。
+    """
+    parser_douyin_story_token: str | None = None
+    """故事采集服务的鉴权 token (与服务端 DY_STORY_TOKEN 环境变量一致)。"""
     parser_need_upload: bool = False
     """是否需要上传音频文件"""
     parser_use_base64: bool = False
@@ -347,6 +360,20 @@ class Config(BaseModel):
     def douyin_note_slideshow(self) -> bool:
         """抖音纯图文是否合成幻灯片视频发送"""
         return self.parser_douyin_note_slideshow
+
+    @property
+    def douyin_story_service(self) -> str | None:
+        """抖音故事采集服务地址，无首尾空白与尾斜杠"""
+        if self.parser_douyin_story_service is None:
+            return None
+        return self.parser_douyin_story_service.strip().rstrip("/") or None
+
+    @property
+    def douyin_story_token(self) -> str | None:
+        """抖音故事采集服务鉴权 token"""
+        if self.parser_douyin_story_token is None:
+            return None
+        return self.parser_douyin_story_token.strip() or None
 
     @property
     def need_upload(self) -> bool:

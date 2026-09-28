@@ -71,11 +71,13 @@ async def _request_story_service(service: str, params: dict[str, str]) -> dict |
 
     服务侧单次采集含模拟器驱动最长 ~90s, 客户端超时 95s; 部署时需保证
     ``parser_parse_timeout`` 大于该值, 否则解析层先超时。
+    服务走 easytier 内网, trust_env=False 绕开容器全局 http_proxy 环境变量
+    (与 base.request / downloader 的项目约定一致)。
     """
     import httpx
 
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(95.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(95.0), trust_env=False) as client:
             resp = await client.get(f"{service}/story", params=params)
         data = resp.json()
     except Exception as e:

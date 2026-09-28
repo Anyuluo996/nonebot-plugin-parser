@@ -1,3 +1,4 @@
+import json
 from random import choice
 
 import msgspec
@@ -345,6 +346,25 @@ def decode_aweme_detail(
         pass
     # 新格式
     return picture_detail_decoder.decode(raw).aweme_detail
+
+
+def extract_filter_reason(raw: bytes) -> str:
+    """提取 detail API 响应的 ``filter_detail.filter_reason`` (无则空串)。
+
+    内容被服务端过滤时 detail API 返回 ``aweme_detail: null`` + 非空
+    ``filter_detail``。已知形态 ``story_25_filter`` (抖音「故事」, 2026-09-28
+    实测 web 端全链路不下发数据: open-api/签名/Bytespider/登录 cookie/SSR
+    分享页/真实浏览器渲染均拿不到), 属确定性失败, 与风控的偶发失败不同,
+    调用方据此改抛 TipException 立即提示而非盲目重试。
+    """
+    try:
+        data = json.loads(raw)
+        detail = data.get("filter_detail")
+        if isinstance(detail, dict):
+            return str(detail.get("filter_reason") or "")
+    except Exception:
+        pass
+    return ""
 
 
 # 顶层结构(兼容旧的 slidesinfo v2 API): {"aweme_details": [...]}

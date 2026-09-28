@@ -13,6 +13,7 @@ from ..base import (
     handle,
 )
 from ._abogus import ABogus
+from ...exception import TipException
 
 # PC web 详情接口
 _DETAIL_URL = "https://www.douyin.com/aweme/v1/web/aweme/detail/"
@@ -199,6 +200,13 @@ class DouyinParser(BaseParser):
             )
             raise ParseException(f"decode douyin detail failed for {video_id}: {e}") from e
         if aweme_detail is None:
+            # 内容级过滤 (如 story_25_filter): 服务端明确不下发数据, 属确定性
+            # 失败, 重试/换形态/L2 兜底都无意义 → TipException 立即提示不重试
+            # (parse_retry 对 TipException 不重试, matchers 发提示消息)
+            if reason := slides.extract_filter_reason(response.content):
+                if reason.startswith("story"):
+                    raise TipException("该内容是抖音「故事」，仅在抖音 App 内可见，无法解析")
+                raise TipException(f"抖音未向网页端开放该内容（{reason}），无法解析")
             raise ParseException(f"can't find aweme_detail in PC detail API: {video_id}")
 
         contents = []

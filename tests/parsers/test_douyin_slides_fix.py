@@ -669,6 +669,110 @@ async def test_douyin_parser_download_headers_have_referer():
     )
 
 
+# === 回归6: story 等内容级过滤 → TipException 立即提示 (2026-09-28) ===
+# 抖音「故事」类内容 (filter_reason=story_25_filter) 仅 App 内可见, detail API
+# 返回 aweme_detail=null + filter_detail。web 端全链路实测拿不到数据
+# (open-api/签名/Bytespider/登录 cookie/SSR 分享页/真实浏览器渲染),
+# 属确定性失败: 修复前盲目走 4 次即时重试 + L2 后台重试全部浪费;
+# 修复后抛 TipException, parse_retry 不重试、matchers 直接发提示消息。
+_STORY_FILTER_PAYLOAD = {
+    "aweme_detail": None,
+    "filter_detail": {
+        "aweme_id": "7690512266148431202",
+        "detail_msg": "",
+        "filter_reason": "story_25_filter",
+        "icon": "",
+        "notice": "",
+    },
+    "log_pb": {"impr_id": "20260928185340A7A950B9F9CF15AF8BA"},
+    "status_code": 0,
+}
+
+
+@pytest.mark.asyncio
+async def test_story_filter_raises_tip_exception(monkeypatch):
+    """story 内容过滤必须转 TipException (不重试), 而非 ParseException (会重试)。"""
+    import json as _json
+    from typing import ClassVar
+
+    from nonebot_plugin_parser.parsers import DouyinParser
+    from nonebot_plugin_parser.exception import TipException
+
+    parser = DouyinParser()
+    raw = _json.dumps(_STORY_FILTER_PAYLOAD).encode("utf-8")
+
+    class _MockResp:
+        status_code = 200
+        content = raw
+        text = raw.decode("utf-8")
+        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+
+        @property
+        def url(self):
+            return "https://www.douyin.com/aweme/v1/web/aweme/detail/"
+
+    detail_calls: list[dict] = []
+
+    async def _fake_request(url, *args, **kwargs):
+        if "aweme/v1/web/aweme/detail" in str(url):
+            detail_calls.append(kwargs.get("params") or {})
+            return _MockResp()
+        raise RuntimeError(f"unexpected URL: {url}")
+
+    monkeypatch.setattr(parser, "request", _fake_request)
+
+    with pytest.raises(TipException, match="故事"):
+        await parser.parse_slides("7690512266148431202")
+
+    # filter 响应非空 body, open-api 形态拿到即 break, 不再试签名/Bytespider
+    assert len(detail_calls) == 1, f"应只请求 1 次 detail (filter 即确定性), 实际 {len(detail_calls)}"
+
+
+@pytest.mark.asyncio
+async def test_unknown_filter_reason_included_in_tip(monkeypatch):
+    """未知 filter_reason 也应 TipException, 且提示文案带上原因便于排查。"""
+    import json as _json
+    from typing import ClassVar
+
+    from nonebot_plugin_parser.parsers import DouyinParser
+    from nonebot_plugin_parser.exception import TipException
+
+    parser = DouyinParser()
+    payload = {"aweme_detail": None, "filter_detail": {"filter_reason": "some_new_filter"}, "status_code": 0}
+    raw = _json.dumps(payload).encode("utf-8")
+
+    class _MockResp:
+        status_code = 200
+        content = raw
+        text = raw.decode("utf-8")
+        headers: ClassVar[dict[str, str]] = {"content-type": "application/json"}
+
+        @property
+        def url(self):
+            return "https://www.douyin.com/aweme/v1/web/aweme/detail/"
+
+    async def _fake_request(url, *args, **kwargs):
+        return _MockResp()
+
+    monkeypatch.setattr(parser, "request", _fake_request)
+
+    with pytest.raises(TipException, match="some_new_filter"):
+        await parser.parse_slides("1234567890")
+
+
+@pytest.mark.asyncio
+async def test_extract_filter_reason():
+    """extract_filter_reason: 有 filter_reason 提取, 无/非 JSON 返回空串。"""
+    import json as _json
+
+    from nonebot_plugin_parser.parsers.douyin import slides
+
+    assert slides.extract_filter_reason(_json.dumps(_STORY_FILTER_PAYLOAD).encode()) == "story_25_filter"
+    assert slides.extract_filter_reason(b'{"aweme_detail": {"desc": "x"}}') == ""
+    assert slides.extract_filter_reason(b"not json") == ""
+    assert slides.extract_filter_reason(b'{"filter_detail": {"filter_reason": ""}}') == ""
+
+
 @pytest.mark.asyncio
 async def test_detail_api_http_error_falls_back_before_raise(monkeypatch):
     """签名 detail 请求 403 风控/超时 (httpx.HTTPError) 应先进免签名兜底,

@@ -300,16 +300,17 @@ async def media_to_slideshow(
     )
     cmd += ["-filter_complex", filter_complex, "-map", "[v]"]
     if audio_path:
-        cmd += ["-map", f"{m}:a", "-c:a", "aac", "-b:a", "128k"]
-    # veryfast: 幻灯片总长跟随 BGM 后可达数分钟, 编码时长须压在
-    # video_send_timeout(默认 30s) 内; 静态画面下与 medium 视觉无差
+        cmd += ["-map", f"{m}:a", "-c:a", "aac", "-b:a", "96k"]
+    # veryfast + crf28: x265 在 4 vCPU 上 1080x1920@30fps 合成 39s 撞超时,
+    # x264 仍是最优解; crf28+96k 对比 crf23+128k 体积 -40% (yun 实测
+    # 3.60→2.16MB, SSIM 0.991, 文字截图肉眼无差), 编码耗时不变
     cmd += [
         "-c:v",
         "libx264",
         "-preset",
         "veryfast",
         "-crf",
-        "23",
+        "28",
         "-tune",
         "stillimage",
         "-movflags",

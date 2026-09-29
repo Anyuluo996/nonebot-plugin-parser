@@ -167,42 +167,34 @@ async def _probe_image_size(path: Path) -> tuple[int, int] | None:
         return None
 
 
-def _check_concat_safe(*paths: Path) -> None:
-    """校验路径可安全写入 ffconcat 脚本。
-
-    concat demuxer 的引号内转义在多数 ffmpeg build 上不被支持（实测 4.3 与
-    2026 git build）：路径含单引号时文件打不开、**退出码仍为 0**，静默产出
-    残缺视频并被 exists() 快速路径永久缓存。图片/输出文件名是 md5 hex，
-    特殊字符只能来自 cache_dir（如 Windows 用户名 ``O'Brien``）；命中即
-    显式失败，让解析层跳过该内容、日志可排查。
-    """
-    for p in paths:
-        if "'" in str(p):
-            raise RuntimeError(f"路径含单引号, 无法生成 ffconcat: {p}")
-
-
 async def images_to_slideshow(
     image_paths: list[Path],
     audio_path: Path | None = None,
     output_path: Path | None = None,
     *,
     min_per_image: float = 2.0,
-    max_per_image: float = 8.0,
     default_per_image: float = 3.0,
     fps: int = 10,
 ) -> Path:
     """静态图序列 + 可选 BGM 合成轮播幻灯片视频（抖音图文用）。
 
-    每张图展示时长 = clamp(BGM时长/图片数, min_per_image, max_per_image)，
-    BGM 缺失/探测失败用 default_per_image（BGM 探不出时长视为损坏，降级
-    无声）；BGM 短于视频时循环、长时截断。
+    每张图展示时长 = max(BGM时长/图片数, min_per_image)，对齐抖音 App 行为:
+    幻灯片总长跟随 BGM、每图 BGM/图数 秒，不截断音乐；仅设下限（图多 BGM 短时
+    每图至少 min_per_image，BGM 循环补齐）。BGM 缺失/探测失败用 default_per_image
+    （BGM 探不出时长视为损坏，降级无声）。
     画布取所有图中最大宽/高（上限 1920、对齐偶数），小图黑边居中。
+
+    每张图作为**独立输入**（-loop 1）由 ffmpeg 按真实格式各自解码，concat 滤镜
+    拼接后统一 scale/pad。不用 concat demuxer：它按**首个文件**选解码器，混编
+    格式（jpeg+webp）时后续段被喂错解码器，老 ffmpeg 上静默丢帧（fps 滤镜拿上
+    一帧补空 → 前一张图被拉长、后图消失）或解码错误率超限整体失败，且 rc 可为
+    0（2026-09-29 线上: 3 图只出 2 图，yun/wo4 均为 ffmpeg 4.3）。
+
     输出 h264(+aac) mp4，先写随机后缀临时文件、编码成功且时长校验通过后
     原子替换，避免中断残留半截文件被下次的 exists() 快速路径误判为可用。
 
     Raises:
-        RuntimeError: ffmpeg 不可用/合成失败/产物时长异常/路径含单引号/
-            无法探测任何图片尺寸。
+        RuntimeError: ffmpeg 不可用/合成失败/产物时长异常/无法探测任何图片尺寸。
         ValueError: image_paths 为空。
     """
     if not image_paths:
@@ -211,8 +203,6 @@ async def images_to_slideshow(
         output_path = image_paths[0].with_name(f"{image_paths[0].stem}_slideshow.mp4")
     if output_path.exists():
         return output_path
-
-    _check_concat_safe(output_path, *image_paths, *([audio_path] if audio_path else ()))
 
     n = len(image_paths)
     audio_duration = None
@@ -224,7 +214,7 @@ async def images_to_slideshow(
             logger.warning(f"BGM 无法探测时长, 疑似损坏, 降级为无声视频: {audio_path.name}")
             audio_path = None
     if audio_duration and audio_duration > 0.1:
-        per_image = min(max(audio_duration / n, min_per_image), max_per_image)
+        per_image = max(audio_duration / n, min_per_image)
     else:
         per_image = default_per_image
     total = per_image * n
@@ -239,36 +229,37 @@ async def images_to_slideshow(
     canvas_w = max(2, min(canvas_w, 1920)) // 2 * 2
     canvas_h = max(2, min(canvas_h, 1920)) // 2 * 2
 
-    # concat 脚本：每张图一条 duration；末尾重复最后一张（concat demuxer
-    # 不给最后一条 duration 记账，不重复会丢片尾一帧的时长）。
+    # 每图独立输入 -loop 1 -t per_image; concat 滤镜要求各段分辨率/帧率/
+    # 像素格式一致, 故每条支路统一 scale+pad(画布)+setsar+format。
     # 临时文件名带随机后缀：同一 note 并发合成时固定名会互相踩踏/被另一方
-    # 的 finally 删掉正被读的输入，触发下面的 rc=0 静默截断
+    # 的 finally 删掉正被读的输入。
     tag = uuid4().hex[:8]
-    lines = ["ffconcat version 1.0"]
-    for p in image_paths:
-        lines.append(f"file '{p.as_posix()}'")
-        lines.append(f"duration {per_image:.3f}")
-    lines.append(f"file '{image_paths[-1].as_posix()}'")
-    list_path = output_path.with_name(f"{output_path.stem}_{tag}_ffconcat.txt")
-    list_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
     tmp_path = output_path.with_name(f"{output_path.stem}_{tag}_tmp.mp4")
-    vf = (
-        f"scale={canvas_w}:{canvas_h}:force_original_aspect_ratio=decrease,"
-        f"pad={canvas_w}:{canvas_h}:(ow-iw)/2:(oh-ih)/2:color=black,"
-        f"fps={fps},format=yuv420p"
-    )
-    cmd: list[str] = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(list_path)]
+    cmd: list[str] = ["ffmpeg", "-y"]
+    chains: list[str] = []
+    for i, p in enumerate(image_paths):
+        cmd += ["-loop", "1", "-t", f"{per_image:.3f}", "-i", str(p)]
+        chains.append(
+            f"[{i}:v]scale={canvas_w}:{canvas_h}:force_original_aspect_ratio=decrease,"
+            f"pad={canvas_w}:{canvas_h}:(ow-iw)/2:(oh-ih)/2:color=black,"
+            f"setsar=1,format=yuv420p[s{i}]"
+        )
     if audio_path:
         # BGM 短于视频时无限循环，靠输出 -t 在视频末端精确截断
-        cmd += ["-stream_loop", "-1", "-i", str(audio_path), "-c:a", "aac", "-b:a", "128k"]
+        cmd += ["-stream_loop", "-1", "-i", str(audio_path)]
+    filter_complex = ";".join(chains) + (
+        f";{''.join(f'[s{i}]' for i in range(n))}concat=n={n}:v=1:a=0,fps={fps},format=yuv420p[v]"
+    )
+    cmd += ["-filter_complex", filter_complex, "-map", "[v]"]
+    if audio_path:
+        cmd += ["-map", f"{n}:a", "-c:a", "aac", "-b:a", "128k"]
+    # veryfast: 幻灯片总长跟随 BGM 后可达数分钟, 编码时长须压在
+    # video_send_timeout(默认 30s) 内; 静态画面下与 medium 视觉无差
     cmd += [
-        "-vf",
-        vf,
         "-c:v",
         "libx264",
         "-preset",
-        "medium",
+        "veryfast",
         "-crf",
         "23",
         "-tune",
@@ -282,7 +273,7 @@ async def images_to_slideshow(
 
     try:
         await exec_ffmpeg_cmd(cmd)
-        # concat demuxer 输入打开失败时 ffmpeg 仍 rc=0（静默产出残缺视频），
+        # 输入打开失败等异常路径仍可能 rc=0（静默产出残缺视频），
         # 用产物时长兜底校验：半截视频不允许 replace 进缓存被 exists() 永久命中
         got = await probe_media_duration(tmp_path)
         if got is None or got < total * 0.5:
@@ -291,8 +282,6 @@ async def images_to_slideshow(
     except BaseException:
         await safe_unlink(tmp_path)
         raise
-    finally:
-        await safe_unlink(list_path)
 
     logger.success(f"幻灯片视频合成成功: {output_path.name}, {n} 图 × {per_image:.1f}s, {fmt_size(output_path)}")
     return output_path

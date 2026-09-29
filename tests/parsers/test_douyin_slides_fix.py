@@ -49,10 +49,11 @@ LIVE_NOTE_URL = "https://v.douyin.com/PsRRzmKjer8/"
 
 @pytest.mark.asyncio
 async def test_decoder_picks_play_addr_with_covers():
-    """decoder 使用 play_addr (无水印/无片尾), 且每个视频都带封面。
+    """decoder 使用 play_addr (无水印/无片尾), 纯实况帖合并为单条带封面视频。
 
     走 parser.parse_slides 完整路径 (含 a_bogus 签名), 从结果反推 decoder 选取正确。
     直接裸 httpx 打 detail 接口缺 a_bogus 签名会返回空 body, 故必须走 parser。
+    2026-09-29 混排合并: 纯实况帖不再逐条发 dynamic, 而是合成为单条幻灯片视频。
     """
     _needs_douyin_ttwid()
     from nonebot_plugin_parser.parsers import DouyinParser
@@ -62,18 +63,16 @@ async def test_decoder_picks_play_addr_with_covers():
     assert searched, "无法匹配 URL"
     result = await parser.parse(keyword, searched)
 
-    # SlidesData 格式下应全部解析为 dynamic (实况视频), 无静态图
-    dynamics = result.dynamic_contents
-    assert len(dynamics) == 2, f"应解析出 2 段视频, 实际 {len(dynamics)}"
-
-    # 断言: 每个实况视频都有封面 (decoder 选取了 play_addr 对应的 cover)
-    for i, cont in enumerate(dynamics):
-        assert cont.cover is not None, f"dynamic_contents[{i}] 缺少封面 cover"
+    # 混排合并后: 全部 live photo 合入单条幻灯片视频, 无静态图/独立 dynamic
+    assert result.img_contents == [], "纯实况帖不应有静态图"
+    assert len(result.video_contents) == 1, f"应合并为 1 条幻灯片视频, 实际 {len(result.video_contents)}"
+    # 幻灯片封面来自首条实况的 cover (decoder 选取了 play_addr 对应的 cover)
+    assert result.video_contents[0].cover is not None, "幻灯片视频缺少封面"
 
 
 @pytest.mark.asyncio
 async def test_live_photo_slides_parses_to_videos():
-    """端到端: parse_slides 输出 2 段带封面的 DynamicContent 视频内容。
+    """端到端: parse_slides 把 2 段实况照片合并为单条幻灯片视频内容。
 
     注意: slides 类型无可用兜底 (m/iesdouyin 分享页均无 _ROUTER_DATA),
     在 PC detail 风控下 slides 链接直接 ParseException, 与 note 行为不同。
@@ -89,46 +88,45 @@ async def test_live_photo_slides_parses_to_videos():
     content_types = [type(c).__name__ for c in result.contents]
     logger.info(
         f"title={result.title!r}, contents types={content_types}, "
+        f"video_contents={len(result.video_contents)}, "
         f"dynamic_contents={len(result.dynamic_contents)}, "
         f"img_contents={len(result.img_contents)}"
     )
 
-    # 核心断言: 必须解析出 2 段实况照片视频
-    assert len(result.dynamic_contents) == 2, f"实况照片应解析出 2 段视频, 实际 contents={content_types}"
+    # 核心断言: 2 段实况照片合并为 1 条幻灯片视频 (旧行为: 2 条 dynamic)
+    assert len(result.video_contents) == 1, f"应合并为 1 条视频, 实际 contents={content_types}"
+    assert result.dynamic_contents == [], "不应再逐条发实况视频"
 
-    # 断言: 每段视频都带封面(否则渲染图无法显示缩略图)
-    for i, cont in enumerate(result.dynamic_contents):
-        assert cont.cover is not None, f"dynamic_contents[{i}] 缺少封面 cover"
-
-    # 可选断言: 下载成功时验证时长 (play_addr 约 2.1s)
-    for i, cont in enumerate(result.dynamic_contents):
-        try:
-            path = await cont.get_path()
-        except Exception as e:
-            logger.warning(f"dynamic[{i}] 下载失败(CDN 波动), 跳过时长断言: {e}")
-            continue
-        try:
-            out = await asyncio.to_thread(
-                subprocess.run,
-                ["ffprobe", "-v", "error", "-show_format", "-of", "json", str(path)],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            duration = float(_json.loads(out.stdout)["format"]["duration"])
-            logger.info(f"dynamic[{i}] duration={duration:.2f}s")
-            assert duration > 1.0, f"dynamic[{i}] 时长 {duration:.2f}s 异常偏短"
-        except (FileNotFoundError, KeyError, ValueError):
-            logger.warning(f"dynamic[{i}] 无法用 ffprobe 检测时长, 跳过时长断言")
+    # 可选断言: 下载合成成功时验证时长 (序列循环, 总长 = min(BGM, 60s) > 1s)
+    video = result.video_contents[0]
+    try:
+        path = await video.get_path()
+    except Exception as e:
+        logger.warning(f"幻灯片合成失败(CDN 波动), 跳过时长断言: {e}")
+        return
+    try:
+        out = await asyncio.to_thread(
+            subprocess.run,
+            ["ffprobe", "-v", "error", "-show_format", "-of", "json", str(path)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        duration = float(_json.loads(out.stdout)["format"]["duration"])
+        logger.info(f"slideshow duration={duration:.2f}s")
+        assert duration > 1.0, f"幻灯片时长 {duration:.2f}s 异常偏短"
+    except (FileNotFoundError, KeyError, ValueError):
+        logger.warning("无法用 ffprobe 检测时长, 跳过时长断言")
 
 
 @pytest.mark.asyncio
 async def test_live_photo_note_redirect_parses_to_video():
-    """回归2: 重定向成 note/ 的实况照片图文必须解析出 DynamicContent 视频。
+    """回归2: 重定向成 note/ 的实况照片图文必须解析出视频内容。
 
     修复前 note 走 parse_video, _ROUTER_DATA 的 images 不含 video 字段,
     只输出 1 张静态图, 实况视频丢失; 修复后 note 优先走 parse_slides,
     PC detail API 返回 images[].video.play_addr, 正确输出实况视频。
+    2026-09-29 混排合并: 输出从 N 条 dynamic 变为 1 条幻灯片视频。
     """
     _needs_douyin_ttwid()
     from nonebot_plugin_parser.parsers import DouyinParser
@@ -141,21 +139,21 @@ async def test_live_photo_note_redirect_parses_to_video():
     content_types = [type(c).__name__ for c in result.contents]
     logger.info(
         f"note-live title={result.title!r}, contents types={content_types}, "
+        f"video_contents={len(result.video_contents)}, "
         f"dynamic_contents={len(result.dynamic_contents)}, "
         f"img_contents={len(result.img_contents)}"
     )
 
     assert result.title, "标题为空"
 
-    # 核心断言: note 实况照片必须解析出 DynamicContent 视频 (修复前是 0)
-    assert result.dynamic_contents, f"note 实况照片应解析出视频, 实际 dynamic=0 (contents={content_types})"
-    for i, cont in enumerate(result.dynamic_contents):
-        assert cont.cover is not None, f"dynamic_contents[{i}] 缺少封面 cover"
+    # 核心断言: note 实况照片必须解析出视频 (修复前 0; 现为 1 条合并幻灯片)
+    assert result.video_contents, f"note 实况照片应解析出视频, 实际 video=0 (contents={content_types})"
+    assert result.video_contents[0].cover is not None, "幻灯片视频缺少封面"
 
 
 @pytest.mark.asyncio
 async def test_decoder_picks_live_video_for_note():
-    """端到端: note 实况照片 (重定向成 note/) 解析出实况视频。
+    """端到端: note 实况照片 (重定向成 note/) 合成出幻灯片视频。
 
     走 parser 完整路径 (含 a_bogus 签名); 裸 httpx 缺签名会空 body。
     """
@@ -167,8 +165,7 @@ async def test_decoder_picks_live_video_for_note():
     assert searched, "无法匹配 URL"
     result = await parser.parse(keyword, searched)
 
-    dynamics = result.dynamic_contents
-    assert dynamics, f"note 实况照片应解析出至少 1 段视频, 实际 {len(dynamics)}"
+    assert result.video_contents, f"note 实况照片应合成幻灯片视频, 实际 {len(result.video_contents)}"
 
 
 # === 回归4: isPicture=true 的 picture 类型图文 ===
@@ -285,13 +282,16 @@ _PICTURE_NOTE_PAYLOAD = {
 
 @pytest.mark.asyncio
 async def test_picture_note_decodes_picture_list(monkeypatch):
-    """回归4: isPicture=true 的 note 必须解析 pictureList[], 输出 4 段 dynamic。
+    """回归4: isPicture=true 的 note 必须解析 pictureList[], 纯实况合并为单条视频。
 
     修复前: 旧 Struct 假设 author/images[], 跟 pictureList[] 字段不匹配, decode 抛
     ValidationError → traceback; 修复后: PictureSlidesData 适配 pictureList[],
     decode_aweme_detail 智能 dispatch 自动选对结构, 4 段 live photo 全部解析。
+    2026-09-29 混排合并后: 纯实况帖(4 段 live + BGM)不再逐条发 4 段视频,
+    而是全部作为 video 段合入单条幻灯片视频。
     """
     import json as _json
+    from pathlib import Path
     from typing import ClassVar
 
     from nonebot_plugin_parser.parsers import DouyinParser
@@ -336,15 +336,26 @@ async def test_picture_note_decodes_picture_list(monkeypatch):
     monkeypatch.setattr(parser.downloader, "download_img", _stub_dl)
     monkeypatch.setattr(parser, "_merge_bgm", _noop_merge)
 
+    # 有 BGM + ffmpeg 可用 → 走幻灯片合并分支, mock 合成层拿到 media 段
+    from nonebot_plugin_parser import utils as utils_mod
+
+    composed = {}
+
+    async def _fake_compose(segments, audio_path, output_path, **kwargs):
+        composed["segments"] = list(segments)
+        return Path("/fake/slideshow.mp4")
+
+    monkeypatch.setattr(utils_mod, "media_to_slideshow", _fake_compose)
+
     result = await parser.parse_slides(PICTURE_NOTE_VID)
 
-    # 核心断言: 4 张图全是 live photo, 应输出 4 段 dynamic + 0 张静态图
+    # 核心断言: 4 张图全是 live photo → 全部作为 video 段合并为单条幻灯片视频
     assert result.img_contents == [], f"全是 live photo, 静态图应为 0, 实际 {len(result.img_contents)}"
-    assert len(result.dynamic_contents) == 4, f"应有 4 段 live photo 视频, 实际 {len(result.dynamic_contents)}"
-
-    # 断言: 每段 dynamic 都带封面 (live video 的独立 cover, 来自 videoBitRateList[0].cover)
-    for i, cont in enumerate(result.dynamic_contents):
-        assert cont.cover is not None, f"dynamic_contents[{i}] 缺少封面 cover"
+    assert len(result.dynamic_contents) == 0, "混排合并后不再逐条发实况视频"
+    assert len(result.video_contents) == 1, f"应合并为 1 条幻灯片视频, 实际 {len(result.video_contents)}"
+    video = result.video_contents[0]
+    assert await video.get_path() == Path("/fake/slideshow.mp4"), "合成任务应正常完成"
+    assert [k for _, k in composed["segments"]] == ["video"] * 4, f"4 段 live photo 应全为 video 段: {composed['segments']}"
 
     # 断言: createTime 毫秒 -> 秒 转换正确 (datetime.fromtimestamp 期望秒)
     assert result.timestamp == 1734761606, f"createTime 毫秒没转秒: {result.timestamp}"

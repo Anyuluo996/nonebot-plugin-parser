@@ -9,6 +9,10 @@ orign = "orign"
 udid = "udid"
 open_udid = "open_udid"
 
+# 抖音分享短链 ID（含 ue 片段, 误报为 use/due）
+[default]
+extend-ignore-re = ['4ueJKZQ0tpI']
+
 # 历史 API 抓取数据 / 渲染输出，含中文用户名、原始字段，非人工撰写文本
 [files]
 extend-exclude = [

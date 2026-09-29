@@ -195,7 +195,7 @@ async def test_detail_open_api_primary_and_fallback_order(monkeypatch):
 
     result = await parser.parse(keyword, searched)
     assert result.title == "open-api primary regression", "退回链未解析出结果"
-    assert result.author.name == "fallback-tester"
+    assert result.author is not None and result.author.name == "fallback-tester"
 
     # 依次退回: open-api(主力) -> 签名 -> Bytespider
     assert calls == ["open-api", "signed", "bytespider"], f"退回顺序异常: {calls}"
@@ -206,12 +206,13 @@ async def test_detail_open_api_primary_and_fallback_order(monkeypatch):
 async def test_slides():
     """
     含视频的图集(实况照片/live photo)
-    https://v.douyin.com/Gz4nn_2caaU # 实况照片, 解析出 2 段视频
-    https://www.douyin.com/note/7450744229229235491 # 解析成 4 段实况照片视频
+    https://v.douyin.com/Gz4nn_2caaU # 实况照片, 合成 1 条幻灯片视频
+    https://www.douyin.com/note/7450744229229235491 # 4 段实况照片合成 1 条幻灯片视频
 
     slides 类型无可用兜底 (m/iesdouyin 分享页均无 _ROUTER_DATA),
     note/slides 类型只有 detail API 一条路(分享页兜底已删除), 因此整个 test_slides
     都依赖 PC web detail 接口能拿到完整数据, 必须配置 parser_douyin_ttwid。
+    2026-09-29 混排合并: 纯实况帖从逐条 N 段 dynamic 变为单条幻灯片视频。
     """
     _needs_douyin_ttwid()
     from nonebot_plugin_parser.parsers import DouyinParser
@@ -221,44 +222,42 @@ async def test_slides():
 
     live_photo_url = "https://v.douyin.com/Gz4nn_2caaU"
 
-    logger.info(f"开始解析抖音图集(实况照片解析出视频) {live_photo_url}")
+    logger.info(f"开始解析抖音图集(实况照片合成幻灯片) {live_photo_url}")
     keyword, searched = parser.search_url(live_photo_url)
     assert searched, "无法匹配 URL"
     result = await parser.parse(keyword, searched)
     logger.debug(f"{live_photo_url} | 解析结果: \n{result}")
     assert result.title, "标题为空"
 
-    # 关键断言: 实况照片必须解析出 DynamicContent(视频), 而非静态图片
-    dynamic_contents = result.dynamic_contents
-    assert len(dynamic_contents) == 2, (
-        f"实况照片应解析出 2 段视频, 实际得到 {len(dynamic_contents)} 段 "
+    # 关键断言: 实况照片必须解析出视频(而非静态图片); 混排合并后为单条幻灯片
+    assert result.dynamic_contents == [], "不应再逐条发实况视频"
+    assert len(result.video_contents) == 1, (
+        f"实况照片应合并为 1 条幻灯片视频, 实际 {len(result.video_contents)} "
         f"(contents={[type(c).__name__ for c in result.contents]})"
     )
-    for dynamic_content in dynamic_contents:
-        try:
-            path = await dynamic_content.get_path()
-        except DownloadException:
-            pytest.skip("抖音动态内容下载失败, 随机到的 cdn 过期")
-        assert path.exists(), "动态内容不存在"
-    logger.success(f"抖音图集(实况照片解析出视频)解析成功 {live_photo_url}")
+    try:
+        path = await result.video_contents[0].get_path()
+    except DownloadException:
+        pytest.skip("幻灯片下载/合成失败, 随机到的 cdn 过期")
+    assert path.exists(), "幻灯片视频不存在"
+    logger.success(f"抖音图集(实况照片合成幻灯片)解析成功 {live_photo_url}")
 
     static_image_url = "https://www.douyin.com/note/7450744229229235491"
-    logger.info(f"开始解析抖音图集(含视频解析出静态图片) {static_image_url}")
+    logger.info(f"开始解析抖音图集(4 段实况照片合成幻灯片) {static_image_url}")
     keyword, searched = parser.search_url(static_image_url)
     assert searched, "无法匹配 URL"
     result = await parser.parse(keyword, searched)
     logger.debug(f"{static_image_url} | 解析结果: \n{result}")
     assert result.title, "标题为空"
-    # 该 note 实为 4 段实况照片(live photo), note 改走 parse_slides 后正确输出视频
-    dynamic_contents = result.dynamic_contents
-    assert len(dynamic_contents) == 4, (
-        f"该实况照片 note 应解析出 4 段视频, 实际 {len(dynamic_contents)} "
+    # 该 note 实为 4 段实况照片(live photo), note 走 parse_slides; 混排合并后为单条幻灯片
+    assert result.dynamic_contents == [], "不应再逐条发实况视频"
+    assert len(result.video_contents) == 1, (
+        f"该实况照片 note 应合并为 1 条幻灯片视频, 实际 {len(result.video_contents)} "
         f"(contents={[type(c).__name__ for c in result.contents]})"
     )
-    for dynamic_content in dynamic_contents:
-        try:
-            path = await dynamic_content.get_path()
-        except DownloadException:
-            pytest.skip("抖音动态内容下载失败, 随机到的 cdn 过期")
-        assert path.exists(), "动态内容不存在"
-    logger.success(f"抖音图集(实况照片 note 解析出视频)解析成功 {static_image_url}")
+    try:
+        path = await result.video_contents[0].get_path()
+    except DownloadException:
+        pytest.skip("幻灯片下载/合成失败, 随机到的 cdn 过期")
+    assert path.exists(), "幻灯片视频不存在"
+    logger.success(f"抖音图集(实况照片 note 合成幻灯片)解析成功 {static_image_url}")

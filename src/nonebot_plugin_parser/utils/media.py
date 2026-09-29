@@ -174,7 +174,7 @@ async def images_to_slideshow(
     output_path: Path | None = None,
     *,
     per_image: float = 5.0,
-    fps: int = 10,
+    fps: int = 5,
 ) -> Path:
     """静态图序列 + 可选 BGM 合成轮播幻灯片视频（抖音图文用）。
 
@@ -191,8 +191,9 @@ async def images_to_slideshow(
     一帧补空 → 前一张图被拉长、后图消失）或解码错误率超限整体失败，且 rc 可为
     0（2026-09-29 线上: 3 图只出 2 图，yun/wo4 均为 ffmpeg 4.3）。
 
-    输出 h264(+aac) mp4，先写随机后缀临时文件、编码成功且时长校验通过后
-    原子替换，避免中断残留半截文件被下次的 exists() 快速路径误判为可用。
+    输出 h264(+aac) mp4（输出 fps 默认 5，静态画面足够），先写随机后缀临时
+    文件、编码成功且时长校验通过后原子替换，避免中断残留半截文件被下次的
+    exists() 快速路径误判为可用。
 
     Raises:
         RuntimeError: ffmpeg 不可用/合成失败/产物时长异常/无法探测任何图片尺寸。
@@ -243,7 +244,11 @@ async def images_to_slideshow(
     chains: list[str] = []
     sequence = image_paths * passes
     for i, p in enumerate(sequence):
-        cmd += ["-loop", "1", "-t", f"{per_image:.3f}", "-i", str(p)]
+        # -framerate 1 必须带: image2 的 -loop 1 默认按 25fps 把每张图**重复
+        # 解码** per×25 次, yun 实测 39 输入 × 5s 达 ~50s 直接撞穿 30s 的
+        # video_send_timeout; 降到 1fps 后每图只解 ceil(per) 次, 全程 ~12s。
+        # 画面为静态图, 解码帧经 concat 后的 fps 滤镜复制即可。
+        cmd += ["-framerate", "1", "-loop", "1", "-t", f"{per_image:.3f}", "-i", str(p)]
         chains.append(
             f"[{i}:v]scale={canvas_w}:{canvas_h}:force_original_aspect_ratio=decrease,"
             f"pad={canvas_w}:{canvas_h}:(ow-iw)/2:(oh-ih)/2:color=black,"

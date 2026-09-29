@@ -284,10 +284,10 @@ class DouyinParser(BaseParser):
             if bgm_url and pconfig.douyin_note_slideshow and ffmpeg_available():
                 # 图文在 App 内是随 BGM 轮播的幻灯片视频: 有 BGM 时合成单条视频
                 # 发送; 开关关闭或 ffmpeg 不可用时回退逐张发图 (旧行为)。
-                # cache_key 带 v2: 旧版 concat demuxer 在混编格式(jpeg+webp)
-                # 下会静默丢图, 换 key 让已缓存的坏产物自然过期重新合成
+                # cache_key 带 v3: 合成参数变化(每图独立解码 v2 → 5s 循环快切 v3)
+                # 后换 key, 让已缓存旧产物自然过期重新合成
                 contents.append(
-                    self.create_slideshow_content(image_urls, bgm_url, cache_key=f"douyin-slideshow-v2-{video_id}")
+                    self.create_slideshow_content(image_urls, bgm_url, cache_key=f"douyin-slideshow-v3-{video_id}")
                 )
             else:
                 contents.extend(self.create_image_contents(image_urls))

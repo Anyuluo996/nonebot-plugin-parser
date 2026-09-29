@@ -295,7 +295,7 @@ async def test_slideshow_validates_output_duration(monkeypatch, tmp_path):
 
 # ---------------------------------------------------------------------------
 # 真实 ffmpeg 合成（仓库自带真实 BGM 样本 audio_sources/music_playurl.mp3,
-# 时长 16.1175s: 2 图 → max(16.1175/2, 2) = 8.06s/图 → 总时长 ≈16.1s）
+# 时长 16.1175s: 2 图 → 每图 min(5, 8.06)=5s 循环快切, 总长 ≈16.1s=BGM）
 # ---------------------------------------------------------------------------
 
 ffmpeg_missing = which("ffmpeg") is None or which("ffprobe") is None
@@ -326,7 +326,7 @@ async def test_images_to_slideshow_real_ffmpeg(tmp_path):
     assert result == out
     assert out.exists()
 
-    # 时长 ≈ 2 图 × 8.06s (跟随 BGM, 不截断)
+    # 时长 ≈ BGM 16.12s (总长恒等于 BGM; 每图 min(5, 8.06)=5s 循环快切)
     duration = await probe_media_duration(out)
     assert duration is not None
     assert abs(duration - 16.1175) < 1.5, f"时长应 ≈16.1s, 实际 {duration}"
@@ -360,7 +360,7 @@ async def test_images_to_slideshow_mixed_formats_all_present(tmp_path):
         imgs.append(p)
 
     out = tmp_path / "mixed.mp4"
-    await images_to_slideshow(imgs, None, out, default_per_image=per)
+    await images_to_slideshow(imgs, None, out, per_image=per)
     duration = await probe_media_duration(out)
     assert duration is not None
     assert abs(duration - 3 * per) < 0.5, f"时长应 ≈6s, 实际 {duration}"
@@ -393,10 +393,11 @@ async def test_images_to_slideshow_mixed_formats_all_present(tmp_path):
 
 @pytest.mark.skipif(ffmpeg_missing, reason="本机无 ffmpeg/ffprobe")
 async def test_images_to_slideshow_bgm_not_truncated(tmp_path):
-    """长 BGM 不再被每图 8s 上限截断: 幻灯片总长跟随 BGM。
+    """长 BGM 不被截断: 幻灯片总长恒等于 BGM, 图片循环快切。
 
-    回归: 旧实现 per_image = clamp(BGM/图数, 2, 8), 30s BGM + 2 图被截成
-    16s 视频、音频丢一半; 现实现每图 max(30/2, 2) = 15s → 总长 ≈30s。
+    回归1: 旧实现 per_image = clamp(BGM/图数, 2, 8), 30s BGM + 2 图被截成
+    16s 视频、音频丢一半。回归2: 均摊版每图 15s 太长。现实现每图
+    min(5, 30/2)=5s 循环, 总长 30s, 序列 红蓝红蓝... 直到 BGM 结束。
     """
     from PIL import Image
 
@@ -414,16 +415,31 @@ async def test_images_to_slideshow_bgm_not_truncated(tmp_path):
     await exec_ffmpeg_cmd(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=30", str(bgm)])
 
     out = tmp_path / "long.mp4"
-    await images_to_slideshow([img1, img2], bgm, out)
+    await images_to_slideshow([img1, img2], bgm, out, per_image=5.0)
 
     duration = await probe_media_duration(out)
     assert duration is not None
     assert duration > 27, f"30s BGM 不应被截断, 实际总长 {duration}s (旧实现为 16s)"
 
+    # 循环快切: 5s/图, 序列 红蓝红蓝...; 各段中点颜色应交替
+    from PIL import Image
+
+    expect = [(255, 0, 0), (0, 0, 255), (255, 0, 0)]
+    for i, color in enumerate(expect):
+        frame = tmp_path / f"cyc{i}.bmp"
+        await exec_ffmpeg_cmd(
+            ["ffmpeg", "-y", "-v", "error", "-ss", f"{i * 5 + 2.5:.2f}", "-i", str(out), "-frames:v", "1", str(frame)]
+        )
+        r, g, b = Image.open(frame).convert("RGB").getpixel((100, 100))
+        er, eg, eb = color
+        assert abs(r - er) < 60 and abs(g - eg) < 60 and abs(b - eb) < 60, (
+            f"{i * 5 + 2.5}s 应显示 {color}, 实际 ({r}, {g}, {b})"
+        )
+
 
 @pytest.mark.skipif(ffmpeg_missing, reason="本机无 ffmpeg/ffprobe")
 async def test_images_to_slideshow_no_audio(tmp_path):
-    """无 BGM → 无声视频, 每图 default_per_image=3s。"""
+    """无 BGM → 无声视频, 单遍轮播每图 per_image 秒（此处传 3s）。"""
     from PIL import Image
 
     from nonebot_plugin_parser.utils import (
@@ -436,7 +452,7 @@ async def test_images_to_slideshow_no_audio(tmp_path):
     Image.new("RGB", (200, 200), "green").save(img)
 
     out = tmp_path / "silent.mp4"
-    await images_to_slideshow([img], None, out)
+    await images_to_slideshow([img], None, out, per_image=3.0)
 
     duration = await probe_media_duration(out)
     assert duration is not None

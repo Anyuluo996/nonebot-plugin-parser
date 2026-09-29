@@ -720,10 +720,13 @@ class BaseParser:
         # 至此下载段结束, 剩下纯 ffmpeg 转换段: 按契约套 video_send_timeout
         # （与 GIF 转换同待遇; 0/负值不限时）。超时取消会 kill 子进程
         timeout = pconfig.video_send_timeout
+        per_image = pconfig.douyin_slideshow_per_image
         try:
             if timeout > 0:
-                return await asyncio.wait_for(images_to_slideshow(image_paths, audio_path, output), timeout=timeout)
-            return await images_to_slideshow(image_paths, audio_path, output)
+                return await asyncio.wait_for(
+                    images_to_slideshow(image_paths, audio_path, output, per_image=per_image), timeout=timeout
+                )
+            return await images_to_slideshow(image_paths, audio_path, output, per_image=per_image)
         except (RuntimeError, FileNotFoundError, OSError, asyncio.TimeoutError, ValueError) as e:
             logger.error(f"幻灯片视频合成失败: {e!r}")
             raise DownloadException("幻灯片视频合成失败") from e

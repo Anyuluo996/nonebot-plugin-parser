@@ -1,12 +1,13 @@
-"""抖音图文（静态图 + BGM）合成幻灯片视频发送的测试。
+"""抖音图文（静态图/实况照片 + BGM）合成幻灯片视频发送的测试。
 
 覆盖三层：
 
-- parse_slides 决策：有 BGM + 开关开 + ffmpeg 可用 → 合成视频替代逐张发图；
-  开关关 / ffmpeg 缺失 / 无 BGM → 回退逐张发图（旧行为）
-- ``_compose_slideshow`` 降级链：单图失败用剩余图继续、BGM 失败降级无声、
-  全图失败抛 DownloadException
-- ``images_to_slideshow`` 真实 ffmpeg 合成（本机无 ffmpeg 时 skip）
+- parse_slides 决策：有 BGM + 开关开 + ffmpeg 可用 → 全部媒体（含实况照片）
+  合并合成单条视频；开关关 / ffmpeg 缺失 / 无 BGM → 回退逐张发图 + 逐条实况
+  （旧行为）
+- ``_compose_slideshow`` 降级链：单媒体失败用剩余项继续、BGM 失败降级无声、
+  全部媒体失败抛 DownloadException
+- ``media_to_slideshow`` 真实 ffmpeg 合成（本机无 ffmpeg 时 skip）
 """
 
 import json
@@ -70,12 +71,19 @@ def _make_parser(monkeypatch, *, ffmpeg_ok=True, payload=None):
             return _MockResp(raw)
         raise RuntimeError(f"unexpected URL: {url}")
 
-    downloads = {"img": [], "audio": []}
+    downloads = {"img": [], "audio": [], "video": []}
 
     async def _img(url, *args, **kwargs):
         downloads["img"].append(url)
         # 路径由 URL 确定, 断言不依赖任务调度顺序
         return Path(f"/fake/{url.rsplit('/', 1)[-1]}")
+
+    video_counter = {"n": 0}
+
+    async def _vid(url, *args, **kwargs):
+        downloads["video"].append(url)
+        video_counter["n"] += 1
+        return Path(f"/fake/live{video_counter['n']}.mp4")
 
     async def _audio(url, *args, **kwargs):
         downloads["audio"].append(url)
@@ -83,6 +91,7 @@ def _make_parser(monkeypatch, *, ffmpeg_ok=True, payload=None):
 
     monkeypatch.setattr(parser, "request", _fake_request)
     monkeypatch.setattr(parser.downloader, "download_img", lambda url, **kw: asyncio.create_task(_img(url, **kw)))
+    monkeypatch.setattr(parser.downloader, "download_video", lambda url, **kw: asyncio.create_task(_vid(url, **kw)))
     monkeypatch.setattr(parser.downloader, "download_audio", lambda url, **kw: asyncio.create_task(_audio(url, **kw)))
     monkeypatch.setattr(utils_mod, "ffmpeg_available", lambda: ffmpeg_ok)
     return parser, downloads
@@ -97,12 +106,12 @@ async def test_slideshow_replaces_images_when_bgm_present(monkeypatch):
 
     composed = {}
 
-    async def _fake_compose(image_paths, audio_path, output_path, **kwargs):
-        composed["image_paths"] = list(image_paths)
+    async def _fake_compose(segments, audio_path, output_path, **kwargs):
+        composed["segments"] = list(segments)
         composed["audio_path"] = audio_path
         return Path("/fake/slideshow.mp4")
 
-    monkeypatch.setattr(utils_mod, "images_to_slideshow", _fake_compose)
+    monkeypatch.setattr(utils_mod, "media_to_slideshow", _fake_compose)
     monkeypatch.setattr(pconfig, "parser_douyin_note_slideshow", True)
 
     result = await parser.parse_slides(_STATIC_NOTE_VID)
@@ -118,10 +127,87 @@ async def test_slideshow_replaces_images_when_bgm_present(monkeypatch):
     slides_downloads = [u for u in downloads["img"] if "slides" in u]
     assert len(slides_downloads) == 3
     assert await video.get_cover_path() == Path("/fake/slides0.jpg")
-    # 合成拿到全部 3 张图与 BGM
-    assert len(composed["image_paths"]) == 3
+    # 合成拿到全部 3 张图(均为 image 段)与 BGM
+    assert composed["segments"] == [
+        (Path(f"/fake/slides{i}.jpg"), "image") for i in range(3)
+    ]
     assert composed["audio_path"] == Path("/fake/bgm.mp3")
 
+
+async def test_mixed_note_merges_into_single_video(monkeypatch):
+    """静态图 + 实况照片混排 → 合并为单条视频。
+
+    回归: 旧实现幻灯片 + 每条实况各发一条视频 (2026-09-29 线上 4ueJKZQ0tpI
+    实测发了两条); 现实现全部媒体按原帖顺序合入同一条幻灯片。
+    """
+    from nonebot_plugin_parser import utils as utils_mod
+    from nonebot_plugin_parser.config import pconfig
+
+    payload = json.loads(json.dumps(_STATIC_NOTE_PAYLOAD))
+    payload["aweme_detail"]["images"] = [
+        {"url_list": ["https://p3-pc-sign.douyinpic.com/mix0.jpg"]},
+        {
+            "url_list": ["https://p3-pc-sign.douyinpic.com/live_pic.jpg"],
+            "video": {
+                "play_addr": {"url_list": ["https://www.douyin.com/aweme/v1/play/?file_id=live1"]},
+                "cover": {"url_list": ["https://p3-pc-sign.douyinpic.com/live1_cover.jpg"]},
+                "duration": 3000,
+            },
+        },
+    ]
+    parser, downloads = _make_parser(monkeypatch, payload=payload)
+
+    async def _fake_compose(segments, audio_path, output_path, **kwargs):
+        return Path("/fake/slideshow.mp4")
+
+    monkeypatch.setattr(utils_mod, "media_to_slideshow", _fake_compose)
+    monkeypatch.setattr(pconfig, "parser_douyin_note_slideshow", True)
+
+    result = await parser.parse_slides(_STATIC_NOTE_VID)
+
+    assert len(result.video_contents) == 1, "混排应合并为单条视频, 不再幻灯片+实况各一条"
+    assert result.img_contents == []
+    video = result.video_contents[0]
+    assert await video.get_path() == Path("/fake/slideshow.mp4"), "合成任务应正常完成"
+    assert len(downloads["video"]) == 1 and "play" in downloads["video"][0], "实况视频应作为媒体段下载"
+    assert len(downloads["audio"]) == 1, "BGM 只下载一次"
+
+
+async def test_all_live_note_merges_into_single_video(monkeypatch):
+    """纯实况照片帖 → 也合成为单条视频 (旧行为: 每条实况单独发)。"""
+    from nonebot_plugin_parser import utils as utils_mod
+    from nonebot_plugin_parser.config import pconfig
+
+    payload = json.loads(json.dumps(_STATIC_NOTE_PAYLOAD))
+    payload["aweme_detail"]["images"] = [
+        {
+            "url_list": [f"https://p3-pc-sign.douyinpic.com/live_pic{i}.jpg"],
+            "video": {
+                "play_addr": {"url_list": [f"https://www.douyin.com/aweme/v1/play/?file_id=live{i}"]},
+                "cover": {"url_list": [f"https://p3-pc-sign.douyinpic.com/live{i}_cover.jpg"]},
+                "duration": 3000,
+            },
+        }
+        for i in range(2)
+    ]
+    parser, downloads = _make_parser(monkeypatch, payload=payload)
+
+    async def _fake_compose(segments, audio_path, output_path, **kwargs):
+        assert [k for _, k in segments] == ["video", "video"], "纯实况帖应全部为 video 段"
+        return Path("/fake/slideshow.mp4")
+
+    monkeypatch.setattr(utils_mod, "media_to_slideshow", _fake_compose)
+    monkeypatch.setattr(pconfig, "parser_douyin_note_slideshow", True)
+
+    result = await parser.parse_slides(_STATIC_NOTE_VID)
+
+    assert len(result.video_contents) == 1
+    assert result.img_contents == []
+    video = result.video_contents[0]
+    assert await video.get_path() == Path("/fake/slideshow.mp4")
+    assert len(downloads["video"]) == 2
+    # 无静态图项 → 封面走第一条实况封面直链
+    assert await video.get_cover_path() == Path("/fake/live0_cover.jpg")
 
 async def test_slideshow_disabled_falls_back_to_images(monkeypatch):
     """开关关闭 → 回退逐张发图（旧行为）。"""
@@ -166,7 +252,7 @@ async def test_slideshow_no_bgm_falls_back_to_images(monkeypatch):
 
 
 async def test_compose_slideshow_partial_failures(monkeypatch):
-    """降级链: 单图失败用剩余图, BGM 失败降级无声。"""
+    """降级链: 单媒体失败用剩余项继续, BGM 失败降级无声。"""
     from nonebot_plugin_parser import utils as utils_mod
     from nonebot_plugin_parser.parsers import DouyinParser
     from nonebot_plugin_parser.exception import DownloadException
@@ -177,32 +263,33 @@ async def test_compose_slideshow_partial_failures(monkeypatch):
     async def _fail() -> Path:
         raise DownloadException("媒体下载失败")
 
-    image_tasks = [
+    tasks = [
         asyncio.create_task(_ok("a.jpg")),
         asyncio.create_task(_fail()),
-        asyncio.create_task(_ok("b.jpg")),
+        asyncio.create_task(_ok("live1.mp4")),
     ]
+    kinds = ["image", "image", "video"]
     audio_task = asyncio.create_task(_fail())
 
     captured = {}
 
-    async def _fake_compose(image_paths, audio_path, output_path, **kwargs):
-        captured["image_paths"] = list(image_paths)
+    async def _fake_compose(segments, audio_path, output_path, **kwargs):
+        captured["segments"] = list(segments)
         captured["audio_path"] = audio_path
         return Path("/fake/out.mp4")
 
-    monkeypatch.setattr(utils_mod, "images_to_slideshow", _fake_compose)
+    monkeypatch.setattr(utils_mod, "media_to_slideshow", _fake_compose)
 
     parser = DouyinParser()
-    out = await parser._compose_slideshow(image_tasks, audio_task, Path("/fake/out.mp4"))
+    out = await parser._compose_slideshow(tasks, kinds, audio_task, Path("/fake/out.mp4"))
 
     assert out == Path("/fake/out.mp4")
-    assert captured["image_paths"] == [Path("/fake/a.jpg"), Path("/fake/b.jpg")]
+    assert captured["segments"] == [(Path("/fake/a.jpg"), "image"), (Path("/fake/live1.mp4"), "video")]
     assert captured["audio_path"] is None, "BGM 下载失败应降级为 None(无声)"
 
 
 async def test_compose_slideshow_all_images_failed(monkeypatch):
-    """全部图片下载失败 → DownloadException, 渲染层跳过该内容。"""
+    """全部媒体下载失败 → DownloadException, 渲染层跳过该内容。"""
     from nonebot_plugin_parser import utils as utils_mod
     from nonebot_plugin_parser.parsers import DouyinParser
     from nonebot_plugin_parser.exception import DownloadException
@@ -210,17 +297,18 @@ async def test_compose_slideshow_all_images_failed(monkeypatch):
     async def _fail() -> Path:
         raise DownloadException("媒体下载失败")
 
-    image_tasks = [asyncio.create_task(_fail()) for _ in range(3)]
+    tasks = [asyncio.create_task(_fail()) for _ in range(3)]
+    kinds = ["image"] * 3
     audio_task = asyncio.create_task(_fail())
 
     async def _unexpected(*args, **kwargs):
-        raise AssertionError("全图失败不应走到合成")
+        raise AssertionError("全媒体失败不应走到合成")
 
-    monkeypatch.setattr(utils_mod, "images_to_slideshow", _unexpected)
+    monkeypatch.setattr(utils_mod, "media_to_slideshow", _unexpected)
 
     parser = DouyinParser()
     with pytest.raises(DownloadException):
-        await parser._compose_slideshow(image_tasks, audio_task, Path("/fake/out.mp4"))
+        await parser._compose_slideshow(tasks, kinds, audio_task, Path("/fake/out.mp4"))
 
 
 async def test_compose_slideshow_conversion_timeout(monkeypatch):
@@ -232,18 +320,20 @@ async def test_compose_slideshow_conversion_timeout(monkeypatch):
 
     monkeypatch.setattr(pconfig, "parser_video_send_timeout", 1)
 
-    async def _slow(image_paths, audio_path, output_path, **kwargs):
+    async def _slow(segments, audio_path, output_path, **kwargs):
         await asyncio.sleep(5)
         raise AssertionError("应被 wait_for 超时打断")
 
-    monkeypatch.setattr(utils_mod, "images_to_slideshow", _slow)
+    monkeypatch.setattr(utils_mod, "media_to_slideshow", _slow)
 
     async def _ok() -> Path:
         return Path("/fake/a.jpg")
 
     parser = DouyinParser()
     with pytest.raises(DownloadException):
-        await parser._compose_slideshow([asyncio.create_task(_ok())], asyncio.create_task(_ok()), Path("/fake/out.mp4"))
+        await parser._compose_slideshow(
+            [asyncio.create_task(_ok())], ["image"], asyncio.create_task(_ok()), Path("/fake/out.mp4")
+        )
 
 
 async def test_compose_slideshow_wraps_oserror(monkeypatch):
@@ -252,23 +342,25 @@ async def test_compose_slideshow_wraps_oserror(monkeypatch):
     from nonebot_plugin_parser.parsers import DouyinParser
     from nonebot_plugin_parser.exception import DownloadException
 
-    async def _boom(image_paths, audio_path, output_path, **kwargs):
+    async def _boom(segments, audio_path, output_path, **kwargs):
         raise PermissionError("file in use")
 
-    monkeypatch.setattr(utils_mod, "images_to_slideshow", _boom)
+    monkeypatch.setattr(utils_mod, "media_to_slideshow", _boom)
 
     async def _ok() -> Path:
         return Path("/fake/a.jpg")
 
     parser = DouyinParser()
     with pytest.raises(DownloadException):
-        await parser._compose_slideshow([asyncio.create_task(_ok())], asyncio.create_task(_ok()), Path("/fake/out.mp4"))
+        await parser._compose_slideshow(
+            [asyncio.create_task(_ok())], ["image"], asyncio.create_task(_ok()), Path("/fake/out.mp4")
+        )
 
 
 async def test_slideshow_validates_output_duration(monkeypatch, tmp_path):
     """ffmpeg rc=0 但产物探不出时长(如输入静默失败) → RuntimeError, 半截文件不进缓存。"""
     from nonebot_plugin_parser.utils import media as media_mod
-    from nonebot_plugin_parser.utils import images_to_slideshow
+    from nonebot_plugin_parser.utils import media_to_slideshow
 
     async def _fake_exec(cmd):
         # 模拟 rc=0 且写出了残缺产物
@@ -288,7 +380,7 @@ async def test_slideshow_validates_output_duration(monkeypatch, tmp_path):
     img.write_bytes(b"x")
     out = tmp_path / "out.mp4"
     with pytest.raises(RuntimeError, match="时长异常"):
-        await images_to_slideshow([img], None, out)
+        await media_to_slideshow([(img, "image")], None, out)
     assert not out.exists(), "半截产物不得 replace 进缓存"
     assert not list(tmp_path.glob("*_tmp.mp4")), "临时产物应被清理"
 
@@ -304,12 +396,12 @@ _REAL_BGM = Path(__file__).parent.parent.parent / "audio_sources" / "music_playu
 
 
 @pytest.mark.skipif(ffmpeg_missing, reason="本机无 ffmpeg/ffprobe")
-async def test_images_to_slideshow_real_ffmpeg(tmp_path):
+async def test_media_to_slideshow_real_ffmpeg(tmp_path):
     from PIL import Image
 
     from nonebot_plugin_parser.utils import (
         has_audio_stream,
-        images_to_slideshow,
+        media_to_slideshow,
         probe_media_duration,
     )
     from nonebot_plugin_parser.utils.media import _probe_image_size
@@ -321,7 +413,7 @@ async def test_images_to_slideshow_real_ffmpeg(tmp_path):
     Image.new("RGB", (300, 400), "blue").save(img2)
 
     out = tmp_path / "slideshow.mp4"
-    result = await images_to_slideshow([img1, img2], _REAL_BGM, out)
+    result = await media_to_slideshow([(img1, "image"), (img2, "image")], _REAL_BGM, out)
 
     assert result == out
     assert out.exists()
@@ -339,16 +431,60 @@ async def test_images_to_slideshow_real_ffmpeg(tmp_path):
 
 
 @pytest.mark.skipif(ffmpeg_missing, reason="本机无 ffmpeg/ffprobe")
-async def test_images_to_slideshow_mixed_formats_all_present(tmp_path):
+async def test_media_to_slideshow_image_plus_live_video(tmp_path):
+    """混排回归: 静态图快切 + 实况视频原速播入同一条视频, 总长=BGM。
+
+    旧行为幻灯片 + 实况各发一条视频 (2026-09-29 线上 4ueJKZQ0tpI)。
+    序列: 红图 5s + 绿色视频 3s = 8s 单遍; BGM 14s → 2 遍, 总长 14s。
+    """
+    from PIL import Image
+
+    from nonebot_plugin_parser.utils import media_to_slideshow, probe_media_duration
+    from nonebot_plugin_parser.utils.media import exec_ffmpeg_cmd
+
+    img = tmp_path / "img.jpg"
+    Image.new("RGB", (320, 240), "red").save(img)
+    vid = tmp_path / "live.mp4"
+    await exec_ffmpeg_cmd(
+        [
+            "ffmpeg", "-y", "-v", "error",
+            "-f", "lavfi", "-i", "color=c=green:size=320x240:rate=30",
+            "-t", "3", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(vid),
+        ]
+    )
+    bgm = tmp_path / "bgm.wav"
+    await exec_ffmpeg_cmd(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=14", str(bgm)])
+
+    out = tmp_path / "mixedav.mp4"
+    await media_to_slideshow([(img, "image"), (vid, "video")], bgm, out, per_image=5.0)
+
+    duration = await probe_media_duration(out)
+    assert duration is not None and abs(duration - 14) < 1.0, f"总长应=BGM 14s, 实际 {duration}"
+
+    # 各段中点抽帧: 2.5s 红图 | 6.5s 绿色视频段 | 10.5s 第二遍红图
+    from PIL import Image
+
+    for t, color in ((2.5, (255, 0, 0)), (6.5, (0, 128, 0)), (10.5, (255, 0, 0))):
+        frame = tmp_path / f"mv_{t}.bmp"
+        await exec_ffmpeg_cmd(
+            ["ffmpeg", "-y", "-v", "error", "-ss", f"{t}", "-i", str(out), "-frames:v", "1", str(frame)]
+        )
+        r, g, b = Image.open(frame).convert("RGB").getpixel((160, 120))
+        er, eg, eb = color
+        assert abs(r - er) < 60 and abs(g - eg) < 60 and abs(b - eb) < 60, f"{t}s 应显示 {color}, 实际 ({r}, {g}, {b})"
+
+
+@pytest.mark.skipif(ffmpeg_missing, reason="本机无 ffmpeg/ffprobe")
+async def test_media_to_slideshow_mixed_formats_all_present(tmp_path):
     """混编格式(jpeg+webp)轮播: 每张图都必须出现。
 
     回归 2026-09-29 线上事故: 旧实现用 concat demuxer, 它按首个文件选解码器,
     ffmpeg<6 上 webp 段被当 mjpeg 解码静默丢帧 → 3 图只出 2 图且首图被拉长。
-    现实现每图独立输入各自解码, 任何版本 ffmpeg 都不会混。
+    现实现每段独立输入各自解码, 任何版本 ffmpeg 都不会混。
     """
     from PIL import Image
 
-    from nonebot_plugin_parser.utils import images_to_slideshow
+    from nonebot_plugin_parser.utils import media_to_slideshow
     from nonebot_plugin_parser.utils.media import exec_ffmpeg_cmd, probe_media_duration
 
     per = 2.0
@@ -360,7 +496,7 @@ async def test_images_to_slideshow_mixed_formats_all_present(tmp_path):
         imgs.append(p)
 
     out = tmp_path / "mixed.mp4"
-    await images_to_slideshow(imgs, None, out, per_image=per)
+    await media_to_slideshow([(p, "image") for p in imgs], None, out, per_image=per)
     duration = await probe_media_duration(out)
     assert duration is not None
     assert abs(duration - 3 * per) < 0.5, f"时长应 ≈6s, 实际 {duration}"
@@ -392,7 +528,7 @@ async def test_images_to_slideshow_mixed_formats_all_present(tmp_path):
 
 
 @pytest.mark.skipif(ffmpeg_missing, reason="本机无 ffmpeg/ffprobe")
-async def test_images_to_slideshow_bgm_not_truncated(tmp_path):
+async def test_media_to_slideshow_bgm_not_truncated(tmp_path):
     """长 BGM 不被截断: 幻灯片总长恒等于 BGM, 图片循环快切。
 
     回归1: 旧实现 per_image = clamp(BGM/图数, 2, 8), 30s BGM + 2 图被截成
@@ -402,7 +538,7 @@ async def test_images_to_slideshow_bgm_not_truncated(tmp_path):
     from PIL import Image
 
     from nonebot_plugin_parser.utils import (
-        images_to_slideshow,
+        media_to_slideshow,
         probe_media_duration,
     )
     from nonebot_plugin_parser.utils.media import exec_ffmpeg_cmd
@@ -415,7 +551,7 @@ async def test_images_to_slideshow_bgm_not_truncated(tmp_path):
     await exec_ffmpeg_cmd(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=30", str(bgm)])
 
     out = tmp_path / "long.mp4"
-    await images_to_slideshow([img1, img2], bgm, out, per_image=5.0)
+    await media_to_slideshow([(img1, "image"), (img2, "image")], bgm, out, per_image=5.0)
 
     duration = await probe_media_duration(out)
     assert duration is not None
@@ -438,13 +574,34 @@ async def test_images_to_slideshow_bgm_not_truncated(tmp_path):
 
 
 @pytest.mark.skipif(ffmpeg_missing, reason="本机无 ffmpeg/ffprobe")
-async def test_images_to_slideshow_no_audio(tmp_path):
+async def test_media_to_slideshow_duration_capped(tmp_path):
+    """超长 BGM 只取开头 max_duration 秒 (默认 60s), 控制体积与合成耗时。"""
+    from PIL import Image
+
+    from nonebot_plugin_parser.utils import media_to_slideshow, probe_media_duration
+    from nonebot_plugin_parser.utils.media import exec_ffmpeg_cmd
+
+    img = tmp_path / "img.jpg"
+    Image.new("RGB", (200, 200), "red").save(img)
+    bgm = tmp_path / "bgm.wav"
+    await exec_ffmpeg_cmd(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=180", str(bgm)])
+
+    out = tmp_path / "capped.mp4"
+    await media_to_slideshow([(img, "image")], bgm, out, per_image=5.0, max_duration=60.0)
+
+    duration = await probe_media_duration(out)
+    assert duration is not None
+    assert abs(duration - 60) < 1.0, f"180s BGM 应截到 60s, 实际 {duration}s"
+
+
+@pytest.mark.skipif(ffmpeg_missing, reason="本机无 ffmpeg/ffprobe")
+async def test_media_to_slideshow_no_audio(tmp_path):
     """无 BGM → 无声视频, 单遍轮播每图 per_image 秒（此处传 3s）。"""
     from PIL import Image
 
     from nonebot_plugin_parser.utils import (
         has_audio_stream,
-        images_to_slideshow,
+        media_to_slideshow,
         probe_media_duration,
     )
 
@@ -452,7 +609,7 @@ async def test_images_to_slideshow_no_audio(tmp_path):
     Image.new("RGB", (200, 200), "green").save(img)
 
     out = tmp_path / "silent.mp4"
-    await images_to_slideshow([img], None, out, per_image=3.0)
+    await media_to_slideshow([(img, "image")], None, out, per_image=3.0)
 
     duration = await probe_media_duration(out)
     assert duration is not None

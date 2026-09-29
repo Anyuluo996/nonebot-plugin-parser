@@ -35,7 +35,7 @@ from .media import (
     has_audio_stream as has_audio_stream,
 )
 from .media import (
-    images_to_slideshow as images_to_slideshow,
+    media_to_slideshow as media_to_slideshow,
 )
 from .media import (
     convert_video_to_gif as convert_video_to_gif,

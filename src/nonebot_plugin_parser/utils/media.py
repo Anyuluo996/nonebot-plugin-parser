@@ -168,45 +168,58 @@ async def _probe_image_size(path: Path) -> tuple[int, int] | None:
         return None
 
 
-async def images_to_slideshow(
-    image_paths: list[Path],
+async def media_to_slideshow(
+    segments: list[tuple[Path, str]],
     audio_path: Path | None = None,
     output_path: Path | None = None,
     *,
     per_image: float = 5.0,
+    max_duration: float = 60.0,
     fps: int = 5,
 ) -> Path:
-    """静态图序列 + 可选 BGM 合成轮播幻灯片视频（抖音图文用）。
+    """静态图 + 实况视频混排序列 + 可选 BGM 合成单条轮播幻灯片视频（抖音图文用）。
 
-    有 BGM 时幻灯片**总长恒等于 BGM 时长**（音乐不截断），每张图展示
-    ``min(per_image, BGM时长/图片数)`` 秒：图多 BGM 短时均摊（每图
-    BGM/图数 秒恰好轮播一遍，保证每张图都出现）；图少 BGM 长时按
-    per_image 秒循环快切直到 BGM 结束。BGM 缺失/探测失败降级无声，
-    单遍轮播、每图 per_image 秒（探不出时长视为损坏）。
-    画布取所有图中最大宽/高（上限 1920、对齐偶数），小图黑边居中。
+    Args:
+        segments: ``(路径, 类型)`` 列表, 类型 ``"image"`` 或 ``"video"``,
+            按原帖顺序排列。图片按目标时长展示, 视频按自身时长原速播放
+            (探不出时长的视频段丢弃降级)。
+        audio_path: BGM; None 或探不出时长时降级无声。
+        output_path: 产物路径; None 时取首段同目录 ``<stem>_slideshow.mp4``。
+        per_image: 每张图目标展示秒数; 有 BGM 时实际取
+            ``min(per_image, 总长/图片数)``。
+        max_duration: 总时长上限（秒）; BGM 超长只取开头一段控制体积与合成
+            耗时, <=0 视为不设上限（跟随完整 BGM）。
+        fps: 输出帧率, 静态画面 5 足够。
 
-    每张图作为**独立输入**（-loop 1）由 ffmpeg 按真实格式各自解码，concat 滤镜
-    拼接后统一 scale/pad。不用 concat demuxer：它按**首个文件**选解码器，混编
-    格式（jpeg+webp）时后续段被喂错解码器，老 ffmpeg 上静默丢帧（fps 滤镜拿上
-    一帧补空 → 前一张图被拉长、后图消失）或解码错误率超限整体失败，且 rc 可为
-    0（2026-09-29 线上: 3 图只出 2 图，yun/wo4 均为 ffmpeg 4.3）。
+    有 BGM 时幻灯片**总长 = min(BGM 时长, max_duration)**：BGM 短于上限时
+    完整保留（音乐不截断），超长只取开头一段。图片展示
+    ``min(per_image, 总长/图片数)`` 秒（图多时均摊保证每张图出现），视频按
+    自身时长播放；整段序列循环快切直到幻灯片结束（对齐抖音 App 行为）。
+    BGM 缺失/探测失败降级无声, 单遍播完。视频段自身音轨不保留, 全程配 BGM。
+    画布取所有媒体最大宽/高（上限 1920、对齐偶数），小图黑边居中。
 
-    输出 h264(+aac) mp4（输出 fps 默认 5，静态画面足够），先写随机后缀临时
-    文件、编码成功且时长校验通过后原子替换，避免中断残留半截文件被下次的
-    exists() 快速路径误判为可用。
+    每个文件作为**独立输入**由 ffmpeg 按真实格式各自解码, concat 滤镜拼接,
+    每条支路统一 scale/pad/setsar/format/fps 保证 concat 输入参数一致。
+    不用 concat demuxer：它按**首个文件**选解码器, 混编格式（jpeg+webp）时
+    后续段被喂错解码器, 老 ffmpeg 上静默丢帧或整体失败且 rc 可为 0
+    （2026-09-29 线上: 3 图只出 2 图, yun/wo4 均为 ffmpeg 4.3）。
+
+    输出 h264(+aac) mp4，先写随机后缀临时文件、编码成功且时长校验通过后
+    原子替换，避免中断残留半截文件被下次的 exists() 快速路径误判为可用。
 
     Raises:
-        RuntimeError: ffmpeg 不可用/合成失败/产物时长异常/无法探测任何图片尺寸。
-        ValueError: image_paths 为空。
+        RuntimeError: ffmpeg 不可用/合成失败/产物时长异常/无法探测任何媒体
+            尺寸/全部媒体段不可用。
+        ValueError: segments 为空。
     """
-    if not image_paths:
-        raise ValueError("image_paths 为空")
+    if not segments:
+        raise ValueError("segments 为空")
     if output_path is None:
-        output_path = image_paths[0].with_name(f"{image_paths[0].stem}_slideshow.mp4")
+        output_path = segments[0][0].with_name(f"{segments[0][0].stem}_slideshow.mp4")
     if output_path.exists():
         return output_path
 
-    n = len(image_paths)
+    n_img = sum(1 for _, kind in segments if kind == "image")
     audio_duration = None
     if audio_path:
         audio_duration = await probe_media_duration(audio_path)
@@ -215,51 +228,73 @@ async def images_to_slideshow(
             # 大概率解码失败丢掉整个图文，降级为无声更符合「BGM 拿不到只损失氛围」
             logger.warning(f"BGM 无法探测时长, 疑似损坏, 降级为无声视频: {audio_path.name}")
             audio_path = None
-    if audio_duration and audio_duration > 0.1:
-        per_image = min(per_image, audio_duration / n)
-        total = audio_duration
-        # 序列循环遍数: ceil(BGM / 单遍时长), 输出 -t total 戒掉末遍超出部分
-        passes = max(1, ceil(total / (n * per_image)))
+    if not max_duration or max_duration <= 0:
+        max_duration = float("inf")
+    total = min(audio_duration, max_duration) if audio_duration and audio_duration > 0.1 else None
+    img_per = min(per_image, total / n_img) if total and n_img else per_image
+
+    # 探测视频段自身时长, 坏段丢弃降级 (与图片下载失败的降级同待遇)
+    vid_paths = [p for p, kind in segments if kind == "video"]
+    vid_durs = await asyncio.gather(*(probe_media_duration(p) for p in vid_paths))
+    units: list[tuple[Path, str, float]] = []
+    for p, kind in segments:
+        if kind == "image":
+            units.append((p, kind, img_per))
+    for p, d in zip(vid_paths, vid_durs):
+        if d and d > 0.1:
+            units.append((p, "video", d))
+        else:
+            logger.warning(f"幻灯片视频段无法探测时长, 跳过: {p.name}")
+    if not units:
+        raise RuntimeError("幻灯片无可用媒体段")
+    seq_total = sum(d for _, _, d in units)
+
+    if total is not None:
+        # 序列循环遍数: ceil(总长 / 单遍时长), 输出 -t total 戒掉末遍超出部分
+        passes = max(1, ceil(total / seq_total))
     else:
-        total = per_image * n
+        total = seq_total
         passes = 1
 
     canvas_w = canvas_h = 0
-    for size in await asyncio.gather(*(_probe_image_size(p) for p in image_paths)):
+    for size in await asyncio.gather(*(_probe_image_size(p) for p, _, _ in units)):
         if size:
             canvas_w = max(canvas_w, size[0])
             canvas_h = max(canvas_h, size[1])
     if canvas_w <= 0 or canvas_h <= 0:
-        raise RuntimeError("无法探测任何图片尺寸")
+        raise RuntimeError("无法探测任何媒体尺寸")
     canvas_w = max(2, min(canvas_w, 1920)) // 2 * 2
     canvas_h = max(2, min(canvas_h, 1920)) // 2 * 2
 
-    # 每图独立输入 -loop 1 -t per_image; concat 滤镜要求各段分辨率/帧率/
-    # 像素格式一致, 故每条支路统一 scale+pad(画布)+setsar+format。
+    # 每段独立输入; concat 滤镜要求各段分辨率/帧率/像素格式一致, 故每条支路
+    # 统一 scale+pad(画布)+setsar+format, 且 fps 归一在 concat **之前**
+    # (图片支路 1fps、视频支路原生 fps, 不归一直接 concat 会参数失配)。
     # 临时文件名带随机后缀：同一 note 并发合成时固定名会互相踩踏/被另一方
-    # 的 finally 删掉正被读的输入。
+    # 删掉正被读的输入。
     tag = uuid4().hex[:8]
     tmp_path = output_path.with_name(f"{output_path.stem}_{tag}_tmp.mp4")
     cmd: list[str] = ["ffmpeg", "-y"]
     chains: list[str] = []
-    sequence = image_paths * passes
-    for i, p in enumerate(sequence):
-        # -framerate 1 必须带: image2 的 -loop 1 默认按 25fps 把每张图**重复
-        # 解码** per×25 次, yun 实测 39 输入 × 5s 达 ~50s 直接撞穿 30s 的
-        # video_send_timeout; 降到 1fps 后每图只解 ceil(per) 次, 全程 ~12s。
-        # 画面为静态图, 解码帧经 concat 后的 fps 滤镜复制即可。
-        cmd += ["-framerate", "1", "-loop", "1", "-t", f"{per_image:.3f}", "-i", str(p)]
+    sequence: list[tuple[Path, str, float]] = units * passes
+    for i, (p, kind, d) in enumerate(sequence):
+        if kind == "image":
+            # -framerate 1 必须带: image2 的 -loop 1 默认按 25fps 把每张图
+            # **重复解码** per×25 次, yun 实测 39 输入 × 5s 达 ~50s 直接撞穿
+            # 30s 的 video_send_timeout; 降到 1fps 后每图只解 ceil(per) 次。
+            cmd += ["-framerate", "1", "-loop", "1", "-t", f"{d:.3f}", "-i", str(p)]
+        else:
+            cmd += ["-i", str(p)]
         chains.append(
             f"[{i}:v]scale={canvas_w}:{canvas_h}:force_original_aspect_ratio=decrease,"
             f"pad={canvas_w}:{canvas_h}:(ow-iw)/2:(oh-ih)/2:color=black,"
-            f"setsar=1,format=yuv420p[s{i}]"
+            f"setsar=1,format=yuv420p,fps={fps}[s{i}]"
         )
     m = len(sequence)
     if audio_path:
         # BGM 短于视频时无限循环，靠输出 -t 在视频末端精确截断
         cmd += ["-stream_loop", "-1", "-i", str(audio_path)]
     filter_complex = ";".join(chains) + (
-        f";{''.join(f'[s{i}]' for i in range(m))}concat=n={m}:v=1:a=0,fps={fps},format=yuv420p[v]"
+        f";{''.join(f'[s{i}]' for i in range(m))}concat=n={m}:v=1:a=0,format=yuv420p[v]"
     )
     cmd += ["-filter_complex", filter_complex, "-map", "[v]"]
     if audio_path:
@@ -294,7 +329,12 @@ async def images_to_slideshow(
         await safe_unlink(tmp_path)
         raise
 
-    logger.success(f"幻灯片视频合成成功: {output_path.name}, {n} 图 × {per_image:.1f}s, {fmt_size(output_path)}")
+    n_vid = len(units) - n_img
+    parts = [f"{n_img} 图 × {img_per:.1f}s" if n_img else "", f"{n_vid} 视频" if n_vid else ""]
+    logger.success(
+        f"幻灯片视频合成成功: {output_path.name}, {' + '.join(x for x in parts if x)}, "
+        f"单遍 {seq_total:.1f}s × {passes} 遍, {fmt_size(output_path)}"
+    )
     return output_path
 
 
@@ -560,7 +600,7 @@ async def merge_av(
     if shortest:
         cmd.append("-shortest")
     # 固定输出名并发合并同一目标会互相写坏产物, 写随机后缀临时文件、
-    # 成功后原子替换 (与 images_to_slideshow 同套路)
+    # 成功后原子替换 (与 media_to_slideshow 同套路)
     tag = uuid4().hex[:8]
     tmp_path = output_path.with_name(f"{output_path.stem}_{tag}_tmp.mp4")
     cmd.append(str(tmp_path))

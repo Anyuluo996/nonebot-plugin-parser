@@ -98,6 +98,21 @@ class SlidesData(Struct):
         return [choice(img.url_list) for img in (self.images or []) if not img.video]
 
     @property
+    def media_items(self) -> list[tuple[str, str]]:
+        """按原帖顺序返回全部媒体项 ("image"|"video", 直链)。
+
+        实况照片(images[].video 非空)计为 video 项, 静态图为 image 项;
+        顺序与作者发布顺序一致, 供幻灯片合成按原序混排。
+        """
+        items: list[tuple[str, str]] = []
+        for img in self.images or []:
+            if img.video:
+                items.append(("video", self._prefer_play_api(img.video.play_addr.url_list)))
+            else:
+                items.append(("image", choice(img.url_list)))
+        return items
+
+    @property
     def dynamic_urls(self) -> list[str]:
         """实况照片(live photo)对应的视频 URL
 
@@ -250,6 +265,20 @@ class PictureSlidesData(Struct):
     def image_urls(self) -> list[str]:
         # 跳过带 video 的图片(实况照片), 它们由 dynamic_urls 作为视频单独输出
         return [p.url for p in self.picture_list if not p.video_bit_rate_list]
+
+    @property
+    def media_items(self) -> list[tuple[str, str]]:
+        """按原帖顺序返回全部媒体项 ("image"|"video", 直链)。
+
+        实况照片(videoBitRateList 非空)计为 video 项, 静态图为 image 项。
+        """
+        items: list[tuple[str, str]] = []
+        for p in self.picture_list:
+            if p.video_bit_rate_list:
+                items.append(("video", p.video_bit_rate_list[0].url))
+            else:
+                items.append(("image", p.url))
+        return items
 
     @property
     def dynamic_urls(self) -> list[str]:

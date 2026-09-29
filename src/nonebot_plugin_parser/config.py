@@ -80,23 +80,30 @@ class Config(BaseModel):
     设为 True 让这些域名改走 ``parser_proxy`` 代理。
     """
     parser_douyin_note_slideshow: bool = True
-    """抖音纯图文（静态图 + BGM）是否合成幻灯片视频发送。
+    """抖音图文（静态图/实况照片 + BGM）是否合成幻灯片视频发送。
 
-    抖音图文在 App 内以随 BGM 轮播的幻灯片视频形式播放，逐张发静态图会丢掉
-    音乐氛围。开启后，解析到图文带 ``music.play_url`` 时，下载图片与 BGM 并用
-    ffmpeg 合成轮播视频，作为单条视频消息发送；幻灯片总长跟随 BGM（音乐不
-    截断），每张图展示 ``parser_douyin_slideshow_per_image`` 秒，图少时循环
-    快切、图多时均摊（BGM 缺失时降级无声、每图 3 秒）。
-    关闭本开关、无 BGM 或 ffmpeg 不可用时，回退为逐张发图（旧行为）。
-    实况照片（live photo）不受影响：仍按原逻辑逐条发视频并合并 BGM。
+    抖音图文在 App 内以随 BGM 轮播的幻灯片视频形式播放。开启后，解析到图文带
+    ``music.play_url`` 时，下载媒体与 BGM 合成**单条**轮播视频发送：静态图展示
+    ``parser_douyin_slideshow_per_image`` 秒（图少循环快切、图多均摊），实况
+    照片按自身时长原速播入同一条视频，循环到幻灯片结束；总长 =
+    min(BGM 时长, ``parser_douyin_slideshow_max_duration``)。不再幻灯片 +
+    实况各发一条。BGM 缺失时降级无声。关闭本开关或 ffmpeg 不可用时，回退为
+    逐张发图 + 逐条实况视频（旧行为）。普通视频帖不受影响。
     """
     parser_douyin_slideshow_per_image: float = 5.0
     """图文幻灯片每张图的目标展示时长（秒）。
 
     仅在 ``parser_douyin_note_slideshow`` 开启时生效。图少 BGM 长时按该时长
-    循环播放直到 BGM 结束；图多 BGM 短时自动均摊为 BGM/图数（保证每张图
-    都出现，且总长仍等于 BGM）。设得越大视频越接近 App 原生效果（每图停留
-    久），越小切换越快。<=0 视为 0.1 秒下限兜底。
+    循环播放直到幻灯片结束；图多 BGM 短时自动均摊为总长/图数（保证每张图
+    都出现）。设得越大视频越接近 App 原生效果（每图停留久），越小切换越快。
+    <=0 视为 0.1 秒下限兜底。
+    """
+    parser_douyin_slideshow_max_duration: float = 60.0
+    """图文幻灯片视频的总时长上限（秒）。
+
+    幻灯片总长 = min(BGM 时长, 本上限)：BGM 短于上限时完整保留（音乐不截断），
+    超长 BGM 只取开头一段（默认 60 秒），控制发送体积与合成耗时。
+    <=0 视为不设上限（跟随完整 BGM）。
     """
     parser_douyin_story_service: str | None = None
     """抖音「故事」采集服务地址（MuMu 模拟器 + frida 常驻管线）。
@@ -374,6 +381,12 @@ class Config(BaseModel):
     def douyin_slideshow_per_image(self) -> float:
         """图文幻灯片每张图目标展示时长（秒），兜底 >= 0.1"""
         return max(self.parser_douyin_slideshow_per_image, 0.1)
+
+    @property
+    def douyin_slideshow_max_duration(self) -> float:
+        """图文幻灯片视频总时长上限（秒）；<=0 视为不设上限"""
+        value = self.parser_douyin_slideshow_max_duration
+        return value if value > 0 else float("inf")
 
     @property
     def douyin_story_service(self) -> str | None:

@@ -279,28 +279,41 @@ class DouyinParser(BaseParser):
         # 同一 BGM 走同一缓存文件, 不重复下载
         bgm_url = aweme_detail.bgm_url
 
-        # 添加图片内容 (纯静态图, 实况照片由 dynamic_urls 单独处理)
-        if image_urls := aweme_detail.image_urls:
-            if bgm_url and pconfig.douyin_note_slideshow and ffmpeg_available():
-                # 图文在 App 内是随 BGM 轮播的幻灯片视频: 有 BGM 时合成单条视频
-                # 发送; 开关关闭或 ffmpeg 不可用时回退逐张发图 (旧行为)。
-                # cache_key 带 v3: 合成参数变化(每图独立解码 v2 → 5s 循环快切 v3)
-                # 后换 key, 让已缓存旧产物自然过期重新合成
-                contents.append(
-                    self.create_slideshow_content(image_urls, bgm_url, cache_key=f"douyin-slideshow-v3-{video_id}")
-                )
-            else:
-                contents.extend(self.create_image_contents(image_urls))
-
-        # 添加动态内容 (实况照片对应的 mp4 视频)
-        if dynamic_urls := aweme_detail.dynamic_urls:
-            contents.extend(
-                self.create_dynamic_contents(
-                    dynamic_urls,
-                    cover_urls=aweme_detail.dynamic_cover_urls,
-                    bgm_url=bgm_url,
+        if (
+            (media_items := aweme_detail.media_items)
+            and bgm_url
+            and pconfig.douyin_note_slideshow
+            and ffmpeg_available()
+        ):
+            # 图文(含实况照片混排)在 App 内是随 BGM 轮播的**单条**视频: 静态图
+            # 按目标时长快切、实况照片按自身时长原速播放, 循环到 BGM 结束, 统一
+            # 合成一条发送; 否则幻灯片 + 每条实况各发一视频 (线上 4ueJKZQ0tpI
+            # 实测发了两条)。纯实况帖同样合成为一条。cache_key 带 v4: 合并语义
+            # 变化后换 key, 已缓存旧产物自然过期。开关关闭或 ffmpeg 不可用时
+            # 回退逐项发送(旧行为)。纯视频帖 media_items 为空, 不进此分支。
+            cover_url = None
+            if not any(kind == "image" for kind, _ in media_items):
+                covers = aweme_detail.dynamic_cover_urls
+                cover_url = covers[0] if covers else None
+            contents.append(
+                self.create_slideshow_content(
+                    media_items, bgm_url, cache_key=f"douyin-slideshow-v4-{video_id}", cover_url=cover_url
                 )
             )
+        else:
+            # 添加图片内容 (纯静态图)
+            if image_urls := aweme_detail.image_urls:
+                contents.extend(self.create_image_contents(image_urls))
+
+            # 添加动态内容 (实况照片对应的 mp4 视频)
+            if dynamic_urls := aweme_detail.dynamic_urls:
+                contents.extend(
+                    self.create_dynamic_contents(
+                        dynamic_urls,
+                        cover_urls=aweme_detail.dynamic_cover_urls,
+                        bgm_url=bgm_url,
+                    )
+                )
 
         # 普通视频 (images/dynamic 均空, 顶层 video 含 play_addr)
         # 自抖音 2026-08 改版, 普通视频改由 detail API 提供直链。

@@ -640,75 +640,100 @@ class BaseParser:
 
     def create_slideshow_content(
         self,
-        image_urls: list[str],
+        media_items: list[tuple[str, str]],
         bgm_url: str,
         *,
         cache_key: str | None = None,
+        cover_url: str | None = None,
     ):
-        """把静态图列表 + BGM 合成为轮播视频内容（抖音图文）。
+        """把媒体项列表（静态图 + 实况视频混排）+ BGM 合成为单条轮播视频（抖音图文）。
 
         抖音图文在 App 内是随 BGM 轮播的幻灯片视频，逐张发静态图会丢掉音乐
-        氛围，故有 BGM 时改为合成单条视频发送（与逐张发图互斥，由调用方决策）。
-        图片/BGM 下载与 ffmpeg 合成打包成一个 Task[Path]，对渲染层就是普通
-        VideoContent；合成失败抛 DownloadException，该内容跳过（与视频下载
-        失败同待遇）。封面复用首图下载任务，但套 shield 隔离：渲染层取封面
-        的 30s 超时只 cancel 包装层，不波及合成链正在 await 的底层下载。
+        氛围，实况照片也一并合入同一条视频按原速播放（否则幻灯片+实况要发
+        两条视频）。图片/BGM/视频下载与 ffmpeg 合成打包成一个 Task[Path]，
+        对渲染层就是普通 VideoContent；合成失败抛 DownloadException，该内容
+        跳过（与视频下载失败同待遇）。
+
+        Args:
+            media_items: ("image"|"video", 直链) 列表, 按原帖顺序。
+            bgm_url: 背景音乐直链。
+            cache_key: 产物缓存键; None 时按全部直链派生。
+            cover_url: 无静态图项时的封面直链 (纯实况帖用实况封面)。
         """
         import asyncio
         from hashlib import md5
 
         from .data import VideoContent
 
-        if not image_urls:
-            raise ValueError("image_urls 为空")
+        if not media_items:
+            raise ValueError("media_items 为空")
 
-        image_tasks = self._download_img_tasks(image_urls)
+        from ..download import _DOWNLOAD_SEM
+
+        async def _download(kind: str, url: str) -> Path:
+            # 与逐张发图共用下载并发闸; download_* 带 @auto_task, await 其
+            # 返回的 Task 即最终文件
+            async with _DOWNLOAD_SEM:
+                if kind == "video":
+                    return await DOWNLOADER.download_video(url, ext_headers=self.headers)
+                return await DOWNLOADER.download_img(url, ext_headers=self.headers)
+
+        tasks = [asyncio.create_task(_download(kind, url)) for kind, url in media_items]
         audio_task = DOWNLOADER.download_audio(bgm_url, ext_headers=self.headers)
 
         if cache_key is None:
-            cache_key = "slideshow:" + "|".join(image_urls)
+            cache_key = "slideshow:" + "|".join(url for _, url in media_items)
         # 不用 generate_file_name: 它按 URL path 取后缀, cache_key 里拼进的
-        # 图片 URL 会让产物得到 .jpg 之类错误后缀（ffmpeg 按后缀选 muxer）
+        # 媒体 URL 会让产物得到 .jpg 之类错误后缀（ffmpeg 按后缀选 muxer）
         output = pconfig.cache_dir / f"{md5(cache_key.encode()).hexdigest()[:16]}.mp4"
 
-        compose_task = asyncio.create_task(self._compose_slideshow(image_tasks, audio_task, output))
+        kinds = [k for k, _ in media_items]
+        compose_task = asyncio.create_task(self._compose_slideshow(tasks, kinds, audio_task, output))
 
         # shield 返回 Future, 再包一层协程保持 Task 类型(data.is_pending_path_task
         # 按 Task 判定): 渲染层对封面 wait_for 超时只取消包装层, 首图下载照常
         # 供 compose 使用, 不静默丢掉幻灯片第一张
-        async def _shielded_cover() -> Path:
-            return await asyncio.shield(image_tasks[0])
+        first_img_task = next((t for (kind, _), t in zip(media_items, tasks) if kind == "image"), None)
 
-        cover_task = asyncio.create_task(_shielded_cover())
+        async def _shielded_cover() -> Path:
+            if first_img_task is not None:
+                return await asyncio.shield(first_img_task)
+            # create_task 仅在 first_img_task / cover_url 必有其一时调用
+            assert cover_url is not None
+            return await DOWNLOADER.download_img(cover_url, ext_headers=self.headers)
+
+        cover_task = asyncio.create_task(_shielded_cover()) if (first_img_task is not None or cover_url) else None
         return VideoContent(compose_task, cover=cover_task)
 
     async def _compose_slideshow(
         self,
-        image_tasks: list[Task[Path]],
+        tasks: list[Task[Path]],
+        kinds: list[str],
         audio_task: Task[Path],
         output: Path,
     ) -> Path:
-        """等待图片/BGM 下载并合成幻灯片视频（create_slideshow_content 的执行体）。
+        """等待媒体/BGM 下载并合成幻灯片视频（create_slideshow_content 的执行体）。
 
-        降级链：单张图失败用剩余图继续；BGM 失败降级为无声视频；全部图失败或
-        ffmpeg 合成失败抛 DownloadException，渲染层跳过该视频、不阻塞其它内容。
+        降级链：单个媒体失败用剩余项继续；BGM 失败降级为无声视频；全部媒体
+        失败或 ffmpeg 合成失败抛 DownloadException，渲染层跳过该视频、不阻塞
+        其它内容。
         """
         import asyncio
 
         from nonebot import logger
 
-        from ..utils import images_to_slideshow
+        from ..utils import media_to_slideshow
         from ..config import pconfig
 
-        results = await asyncio.gather(*image_tasks, return_exceptions=True)
-        image_paths = [r for r in results if isinstance(r, Path)]
-        failed = len(image_tasks) - len(image_paths)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        segments = [(r, k) for r, k in zip(results, kinds) if isinstance(r, Path)]
+        failed = len(tasks) - len(segments)
         if failed:
-            logger.warning(f"幻灯片 {failed}/{len(image_tasks)} 张图下载失败, 用剩余 {len(image_paths)} 张继续合成")
-        if not image_paths:
+            logger.warning(f"幻灯片 {failed}/{len(tasks)} 个媒体下载失败, 用剩余 {len(segments)} 项继续合成")
+        if not segments:
             # BGM 任务已启动, 取消以丢弃无谓的磁盘 IO 与 "exception never retrieved" 告警
             audio_task.cancel()
-            raise DownloadException("幻灯片图片全部下载失败")
+            raise DownloadException("幻灯片媒体全部下载失败")
 
         audio_path = None
         try:
@@ -721,12 +746,16 @@ class BaseParser:
         # （与 GIF 转换同待遇; 0/负值不限时）。超时取消会 kill 子进程
         timeout = pconfig.video_send_timeout
         per_image = pconfig.douyin_slideshow_per_image
+        max_duration = pconfig.douyin_slideshow_max_duration
         try:
             if timeout > 0:
                 return await asyncio.wait_for(
-                    images_to_slideshow(image_paths, audio_path, output, per_image=per_image), timeout=timeout
+                    media_to_slideshow(segments, audio_path, output, per_image=per_image, max_duration=max_duration),
+                    timeout=timeout,
                 )
-            return await images_to_slideshow(image_paths, audio_path, output, per_image=per_image)
+            return await media_to_slideshow(
+                segments, audio_path, output, per_image=per_image, max_duration=max_duration
+            )
         except (RuntimeError, FileNotFoundError, OSError, asyncio.TimeoutError, ValueError) as e:
             logger.error(f"幻灯片视频合成失败: {e!r}")
             raise DownloadException("幻灯片视频合成失败") from e

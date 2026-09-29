@@ -6,6 +6,7 @@
 
 import re
 import asyncio
+from math import ceil
 from uuid import uuid4
 from typing import Any
 from pathlib import Path
@@ -172,16 +173,16 @@ async def images_to_slideshow(
     audio_path: Path | None = None,
     output_path: Path | None = None,
     *,
-    min_per_image: float = 2.0,
-    default_per_image: float = 3.0,
+    per_image: float = 5.0,
     fps: int = 10,
 ) -> Path:
     """静态图序列 + 可选 BGM 合成轮播幻灯片视频（抖音图文用）。
 
-    每张图展示时长 = max(BGM时长/图片数, min_per_image)，对齐抖音 App 行为:
-    幻灯片总长跟随 BGM、每图 BGM/图数 秒，不截断音乐；仅设下限（图多 BGM 短时
-    每图至少 min_per_image，BGM 循环补齐）。BGM 缺失/探测失败用 default_per_image
-    （BGM 探不出时长视为损坏，降级无声）。
+    有 BGM 时幻灯片**总长恒等于 BGM 时长**（音乐不截断），每张图展示
+    ``min(per_image, BGM时长/图片数)`` 秒：图多 BGM 短时均摊（每图
+    BGM/图数 秒恰好轮播一遍，保证每张图都出现）；图少 BGM 长时按
+    per_image 秒循环快切直到 BGM 结束。BGM 缺失/探测失败降级无声，
+    单遍轮播、每图 per_image 秒（探不出时长视为损坏）。
     画布取所有图中最大宽/高（上限 1920、对齐偶数），小图黑边居中。
 
     每张图作为**独立输入**（-loop 1）由 ffmpeg 按真实格式各自解码，concat 滤镜
@@ -214,10 +215,13 @@ async def images_to_slideshow(
             logger.warning(f"BGM 无法探测时长, 疑似损坏, 降级为无声视频: {audio_path.name}")
             audio_path = None
     if audio_duration and audio_duration > 0.1:
-        per_image = max(audio_duration / n, min_per_image)
+        per_image = min(per_image, audio_duration / n)
+        total = audio_duration
+        # 序列循环遍数: ceil(BGM / 单遍时长), 输出 -t total 戒掉末遍超出部分
+        passes = max(1, ceil(total / (n * per_image)))
     else:
-        per_image = default_per_image
-    total = per_image * n
+        total = per_image * n
+        passes = 1
 
     canvas_w = canvas_h = 0
     for size in await asyncio.gather(*(_probe_image_size(p) for p in image_paths)):
@@ -237,22 +241,24 @@ async def images_to_slideshow(
     tmp_path = output_path.with_name(f"{output_path.stem}_{tag}_tmp.mp4")
     cmd: list[str] = ["ffmpeg", "-y"]
     chains: list[str] = []
-    for i, p in enumerate(image_paths):
+    sequence = image_paths * passes
+    for i, p in enumerate(sequence):
         cmd += ["-loop", "1", "-t", f"{per_image:.3f}", "-i", str(p)]
         chains.append(
             f"[{i}:v]scale={canvas_w}:{canvas_h}:force_original_aspect_ratio=decrease,"
             f"pad={canvas_w}:{canvas_h}:(ow-iw)/2:(oh-ih)/2:color=black,"
             f"setsar=1,format=yuv420p[s{i}]"
         )
+    m = len(sequence)
     if audio_path:
         # BGM 短于视频时无限循环，靠输出 -t 在视频末端精确截断
         cmd += ["-stream_loop", "-1", "-i", str(audio_path)]
     filter_complex = ";".join(chains) + (
-        f";{''.join(f'[s{i}]' for i in range(n))}concat=n={n}:v=1:a=0,fps={fps},format=yuv420p[v]"
+        f";{''.join(f'[s{i}]' for i in range(m))}concat=n={m}:v=1:a=0,fps={fps},format=yuv420p[v]"
     )
     cmd += ["-filter_complex", filter_complex, "-map", "[v]"]
     if audio_path:
-        cmd += ["-map", f"{n}:a", "-c:a", "aac", "-b:a", "128k"]
+        cmd += ["-map", f"{m}:a", "-c:a", "aac", "-b:a", "128k"]
     # veryfast: 幻灯片总长跟随 BGM 后可达数分钟, 编码时长须压在
     # video_send_timeout(默认 30s) 内; 静态画面下与 medium 视觉无差
     cmd += [

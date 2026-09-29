@@ -175,7 +175,7 @@ async def media_to_slideshow(
     *,
     per_image: float = 5.0,
     max_duration: float = 60.0,
-    fps: int = 5,
+    fps: int = 30,
 ) -> Path:
     """静态图 + 实况视频混排序列 + 可选 BGM 合成单条轮播幻灯片视频（抖音图文用）。
 
@@ -189,7 +189,9 @@ async def media_to_slideshow(
             ``min(per_image, 总长/图片数)``。
         max_duration: 总时长上限（秒）; BGM 超长只取开头一段控制体积与合成
             耗时, <=0 视为不设上限（跟随完整 BGM）。
-        fps: 输出帧率, 静态画面 5 足够。
+        fps: 输出帧率; 30 对齐抖音原生帧率, 实况段播放顺滑。总长上限 60s
+            后 30fps≈1800 帧, yun 实测合成 ~11s, 仍在 video_send_timeout
+            (30s) 余量内; 曾因跟随完整 BGM(187s)被迫降到 5fps。
 
     有 BGM 时幻灯片**总长 = min(BGM 时长, max_duration)**：BGM 短于上限时
     完整保留（音乐不截断），超长只取开头一段。图片展示

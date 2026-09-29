@@ -114,24 +114,23 @@ async def test_search_kugou_errcode_nonzero_silent():
 
 
 @pytest.mark.asyncio
-async def test_search_qqmusic_unavailable_silent():
+async def test_search_qqmusic_unavailable_silent(monkeypatch):
     """qqmusic-api-python 未安装时静默返回空。"""
     from nonebot_plugin_parser.music_search import search_qqmusic
 
     parser = MagicMock()
-    # 让 import qqmusic_api 抛 ImportError
+    # 让 `from .parsers.qqmusic import api` 抛 ImportError:
+    # sys.modules 置 None + 删父包属性, 双管齐下 — 只设 sys.modules 拦不住
+    # `from pkg import name` 走父包属性缓存的路径(其它测试先导入封装模块时
+    # 本测试会假绿转真红, xdist 排序型 flaky)
     import sys
 
-    original = sys.modules.get("qqmusic_api")
-    sys.modules["qqmusic_api"] = None  # type: ignore[assignment]
-    try:
-        items = await search_qqmusic(parser, "kw")
-        assert items == []
-    finally:
-        if original is not None:
-            sys.modules["qqmusic_api"] = original
-        else:
-            sys.modules.pop("qqmusic_api", None)
+    import nonebot_plugin_parser.parsers.qqmusic as qqmusic_pkg
+
+    monkeypatch.setitem(sys.modules, "nonebot_plugin_parser.parsers.qqmusic.api", None)
+    monkeypatch.delattr(qqmusic_pkg, "api", raising=False)
+    items = await search_qqmusic(parser, "kw")
+    assert items == []
 
 
 @pytest.mark.asyncio

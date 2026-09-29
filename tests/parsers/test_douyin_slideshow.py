@@ -265,28 +265,8 @@ async def test_compose_slideshow_wraps_oserror(monkeypatch):
         await parser._compose_slideshow([asyncio.create_task(_ok())], asyncio.create_task(_ok()), Path("/fake/out.mp4"))
 
 
-async def test_slideshow_rejects_quote_in_path(monkeypatch, tmp_path):
-    """路径含单引号 → 显式 RuntimeError。
-
-    concat demuxer 的引号内转义在多数 ffmpeg build 无效, 且输入打不开时
-    rc 仍为 0, 会静默产出残缺视频; 必须在校验阶段就拦下。
-    """
-    from nonebot_plugin_parser.utils import media as media_mod
-    from nonebot_plugin_parser.utils import images_to_slideshow
-
-    def _must_not_run(*args, **kwargs):
-        raise AssertionError("单引号校验应发生在任何 ffmpeg/ffprobe 调用之前")
-
-    monkeypatch.setattr(media_mod, "exec_ffmpeg_cmd", _must_not_run)
-    monkeypatch.setattr(media_mod, "exec_ffprobe_cmd", _must_not_run)
-
-    bad = tmp_path / "it's a pic.jpg"
-    with pytest.raises(RuntimeError, match="单引号"):
-        await images_to_slideshow([bad], None, tmp_path / "out.mp4")
-
-
 async def test_slideshow_validates_output_duration(monkeypatch, tmp_path):
-    """ffmpeg rc=0 但产物探不出时长(如 concat 输入静默失败) → RuntimeError, 半截文件不进缓存。"""
+    """ffmpeg rc=0 但产物探不出时长(如输入静默失败) → RuntimeError, 半截文件不进缓存。"""
     from nonebot_plugin_parser.utils import media as media_mod
     from nonebot_plugin_parser.utils import images_to_slideshow
 
@@ -315,7 +295,7 @@ async def test_slideshow_validates_output_duration(monkeypatch, tmp_path):
 
 # ---------------------------------------------------------------------------
 # 真实 ffmpeg 合成（仓库自带真实 BGM 样本 audio_sources/music_playurl.mp3,
-# 时长 16.1175s: 2 图 → clamp(16.1175/2, 2, 8) = 8s/图 → 总时长 ≈16s）
+# 时长 16.1175s: 2 图 → max(16.1175/2, 2) = 8.06s/图 → 总时长 ≈16.1s）
 # ---------------------------------------------------------------------------
 
 ffmpeg_missing = which("ffmpeg") is None or which("ffprobe") is None
@@ -346,10 +326,10 @@ async def test_images_to_slideshow_real_ffmpeg(tmp_path):
     assert result == out
     assert out.exists()
 
-    # 时长 ≈ 2 图 × 8s
+    # 时长 ≈ 2 图 × 8.06s (跟随 BGM, 不截断)
     duration = await probe_media_duration(out)
     assert duration is not None
-    assert abs(duration - 16.0) < 1.5, f"时长应 ≈16s, 实际 {duration}"
+    assert abs(duration - 16.1175) < 1.5, f"时长应 ≈16.1s, 实际 {duration}"
 
     # BGM 被合入
     assert await has_audio_stream(out), "合成视频应含音频轨"
@@ -357,8 +337,88 @@ async def test_images_to_slideshow_real_ffmpeg(tmp_path):
     # 画布 = 最大宽 x 最大高, 偶数对齐
     assert await _probe_image_size(out) == (400, 400)
 
-    # 合成成功后临时 concat 脚本应被清理
-    assert not list(tmp_path.glob("*ffconcat*")), "ffconcat 临时文件应被清理"
+
+@pytest.mark.skipif(ffmpeg_missing, reason="本机无 ffmpeg/ffprobe")
+async def test_images_to_slideshow_mixed_formats_all_present(tmp_path):
+    """混编格式(jpeg+webp)轮播: 每张图都必须出现。
+
+    回归 2026-09-29 线上事故: 旧实现用 concat demuxer, 它按首个文件选解码器,
+    ffmpeg<6 上 webp 段被当 mjpeg 解码静默丢帧 → 3 图只出 2 图且首图被拉长。
+    现实现每图独立输入各自解码, 任何版本 ffmpeg 都不会混。
+    """
+    from PIL import Image
+
+    from nonebot_plugin_parser.utils import images_to_slideshow
+    from nonebot_plugin_parser.utils.media import exec_ffmpeg_cmd, probe_media_duration
+
+    per = 2.0
+    colors = [(255, 0, 0), (0, 255, 0), (0, 0, 255)]
+    imgs = []
+    for i, _ in enumerate(colors):
+        p = tmp_path / f"img{i}.{'jpg' if i == 0 else 'webp'}"
+        Image.new("RGB", (320, 240), colors[i]).save(p)
+        imgs.append(p)
+
+    out = tmp_path / "mixed.mp4"
+    await images_to_slideshow(imgs, None, out, default_per_image=per)
+    duration = await probe_media_duration(out)
+    assert duration is not None
+    assert abs(duration - 3 * per) < 0.5, f"时长应 ≈6s, 实际 {duration}"
+
+    # 每段中点抽帧, 判定中心颜色与对应纯色图一致
+    for i in range(3):
+        frame = tmp_path / f"frame{i}.bmp"
+        await exec_ffmpeg_cmd(
+            [
+                "ffmpeg",
+                "-y",
+                "-v",
+                "error",
+                "-ss",
+                f"{i * per + per / 2:.2f}",
+                "-i",
+                str(out),
+                "-frames:v",
+                "1",
+                str(frame),
+            ]
+        )
+        assert frame.exists(), f"第 {i} 段中点抽不到帧"
+        r, g, b = Image.open(frame).convert("RGB").getpixel((160, 120))
+        er, eg, eb = colors[i]
+        assert abs(r - er) < 60 and abs(g - eg) < 60 and abs(b - eb) < 60, (
+            f"第 {i} 段应显示颜色 {colors[i]}, 实际 ({r}, {g}, {b})"
+        )
+
+
+@pytest.mark.skipif(ffmpeg_missing, reason="本机无 ffmpeg/ffprobe")
+async def test_images_to_slideshow_bgm_not_truncated(tmp_path):
+    """长 BGM 不再被每图 8s 上限截断: 幻灯片总长跟随 BGM。
+
+    回归: 旧实现 per_image = clamp(BGM/图数, 2, 8), 30s BGM + 2 图被截成
+    16s 视频、音频丢一半; 现实现每图 max(30/2, 2) = 15s → 总长 ≈30s。
+    """
+    from PIL import Image
+
+    from nonebot_plugin_parser.utils import (
+        images_to_slideshow,
+        probe_media_duration,
+    )
+    from nonebot_plugin_parser.utils.media import exec_ffmpeg_cmd
+
+    img1 = tmp_path / "img1.jpg"
+    img2 = tmp_path / "img2.jpg"
+    Image.new("RGB", (200, 200), "red").save(img1)
+    Image.new("RGB", (200, 200), "blue").save(img2)
+    bgm = tmp_path / "bgm.wav"
+    await exec_ffmpeg_cmd(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=30", str(bgm)])
+
+    out = tmp_path / "long.mp4"
+    await images_to_slideshow([img1, img2], bgm, out)
+
+    duration = await probe_media_duration(out)
+    assert duration is not None
+    assert duration > 27, f"30s BGM 不应被截断, 实际总长 {duration}s (旧实现为 16s)"
 
 
 @pytest.mark.skipif(ffmpeg_missing, reason="本机无 ffmpeg/ffprobe")

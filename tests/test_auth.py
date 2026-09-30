@@ -299,6 +299,7 @@ def test_delegable_items_complete(isolated_auth):
         auth.QQ_LOGIN,
         auth.DY_TTWID,
         auth.DY_COOKIE,
+        auth.DY_UIFID,
     }
     assert set(auth.DELEGABLE_ITEMS) == expected
 

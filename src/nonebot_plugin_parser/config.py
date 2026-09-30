@@ -72,6 +72,20 @@ class Config(BaseModel):
     推荐 SUPERUSER 指令 ``dycookie <整条 Cookie>`` 热更新（持久化, 无需重启）,
     ``dycookie查看`` 核对当前生效值。
     """
+    parser_douyin_uifid: str | None = None
+    """抖音 PC web 详情接口的访客 ID UIFID（x-secsdk-web-signature 风控签名）。
+
+    抖音对受保护接口（含 PC detail）校验 secsdk 网页签名, 签名与 ``uifid``
+    （浏览器访问 www.douyin.com 后种下的 320 位十六进制访客身份 Cookie）配套。
+    配置后, 签名形态请求会附带 uifid + x-secsdk-web-signature（query 与同名
+    header 三件套）, 请求形态与官方页面一致, 进一步降低被风控返回空 body 的
+    概率。从浏览器 F12 → Application → Cookies → www.douyin.com → ``UIFID``
+    复制。
+
+    也可不单独配置: 完整 Cookie（``parser_douyin_cookie``/``dycookie``）内已含
+    UIFID 字段时自动提取。优先级: ``dyuifid`` 指令 > 本字段 > cookie 内提取。
+    推荐 SUPERUSER 指令 ``dyuifid <值>`` 热更新（持久化, 无需重启）。
+    """
     parser_douyin_cdn_via_proxy: bool = False
     """抖音 CDN 域名（douyinpic.com / snssdk.com 等）下载是否走代理。
 
@@ -366,6 +380,13 @@ class Config(BaseModel):
         if self.parser_douyin_cookie is None:
             return None
         return self.parser_douyin_cookie.strip() or None
+
+    @property
+    def douyin_uifid(self) -> str | None:
+        """抖音访客 ID UIFID（secsdk 网页签名绑定对象），无首尾空白"""
+        if self.parser_douyin_uifid is None:
+            return None
+        return self.parser_douyin_uifid.strip() or None
 
     @property
     def douyin_cdn_via_proxy(self) -> bool:

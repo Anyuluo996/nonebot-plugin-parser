@@ -2,10 +2,10 @@ import re
 import time
 import secrets
 from typing import ClassVar
-from urllib.parse import quote
 
 from nonebot import logger
 
+from . import websign
 from ..base import (
     Platform,
     BaseParser,
@@ -120,13 +120,16 @@ class DouyinParser(BaseParser):
         return await self.parse_slides(searched.group("vid"))
 
     async def _request_detail(self, video_id: str):
-        """依次以三种形态请求 PC detail 接口: open-api -> 签名 -> Bytespider。
+        """依次以四种形态请求 PC detail 接口: open-api -> 签名 -> websign -> Bytespider。
 
         - open-api (主力): 极简参数 {aweme_id, aid} + Origin/Referer 指向
           open.douyin.com, 该入口不校验 a_bogus 签名与登录态, 2026-09 实测最稳
           (上游 fllesser #584 同款形态);
         - 签名: 完整 PC web 参数 + a_bogus 签名, 配置了 ttwid/cookie 时附凭据,
           对无签名形态整体被封的场景兜底;
+        - websign (配置 uifid 才启用): 签名形态之上追加 secsdk 网页签名
+          x-secsdk-web-signature + uifid (query 与三同名 header), 与官方页面
+          请求形态一致;
         - Bytespider (最后保险): 爬虫 UA 免签名, 字节加反查校验即失效。
 
         Returns:
@@ -137,7 +140,9 @@ class DouyinParser(BaseParser):
 
         from . import ttwid as dy_ttwid
 
-        variants: list[tuple[str, dict[str, str], dict[str, str]]] = []
+        # 第三元素为 dict 时作 params 交给 httpx 编码, 为 str 时是已编码完整
+        # URL (websign 形态, 预映像须与发送字节一致, 编码由 websign 全权负责)
+        variants: list[tuple[str, dict[str, str], dict[str, str] | str]] = []
 
         # 1. open-api 形态 (主力)
         variants.append(
@@ -154,8 +159,8 @@ class DouyinParser(BaseParser):
 
         # 2. 签名形态: PC web UA + X-Requested-With 缺一不可, 否则风控返回
         # 200 + 空 body; 组装完整参数后追加 msToken(仿浏览器随机占位) 与
-        # a_bogus 签名(必须最后追加且 url 编码)。配置了 ttwid/cookie 时附上,
-        # 抗风控能力显著更强 (凭据获取见 ttwid.get_effective_credential)。
+        # a_bogus 签名(必须最后追加)。配置了 ttwid/cookie 时附上, 抗风控能力
+        # 显著更强 (凭据获取见 ttwid.get_effective_credential)。
         signed_headers = {
             **self.headers,
             "User-Agent": _PC_WEB_UA,
@@ -169,8 +174,19 @@ class DouyinParser(BaseParser):
             "aweme_id": video_id,
             "msToken": secrets.token_hex(64),
         }
-        signed_params["a_bogus"] = quote(_ABOGUS.get_value(signed_params), safe="")
+        # a_bogus 存**未编码**原文, 由 httpx 统一编码一次 (浏览器线上即单一
+        # 编码)。旧实现先 quote 再入 dict, httpx 会把 % 再编成 %25 (双重编码),
+        # 服务端解码一次得不到签名原文——签名形态间歇性空 body 的诱因之一。
+        signed_params["a_bogus"] = _ABOGUS.get_value(signed_params)
         variants.append(("signed", signed_headers, signed_params))
+
+        # 2b. websign 增强形态 (配置了 uifid 才启用; uifid 三级来源见
+        # ttwid.get_effective_uifid)。签名覆盖 query 全部字节 (含 a_bogus)，
+        # 故 query 由 websign 按secsdk 的 URLSearchParams 规则编码生成后
+        # 拼成完整 URL 原样发送, 不再走 httpx params。
+        if uifid := dy_ttwid.get_effective_uifid():
+            query, _signature, sig_headers = websign.sign(signed_params, uifid)
+            variants.append(("websign", {**signed_headers, **sig_headers}, f"{_DETAIL_URL}?{query}"))
 
         # 3. Bytespider 爬虫 UA (最后保险)
         variants.append(
@@ -187,9 +203,12 @@ class DouyinParser(BaseParser):
         )
 
         response = None
-        for name, form_headers, form_params in variants:
+        for name, form_headers, target in variants:
             try:
-                response = await self.request(_DETAIL_URL, headers=form_headers, params=form_params)
+                if isinstance(target, str):
+                    response = await self.request(target, headers=form_headers)
+                else:
+                    response = await self.request(_DETAIL_URL, headers=form_headers, params=target)
             except httpx.HTTPError as e:
                 # 403 风控/限流/超时都归入此分支, 换下一形态重试
                 logger.warning(f"douyin detail API ({name}) failed for {video_id}: {e!r}")
@@ -248,7 +267,7 @@ class DouyinParser(BaseParser):
         if response is None or not response.content:
             raise ParseException(
                 f"douyin detail API unavailable for {video_id} "
-                "after open-api/signed/bytespider attempts (likely risk-controlled)"
+                "after open-api/signed/websign/bytespider attempts (likely risk-controlled)"
             )
 
         try:

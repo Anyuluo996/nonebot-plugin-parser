@@ -963,6 +963,10 @@ async def test_detail_api_http_error_falls_back_before_raise(monkeypatch):
         raise httpx.HTTPStatusError("403 Forbidden", request=req, response=resp)
 
     monkeypatch.setattr(parser, "request", _fake_request)
+    # 钉住无 uifid: 避免环境 cookie 含 UIFID 时注入 websign 形态干扰三形态断言
+    monkeypatch.setattr(
+        "nonebot_plugin_parser.parsers.douyin.ttwid.get_effective_uifid", lambda: None
+    )
 
     with pytest.raises(ParseException, match="detail API unavailable"):
         await parser.parse_slides(NORMAL_VIDEO_VID)
@@ -1025,6 +1029,10 @@ async def test_detail_empty_body_falls_back_through_forms(monkeypatch):
     monkeypatch.setattr(parser, "request", _fake_request)
     monkeypatch.setattr(parser.downloader, "download_video", _stub_dl)
     monkeypatch.setattr(parser.downloader, "download_img", _stub_dl)
+    # 钉住无 uifid: 避免环境 cookie 含 UIFID 时注入 websign 形态干扰三次请求断言
+    monkeypatch.setattr(
+        "nonebot_plugin_parser.parsers.douyin.ttwid.get_effective_uifid", lambda: None
+    )
 
     result = await parser.parse_slides(NORMAL_VIDEO_VID)
 

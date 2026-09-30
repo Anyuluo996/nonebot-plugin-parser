@@ -419,6 +419,7 @@ parser_screenshot_full_page=False
 | `qq登录` | `parqq登录`/`parqq登出` | QQ 音乐凭据管理 |
 | `抖音ttwid` | `dyttwid`/`dyttwid查看` | 抖音 ttwid 凭据 |
 | `抖音cookie` | `dycookie`/`dycookie查看` | 抖音完整 Cookie 凭据 |
+| `抖音uifid` | `dyuifid`/`dyuifid查看` | 抖音访客 ID(secsdk 网页签名) |
 
 > 授权时输入受控项既可用语义键(如 `qq登录`),也可用带前缀的真实命令名(如 `parqq登录`),两者等价。不写受控项 = 授权全部。
 

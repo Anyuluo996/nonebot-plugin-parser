@@ -188,6 +188,11 @@ async def test_detail_open_api_primary_and_fallback_order(monkeypatch):
         _Resp(b"", 403).raise_for_status()
 
     monkeypatch.setattr(DouyinParser, "request", fake_request)
+    # 钉住无 uifid: 环境若配置了含 UIFID 的 cookie 会额外注入 websign 形态,
+    # 使本测试的三形态断言失效 (websign 注入见 test_douyin_websign.py)
+    monkeypatch.setattr(
+        "nonebot_plugin_parser.parsers.douyin.ttwid.get_effective_uifid", lambda: None
+    )
 
     parser = DouyinParser()
     keyword, searched = parser.search_url("https://www.douyin.com/video/7681253720335650091")

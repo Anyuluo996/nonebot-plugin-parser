@@ -244,3 +244,40 @@ async def _douyin_show_cookie(matcher: Matcher):
         source = "指令持久化" if ttwid_persisted is not None else ".env parser_douyin_ttwid"
         await matcher.finish(f"未配置完整 Cookie，当前回退使用 ttwid（来源: {source}）:\n{ttwid_effective}")
     await matcher.finish("当前未配置抖音凭据（cookie/ttwid 指令和 .env 均为空）")
+
+
+@on_command("dyuifid", block=True, permission=auth.super_or_authorized(auth.DY_UIFID)).handle()
+async def _douyin_set_uifid(matcher: Matcher, args: Message = CommandArg()):
+    """SUPERUSER 或被授权用户: 写入抖音访客 ID uifid（持久化，热更新，覆盖上一次的值）。
+
+    用法: dyuifid <UIFID 值> —— 浏览器访问 www.douyin.com → F12 →
+    Application → Cookies → 复制 ``UIFID``。配置后签名形态请求附带
+    x-secsdk-web-signature 风控签名（与官方页面同形态），降低空 body 概率。
+    优先级高于 .env 的 ``parser_douyin_uifid`` 与 cookie 内自动提取。
+    """
+    from ..parsers.douyin import ttwid as dy_ttwid
+
+    value = args.extract_plain_text().strip()
+    if not value:
+        await matcher.finish(
+            "用法: dyuifid <UIFID 值>\n（浏览器访问 www.douyin.com → F12 → Application → Cookies → 复制 UIFID）"
+        )
+    dy_ttwid.save_uifid(value)
+    await matcher.finish(f"✅ 已保存抖音 uifid（{len(value)} 字符），secsdk 网页签名立即生效")
+
+
+@on_command("dyuifid查看", block=True, permission=auth.super_or_authorized(auth.DY_UIFID)).handle()
+async def _douyin_show_uifid(matcher: Matcher):
+    """SUPERUSER 或被授权用户: 查看当前生效的抖音 uifid（排查设置是否成功）。"""
+    from ..parsers.douyin import ttwid as dy_ttwid
+
+    persisted = dy_ttwid.load_uifid()
+    effective = dy_ttwid.get_effective_uifid()
+    if persisted is not None:
+        await matcher.finish(f"当前生效抖音 uifid（来源: 指令持久化）:\n{effective}")
+    if effective is not None:
+        from ..config import pconfig
+
+        source = ".env parser_douyin_uifid" if pconfig.douyin_uifid is not None else "完整 cookie 内 UIFID 字段自动提取"
+        await matcher.finish(f"当前生效抖音 uifid（来源: {source}）:\n{effective}")
+    await matcher.finish("当前未配置抖音 uifid（指令/.env 均为空, cookie 内亦无 UIFID 字段）")

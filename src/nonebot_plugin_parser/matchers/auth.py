@@ -47,6 +47,9 @@ DY_TTWID = "抖音ttwid"
 DY_COOKIE = "抖音cookie"
 """抖音 cookie 写入/查看(``dycookie`` / ``dycookie查看``)。"""
 
+DY_UIFID = "抖音uifid"
+"""抖音 uifid 写入/查看(``dyuifid`` / ``dyuifid查看``)。"""
+
 #: 所有可下放的凭据语义键(用于 par授权查看 列举、参数校验等)
 DELEGABLE_ITEMS: tuple[str, ...] = (
     FORCE_PARSE,
@@ -55,6 +58,7 @@ DELEGABLE_ITEMS: tuple[str, ...] = (
     QQ_LOGIN,
     DY_TTWID,
     DY_COOKIE,
+    DY_UIFID,
 )
 
 
@@ -101,6 +105,8 @@ COMMAND_TO_ITEM: dict[str, str] = {
     "dyttwid查看": DY_TTWID,
     "dycookie": DY_COOKIE,
     "dycookie查看": DY_COOKIE,
+    "dyuifid": DY_UIFID,
+    "dyuifid查看": DY_UIFID,
 }
 
 

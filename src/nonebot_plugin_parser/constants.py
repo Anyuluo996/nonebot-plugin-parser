@@ -40,6 +40,7 @@ class PlatformEnum(str, Enum):
     DOUYIN = "douyin"
     DUITANG = "duitang"
     HEYBOX = "heybox"
+    HONGGUO = "hongguo"
     HUPU = "hupu"
     ILLU = "illu"
     KUAISHOU = "kuaishou"

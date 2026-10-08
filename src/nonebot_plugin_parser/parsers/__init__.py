@@ -14,6 +14,7 @@ from .weibo import WeiBoParser as WeiBoParser
 from .zhihu import ZhiHuParser as ZhiHuParser
 from .douyin import DouyinParser as DouyinParser
 from .heybox import HeyBoxParser as HeyBoxParser
+from .hongguo import HongguoParser as HongguoParser
 from .lofter import LofterParser as LofterParser
 from .coolapk import CoolapkParser as CoolapkParser
 from .duitang import DuiTangParser as DuiTangParser

@@ -51,6 +51,8 @@ dependencies = [
   "protobuf>=7.36.0,<7.37.0",
   # gmssl: 抖音 a_bogus 签名算法内部的国密 SM3 哈希
   "gmssl>=3.2.2,<4.0.0",
+  # cryptography: 红果设备注册请求体的 ttEncrypt AES-128-CBC 加密
+  "cryptography>=42.0.0,<49.0.0",
   "bilibili-api-python>=17.4.2,<18.0.0",
   # qqmusic-api-python: `parqq登录` 扫码登录（MQTT over WebSocket）+ QQ 音乐解析内置实现。
   # 可选的 App 协议增强引擎不在此声明，缺失时自动回退内置实现。

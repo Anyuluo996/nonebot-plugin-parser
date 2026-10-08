@@ -28,6 +28,7 @@
 | ------- | --------------------------------- | ---- | ---- | ---- | ---- |
 | B 站    | av 号/BV 号/链接/短链/卡片/小程序 | ✅​  | ✅​  | ✅​  | ✅   |
 | 抖音    | 链接(分享链接，兼容电脑端链接)    | ✅​  | ✅​  | ❌️  | ✅   |
+| 红果短剧| 链接(App分享短链/网页链接/纯文本分享) | ✅​  | ❌️  | ❌️  | 🧪   |
 | 微博    | 链接(博文，视频，show, 文章)      | ✅​  | ✅​  | ❌️  | ✅   |
 | 小红书  | 链接(含短链)/卡片                 | ✅​  | ✅​  | ❌️  | ✅   |
 | 快手    | 链接(包含标准链接和短链)          | ✅​  | ✅​  | ❌️  | ✅   |
@@ -56,6 +57,7 @@
 > 状态列说明：✅ 表示已实测稳定；🧪 表示**实验性**，受上游接口/风控影响，可能不稳定：
 > - **音乐类**：**网易云**已实测稳定，直连官方公开接口，**开箱即用无需配置**；**QQ 音乐**已基于 `qqmusic-api-python` 自建直连，免费歌曲**开箱即用**，VIP/付费歌曲用「qqmusic登录」扫码授权（凭证持久化）；**酷狗**直连官方接口（MD5 签名 + curl_cffi 绕过 SSA 反爬），**开箱即用无需配置**；**汽水**未实测成功；
 > - **小黑盒**：签名算法已实现，但存在 **IP 级风控**（`show_captcha`），需配合代理或更换出口 IP。
+> - **红果短剧**：App 分享短链 / 网页链接 / 纯文本分享均可解析；播放地址走番茄系 App 接口（首次解析自动注册设备并持久化，无需配置），CENC 加密流经 ffmpeg 解密（需安装 ffmpeg）。不标注集数（接口未提供可靠分集序）。
 
 支持的链接，可参考 [测试链接](https://github.com/fllesser/nonebot-plugin-parser/blob/master/tests/others/test_urls.md)
 
@@ -357,6 +359,12 @@ parser_emoji_cdn="https://emojicdn.elk.sh"
 
 # [可选] emoji 渲染样式 "apple", "google", "twitter", "facebook"(默认)
 parser_emoji_style="facebook"
+
+# [可选] 红果短剧 App 接口设备标识（一般无需配置）
+# 首次解析红果时自动注册设备并持久化到插件数据目录；仅当自动注册被网络拦截时，
+# 才需要从真机抓包同时填入以下两项
+parser_hongguo_device_id=None
+parser_hongguo_install_id=None
 
 # [可选] 短链重定向到暂不支持解析的页面（如 B站会员购商城）时，是否启用浏览器截图兜底
 # 需安装 [htmlrender] extras: uv add "nonebot-plugin-parser[htmlrender]" 并执行 playwright install chromium

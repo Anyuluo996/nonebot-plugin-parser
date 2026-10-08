@@ -132,6 +132,17 @@ class Config(BaseModel):
     """
     parser_douyin_story_token: str | None = None
     """故事采集服务的鉴权 token (与服务端 DY_STORY_TOKEN 环境变量一致)。"""
+    parser_hongguo_device_id: str | None = None
+    """红果短剧 App 播放接口的 device_id（可选手动覆盖）。
+
+    红果全集播放地址走番茄小说系 App 接口，要求一个注册过的 TT 设备标识。
+    默认无需配置：首次解析时自动向字节设备注册接口注册设备并持久化到插件
+    数据目录（``hongguo_device.json``），后续复用；接口开始返回空数据（设备
+    被风控）时自动换新注册。仅当自动注册不可用（如网络层面被拦截）时，才
+    需要从真机抓包手动填入 ``device_id`` 与 ``install_id`` 两者（缺一无效）。
+    """
+    parser_hongguo_install_id: str | None = None
+    """红果短剧 App 播放接口的 install_id（与 ``parser_hongguo_device_id`` 配套）。"""
     parser_need_upload: bool = False
     """是否需要上传音频文件"""
     parser_use_base64: bool = False
@@ -422,6 +433,22 @@ class Config(BaseModel):
         if self.parser_douyin_story_token is None:
             return None
         return self.parser_douyin_story_token.strip() or None
+
+    @property
+    def hongguo_device_id(self) -> str | None:
+        """红果 App 接口 device_id 手动覆盖值（纯数字才有效）"""
+        if self.parser_hongguo_device_id is None:
+            return None
+        value = self.parser_hongguo_device_id.strip()
+        return value if value.isdigit() else None
+
+    @property
+    def hongguo_install_id(self) -> str | None:
+        """红果 App 接口 install_id 手动覆盖值（纯数字才有效）"""
+        if self.parser_hongguo_install_id is None:
+            return None
+        value = self.parser_hongguo_install_id.strip()
+        return value if value.isdigit() else None
 
     @property
     def need_upload(self) -> bool:

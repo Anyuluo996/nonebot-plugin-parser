@@ -14,7 +14,7 @@ from apilmoji import Apilmoji, EmojiCDNSource
 from apilmoji.core import get_font_height
 
 from . import resources
-from .base import ParseResult, ImageContent, ImageRenderer, DynamicContent
+from .base import ParseResult, ImageContent, VideoContent, ImageRenderer, DynamicContent
 from ..config import pconfig
 
 Color = tuple[int, int, int]
@@ -411,8 +411,28 @@ class CommonRenderer(ImageRenderer):
             for text_or_img in graphics:
                 if isinstance(text_or_img, str):
                     await self._render_text(ctx, text_or_img)
+                elif isinstance(text_or_img, VideoContent):
+                    # 图文插槽里的视频(X Article/小黑盒内嵌): 卡片只画封面+播放键,
+                    # 视频本体由 render_contents 的视频通道单独发送
+                    await self._render_video_in_graphics(ctx, text_or_img)
                 else:
                     await self._render_img_in_graphics(ctx, text_or_img)
+
+    async def _render_video_in_graphics(self, ctx: RenderContext, video_content: VideoContent) -> None:
+        """渲染图文插槽里的视频: 画封面 + 播放按钮, 无封面时跳过"""
+        # _card_fetch shield: 超时放弃素材但不取消底层下载 (2026-09-25 推特事故教训)
+        cover_path = await self._card_fetch(video_content.get_cover_path())
+        if cover_path is None:
+            return
+
+        if cover := self._load_cover(cover_path, ctx.content_width):
+            x_pos = self.PADDING + (ctx.content_width - cover.width) // 2
+            ctx.image.paste(cover, (x_pos, ctx.y_pos))
+            btn_size = 100
+            btn_x = x_pos + (cover.width - btn_size) // 2
+            btn_y = ctx.y_pos + (cover.height - btn_size) // 2
+            ctx.image.paste(self.video_button_image, (btn_x, btn_y), self.video_button_image)
+            ctx.y_pos += cover.height + self.SECTION_SPACING
 
     def _load_cover(self, cover_path: Path, content_width: int) -> PILImage | None:
         """加载并缩放封面"""

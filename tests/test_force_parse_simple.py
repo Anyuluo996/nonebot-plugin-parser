@@ -69,7 +69,7 @@ async def test_parse_result_tracks_dynamic_content_pending_resources(tmp_path):
 
 def test_twitter_collect_result_routes_gif_to_dynamic_content(monkeypatch, tmp_path):
     from nonebot_plugin_parser.parsers import Author, VideoContent, DynamicContent
-    from nonebot_plugin_parser.parsers.twitter import (
+    from nonebot_plugin_parser.parsers.x import (
         MediaElement,
         TwitterParser,
         VxTwitterResponse,
@@ -102,19 +102,19 @@ def test_twitter_collect_result_routes_gif_to_dynamic_content(monkeypatch, tmp_p
     data = VxTwitterResponse(
         article=None,
         date_epoch=1,
-        fetched_on=1,
-        likes=1,
         text="tweet",
         user_name="tester",
         user_screen_name="tester",
         user_profile_image_url="https://example.com/avatar.jpg",
         media_extended=[
             MediaElement(type="gif", url="https://example.com/gif.mp4", thumbnail_url="https://example.com/gif.jpg"),
-            MediaElement(type="video", url="https://example.com/video.mp4", thumbnail_url="https://example.com/video.jpg"),
+            MediaElement(
+                type="video", url="https://example.com/video.mp4", thumbnail_url="https://example.com/video.jpg"
+            ),
         ],
     )
 
-    result = parser._collect_result(data)
+    result = parser._collect_vx(data)
 
     assert len(result.dynamic_contents) == 1
     assert len(result.video_contents) == 1

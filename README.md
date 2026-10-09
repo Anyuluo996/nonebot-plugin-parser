@@ -290,6 +290,9 @@ parser_xhs_ck=""
 # [可选] Youtube Cookie, Youtube 视频因人机检测下载失败，需填
 parser_ytb_ck=""
 
+# [可选] X(Twitter) Cookie(auth_token=xxx; ct0=xxx, 浏览器导出), 提升 X 直连接口限流额度
+parser_x_ck=""
+
 # [可选] PixivNow API 地址，支持自建或第三方 PixivNow 部署
 # 参考 https://github.com/journey-ad/Pixiv-Illustration-Resolver
 # 国内访问 Pixiv 需要代理，API 请求和图片下载均会使用 parser_proxy 配置的代理

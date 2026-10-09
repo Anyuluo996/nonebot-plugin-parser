@@ -188,11 +188,12 @@ async def test_detail_open_api_primary_and_fallback_order(monkeypatch):
         _Resp(b"", 403).raise_for_status()
 
     monkeypatch.setattr(DouyinParser, "request", fake_request)
-    # 钉住无 uifid: 环境若配置了含 UIFID 的 cookie 会额外注入 websign 形态,
-    # 使本测试的三形态断言失效 (websign 注入见 test_douyin_websign.py)
-    monkeypatch.setattr(
-        "nonebot_plugin_parser.parsers.douyin.ttwid.get_effective_uifid", lambda: None
-    )
+    # 钉住无 uifid 与无 App 设备参数: 环境若配置了含 UIFID 的 cookie 或
+    # parser_douyin_app_device_profile, 会额外注入 websign / app-api 形态,
+    # 使本测试的三形态断言失效 (websign 注入见 test_douyin_websign.py,
+    # app-api 见 test_douyin_appapi.py)
+    monkeypatch.setattr("nonebot_plugin_parser.parsers.douyin.ttwid.get_effective_uifid", lambda: None)
+    monkeypatch.setattr("nonebot_plugin_parser.config.pconfig.parser_douyin_app_device_profile", None)
 
     parser = DouyinParser()
     keyword, searched = parser.search_url("https://www.douyin.com/video/7681253720335650091")
@@ -200,7 +201,8 @@ async def test_detail_open_api_primary_and_fallback_order(monkeypatch):
 
     result = await parser.parse(keyword, searched)
     assert result.title == "open-api primary regression", "退回链未解析出结果"
-    assert result.author is not None and result.author.name == "fallback-tester"
+    assert result.author is not None, "作者为空"
+    assert result.author.name == "fallback-tester"
 
     # 依次退回: open-api(主力) -> 签名 -> Bytespider
     assert calls == ["open-api", "signed", "bytespider"], f"退回顺序异常: {calls}"

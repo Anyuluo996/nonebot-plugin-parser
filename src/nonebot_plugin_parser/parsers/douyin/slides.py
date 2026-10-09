@@ -1,3 +1,4 @@
+import re
 import json
 from random import choice
 
@@ -7,6 +8,21 @@ from msgspec.json import Decoder
 
 # === 旧格式: 视频/实况照片 slides (aweme/v1/web/aweme/detail 返回 images[]) ===
 # 兼容 slides 类型 (isPicture=false) 的旧 aweme_detail 结构
+
+
+class AwemeStatus(Struct):
+    """aweme_detail.status 状态标记 (仅声明删除判定所需字段)。
+
+    已删作品的服务端行为有两种: aweme_detail 整个不下发 (filter/空), 或仍返回
+    完整 detail 但 ``status.is_delete`` 置位。is_delete 服务端可能下发 bool 或
+    int 两种形态, msgspec 严格模式两者均可解 (true→True, 1→1, 缺失→None)。
+    """
+
+    is_delete: bool | int | None = None
+
+    @property
+    def deleted(self) -> bool:
+        return bool(self.is_delete)
 
 
 class PlayAddr(Struct):
@@ -76,6 +92,13 @@ class SlidesData(Struct):
     video: Video | None = None
     music: Music | None = None
     """背景音乐; 实况照片视频轨本身静音, 需取 BGM 后用 ffmpeg 合并"""
+    status: AwemeStatus | None = None
+    """作品状态标记; 已删作品仍可能返回完整 detail 但 is_delete 置位"""
+
+    @property
+    def is_deleted(self) -> bool:
+        """作品删除标记 (status.is_delete 置位)"""
+        return bool(self.status and self.status.deleted)
 
     @property
     def name(self) -> str:
@@ -239,6 +262,13 @@ class PictureSlidesData(Struct):
     is_picture: bool = field(default=True, name="isPicture")
     music: Music | None = None
     """背景音乐; 实况照片视频轨本身静音, 需取 BGM 后用 ffmpeg 合并"""
+    status: AwemeStatus | None = None
+    """作品状态标记; 已删作品仍可能返回完整 detail 但 is_delete 置位"""
+
+    @property
+    def is_deleted(self) -> bool:
+        """作品删除标记 (status.is_delete 置位)"""
+        return bool(self.status and self.status.deleted)
 
     @property
     def name(self) -> str:
@@ -375,6 +405,57 @@ def decode_aweme_detail(
         pass
     # 新格式
     return picture_detail_decoder.decode(raw).aweme_detail
+
+
+# === 作品删除判定 ===
+#
+# aweme_detail 不存在时需区分「已删除」与「渠道过滤/风控」: 删除是确定性失败,
+# 与 story_25_filter 同类, 应转 TipException 明确提示而非盲目重试。
+# 判定规则对齐 Node 参照实现 jiexi 的错误分类 (2026-10-10):
+# - filter_reason 形如 deleted / status_deleted / aweme_deleted ...;
+# - status_msg / filter 提示语命中中英文「已删除」且不含「未删除」类否定。
+_DELETED_REASON_RE = re.compile(r"^(?:(?:status|aweme|item|video)_)?deleted$", re.IGNORECASE)
+_DELETED_HINT_RE = re.compile(
+    r"(?:作品|视频|图文|内容)\s*(?:已(?:被)?删除|被删除)"
+    # 带施动者的插入形态: "已被作者删除" (上限 {0,6} 防回溯)
+    r"|(?:作品|视频|图文|内容)已被.{0,6}删除"
+    r"|(?:this\s+)?(?:video|post|item|content)\s+(?:has\s+been|was|is)\s+deleted",
+    re.IGNORECASE,
+)
+_NOT_DELETED_RE = re.compile(
+    r"未(?:被)?删除|没有(?:被)?删除|并未(?:被)?删除"
+    # 与施动者正向形态对应的否定: "未被作者删除"
+    r"|未[^，。；]{0,6}删除|没有[^，。；]{0,6}删除"
+    r"|not\s+(?:been\s+)?deleted",
+    re.IGNORECASE,
+)
+
+
+def is_deleted_response(raw: bytes) -> bool:
+    """判定 detail API 响应是否表明作品已删除。
+
+    只有服务端的明确删除证据才判定删除; HTTP 错误、空响应、权限/版权过滤
+    均不认定 (无法与「作品不可见」区分)。判定依据:
+
+    - ``filter_detail.filter_reason`` 形如 ``deleted``/``status_deleted``;
+    - ``status_msg`` / ``filter_detail.notice`` / ``filter_detail.detail_msg``
+      命中中英文「已删除」提示, 且不含「未删除」类否定表述。
+    """
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return False
+    if not isinstance(data, dict):
+        return False
+    filter_detail = data.get("filter_detail")
+    filter_detail = filter_detail if isinstance(filter_detail, dict) else {}
+    reason = filter_detail.get("filter_reason")
+    if isinstance(reason, str) and _DELETED_REASON_RE.match(reason.strip()):
+        return True
+    hints = (data.get("status_msg"), filter_detail.get("notice"), filter_detail.get("detail_msg"))
+    return any(
+        isinstance(hint, str) and _DELETED_HINT_RE.search(hint) and not _NOT_DELETED_RE.search(hint) for hint in hints
+    )
 
 
 def extract_filter_reason(raw: bytes) -> str:

@@ -42,12 +42,8 @@ def test_sign_preimage_and_headers():
     query, sig, headers = websign.sign(params, _UIFID, timestamp=_STAMP)
 
     # 预映像独立拼接 (期望串手写), 实现内部 bug 无法自证
-    preimage_query = (
-        f"aid=6383&aweme_id=123&a_bogus=AbC%2FdEf%2B&uifid={_UIFID}&timestamp={_STAMP}"
-    )
-    expected = hashlib.md5(
-        f"{_UIFID}_{_STAMP}_{websign.SALT}_{preimage_query}".encode()
-    ).hexdigest()
+    preimage_query = f"aid=6383&aweme_id=123&a_bogus=AbC%2FdEf%2B&uifid={_UIFID}&timestamp={_STAMP}"
+    expected = hashlib.md5(f"{_UIFID}_{_STAMP}_{websign.SALT}_{preimage_query}".encode()).hexdigest()
 
     assert sig == expected
     assert query == f"{preimage_query}&x-secsdk-web-signature={expected}"
@@ -136,9 +132,10 @@ async def test_detail_chain_without_uifid_unchanged(monkeypatch):
         return _Resp()
 
     monkeypatch.setattr(DouyinParser, "request", fake_request)
-    monkeypatch.setattr(
-        "nonebot_plugin_parser.parsers.douyin.ttwid.get_effective_uifid", lambda: None
-    )
+    monkeypatch.setattr("nonebot_plugin_parser.parsers.douyin.ttwid.get_effective_uifid", lambda: None)
+    # 钉住无 App 设备参数: 防环境配置了 parser_douyin_app_device_profile 注入
+    # app-api 形态使三形态断言失效 (见 test_douyin_appapi.py)
+    monkeypatch.setattr("nonebot_plugin_parser.config.pconfig.parser_douyin_app_device_profile", None)
 
     parser = DouyinParser()
     await parser._request_detail("7681253720335650091")
@@ -159,9 +156,8 @@ async def test_detail_websign_variant_appended_when_uifid_configured(monkeypatch
         return _Resp()
 
     monkeypatch.setattr(DouyinParser, "request", fake_request)
-    monkeypatch.setattr(
-        "nonebot_plugin_parser.parsers.douyin.ttwid.get_effective_uifid", lambda: _UIFID
-    )
+    monkeypatch.setattr("nonebot_plugin_parser.parsers.douyin.ttwid.get_effective_uifid", lambda: _UIFID)
+    monkeypatch.setattr("nonebot_plugin_parser.config.pconfig.parser_douyin_app_device_profile", None)
 
     parser = DouyinParser()
     await parser._request_detail("7681253720335650091")
@@ -192,9 +188,7 @@ async def test_detail_websign_variant_appended_when_uifid_configured(monkeypatch
     hashed_query, sig_param = query.rsplit("&x-secsdk-web-signature=", 1)
     # 签名可用实际发送字节 + header 内时间戳重算复核 (端到端一致性)
     preimage = f"{_UIFID}_{ws_headers['x-secsdk-web-expire']}_{websign.SALT}_{hashed_query}"
-    assert (
-        hashlib.md5(preimage.encode()).hexdigest() == sig_param == ws_headers["x-secsdk-web-signature"]
-    )
+    assert hashlib.md5(preimage.encode()).hexdigest() == sig_param == ws_headers["x-secsdk-web-signature"]
     # uifid 进 query 恰一次, timestamp 在其后
     assert hashed_query.count(f"uifid={_UIFID}") == 1
     assert f"uifid={_UIFID}&timestamp=" in hashed_query

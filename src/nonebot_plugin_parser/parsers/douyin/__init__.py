@@ -5,7 +5,7 @@ from typing import ClassVar
 
 from nonebot import logger
 
-from . import websign
+from . import appapi, websign
 from ..base import (
     Platform,
     BaseParser,
@@ -120,11 +120,16 @@ class DouyinParser(BaseParser):
         return await self.parse_slides(searched.group("vid"))
 
     async def _request_detail(self, video_id: str):
-        """依次以四种形态请求 PC detail 接口: open-api -> 签名 -> websign -> Bytespider。
+        """依次以五种形态请求 detail 接口: open-api -> app-api -> 签名 -> websign -> Bytespider。
 
         - open-api (主力): 极简参数 {aweme_id, aid} + Origin/Referer 指向
           open.douyin.com, 该入口不校验 a_bogus 签名与登录态, 2026-09 实测最稳
           (上游 fllesser #584 同款形态);
+        - app-api: 安卓 App 端点 (aweme.snssdk.com) 免签名免 Cookie 直连, 设备
+          参数由 parser_douyin_app_device_profile 配置注入 (背景见 appapi 模块
+          文档)。与 web 端不同 host/风控域, 排在签名形态之前——open-api 失败
+          多为 web 端 IP 级风控, 同 host 的签名链一并受限, 切 host 比换签名形
+          态更有效; 未配置设备参数时跳过;
         - 签名: 完整 PC web 参数 + a_bogus 签名, 配置了 ttwid/cookie 时附凭据,
           对无签名形态整体被封的场景兜底;
         - websign (配置 uifid 才启用): 签名形态之上追加 secsdk 网页签名
@@ -139,10 +144,12 @@ class DouyinParser(BaseParser):
         import httpx
 
         from . import ttwid as dy_ttwid
+        from ...config import pconfig
 
-        # 第三元素为 dict 时作 params 交给 httpx 编码, 为 str 时是已编码完整
-        # URL (websign 形态, 预映像须与发送字节一致, 编码由 websign 全权负责)
-        variants: list[tuple[str, dict[str, str], dict[str, str] | str]] = []
+        # 元素为 (形态名, headers, url, params): params 为 dict 时交给 httpx
+        # 编码; 为 None 时 url 已含完整 query (websign 形态, 预映像须与发送
+        # 字节一致, 编码由 websign 全权负责)
+        variants: list[tuple[str, dict[str, str], str, dict[str, str] | None]] = []
 
         # 1. open-api 形态 (主力)
         variants.append(
@@ -153,9 +160,15 @@ class DouyinParser(BaseParser):
                     "Origin": "https://open.douyin.com",
                     "Referer": "https://open.douyin.com/",
                 },
+                _DETAIL_URL,
                 {"aweme_id": video_id, "aid": "6383"},
             )
         )
+
+        # 1b. app-api 形态: 安卓 App 端点免签名直连, 配置了设备参数才启用
+        if app_profile := appapi.parse_profile(pconfig.douyin_app_device_profile):
+            app_headers, app_params = appapi.build_request(app_profile, video_id)
+            variants.append(("app-api", app_headers, appapi.DETAIL_URL, app_params))
 
         # 2. 签名形态: PC web UA + X-Requested-With 缺一不可, 否则风控返回
         # 200 + 空 body; 组装完整参数后追加 msToken(仿浏览器随机占位) 与
@@ -178,7 +191,7 @@ class DouyinParser(BaseParser):
         # 编码)。旧实现先 quote 再入 dict, httpx 会把 % 再编成 %25 (双重编码),
         # 服务端解码一次得不到签名原文——签名形态间歇性空 body 的诱因之一。
         signed_params["a_bogus"] = _ABOGUS.get_value(signed_params)
-        variants.append(("signed", signed_headers, signed_params))
+        variants.append(("signed", signed_headers, _DETAIL_URL, signed_params))
 
         # 2b. websign 增强形态 (配置了 uifid 才启用; uifid 三级来源见
         # ttwid.get_effective_uifid)。签名覆盖 query 全部字节 (含 a_bogus)，
@@ -186,13 +199,14 @@ class DouyinParser(BaseParser):
         # 拼成完整 URL 原样发送, 不再走 httpx params。
         if uifid := dy_ttwid.get_effective_uifid():
             query, _signature, sig_headers = websign.sign(signed_params, uifid)
-            variants.append(("websign", {**signed_headers, **sig_headers}, f"{_DETAIL_URL}?{query}"))
+            variants.append(("websign", {**signed_headers, **sig_headers}, f"{_DETAIL_URL}?{query}", None))
 
         # 3. Bytespider 爬虫 UA (最后保险)
         variants.append(
             (
                 "bytespider",
                 {"User-Agent": _BYTE_SPIDER_UA},
+                _DETAIL_URL,
                 {
                     "aweme_id": video_id,
                     "aid": "6383",
@@ -203,12 +217,9 @@ class DouyinParser(BaseParser):
         )
 
         response = None
-        for name, form_headers, target in variants:
+        for name, form_headers, url, params in variants:
             try:
-                if isinstance(target, str):
-                    response = await self.request(target, headers=form_headers)
-                else:
-                    response = await self.request(_DETAIL_URL, headers=form_headers, params=target)
+                response = await self.request(url, headers=form_headers, params=params)
             except httpx.HTTPError as e:
                 # 403 风控/限流/超时都归入此分支, 换下一形态重试
                 logger.warning(f"douyin detail API ({name}) failed for {video_id}: {e!r}")
@@ -267,12 +278,16 @@ class DouyinParser(BaseParser):
         if response is None or not response.content:
             raise ParseException(
                 f"douyin detail API unavailable for {video_id} "
-                "after open-api/signed/websign/bytespider attempts (likely risk-controlled)"
+                "after open-api/app-api/signed/websign/bytespider attempts (likely risk-controlled)"
             )
 
         try:
             aweme_detail = slides.decode_aweme_detail(response.content)
         except Exception as e:
+            # 已删作品的 detail 可能缺 author/desc 等必填字段导致两格式都
+            # ValidationError, 落入此分支; 响应里若带删除证据仍给准确提示
+            if slides.is_deleted_response(response.content):
+                raise TipException("该抖音作品已被删除，无法解析") from e
             # decode 失败可能是字段结构变更或返回了非 JSON 错误页
             preview = response.content[:200]
             logger.warning(
@@ -280,6 +295,11 @@ class DouyinParser(BaseParser):
             )
             raise ParseException(f"decode douyin detail failed for {video_id}: {e}") from e
         if aweme_detail is None:
+            # 删除判定优先于渠道过滤: 服务端明确删除证据 (deleted 形态的
+            # filter_reason / 中英文"已删除"提示语) 是确定性失败, 先给出
+            # 准确提示 (判定规则见 slides.is_deleted_response)
+            if slides.is_deleted_response(response.content):
+                raise TipException("该抖音作品已被删除，无法解析")
             # 内容级过滤 (如 story_25_filter): 服务端明确不下发数据, 属确定性
             # 失败, 重试/换形态/L2 兜底都无意义 → TipException 立即提示不重试
             # (parse_retry 对 TipException 不重试, matchers 发提示消息)
@@ -291,6 +311,11 @@ class DouyinParser(BaseParser):
                     raise TipException("该内容是抖音「故事」，仅在抖音 App 内可见，无法解析")
                 raise TipException(f"抖音未向网页端开放该内容（{reason}），无法解析")
             raise ParseException(f"can't find aweme_detail in PC detail API: {video_id}")
+
+        # 已删作品的另一种形态: detail 仍完整下发但 status.is_delete 置位
+        # (媒体直链通常随之失效), 在构建内容前拦截
+        if aweme_detail.is_deleted:
+            raise TipException("该抖音作品已被删除，无法解析")
 
         contents = []
 

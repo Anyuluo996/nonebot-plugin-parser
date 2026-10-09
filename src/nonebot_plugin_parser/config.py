@@ -134,6 +134,24 @@ class Config(BaseModel):
     """
     parser_douyin_story_token: str | None = None
     """故事采集服务的鉴权 token (与服务端 DY_STORY_TOKEN 环境变量一致)。"""
+    parser_douyin_app_device_profile: str | None = None
+    """抖音安卓 App 详情端点 (aweme.snssdk.com) 的设备参数 JSON 字符串。
+
+    该端点与 PC web 端点完全独立: 真实完整的设备参数下不校验 a_bogus 等签名、
+    不需要 Cookie, 是 web 端四形态 (open-api/签名/websign/Bytespider) 之外的
+    独立链路。配置后, open-api 形态失败 (风控空 body) 时优先切换此形态。
+
+    值为 JSON 对象字符串, 形如::
+
+        {"iid": "...", "device_id": "...", "aid": "1128", "version_code": "400600",
+         "cdid": "...", "channel": "oppo_1128_64", "device_type": "...", ...}
+
+    必填 iid/device_id/aid/version_code, 其余 App 上报参数按白名单透传, 未知
+    字段忽略。参数从真机/模拟器抓包 detail 请求的 query 提取 (或设备注册接口)；
+    设备被风控 (该端点也开始返回空 body) 时重新提取更新即可。
+
+    注意: 不要把 Cookie/签名头填进本项, 该链路本就免凭据。留空 (默认) 不启用。
+    """
     parser_hongguo_device_id: str | None = None
     """红果短剧 App 播放接口的 device_id（可选手动覆盖）。
 
@@ -440,6 +458,13 @@ class Config(BaseModel):
         if self.parser_douyin_story_token is None:
             return None
         return self.parser_douyin_story_token.strip() or None
+
+    @property
+    def douyin_app_device_profile(self) -> str | None:
+        """抖音 App 端点设备参数 JSON 字符串，无首尾空白"""
+        if self.parser_douyin_app_device_profile is None:
+            return None
+        return self.parser_douyin_app_device_profile.strip() or None
 
     @property
     def hongguo_device_id(self) -> str | None:

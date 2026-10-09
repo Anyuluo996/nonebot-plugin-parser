@@ -134,14 +134,15 @@ class Config(BaseModel):
     """
     parser_douyin_story_token: str | None = None
     """故事采集服务的鉴权 token (与服务端 DY_STORY_TOKEN 环境变量一致)。"""
-    parser_douyin_app_device_profile: str | None = None
-    """抖音安卓 App 详情端点 (aweme.snssdk.com) 的设备参数 JSON 字符串。
+    parser_douyin_app_device_profile: str | dict[str, str | int | float | bool] | None = None
+    """抖音安卓 App 详情端点 (aweme.snssdk.com) 的设备参数。
 
     该端点与 PC web 端点完全独立: 真实完整的设备参数下不校验 a_bogus 等签名、
     不需要 Cookie, 是 web 端四形态 (open-api/签名/websign/Bytespider) 之外的
     独立链路。配置后, open-api 形态失败 (风控空 body) 时优先切换此形态。
 
-    值为 JSON 对象字符串, 形如::
+    值为 JSON 对象 (注意: NoneBot .env 管线会把形似 JSON 的值自动解码为
+    dict, 故 str 与 dict 两种形态都接受), 形如::
 
         {"iid": "...", "device_id": "...", "aid": "1128", "version_code": "400600",
          "cdid": "...", "channel": "oppo_1128_64", "device_type": "...", ...}
@@ -460,11 +461,13 @@ class Config(BaseModel):
         return self.parser_douyin_story_token.strip() or None
 
     @property
-    def douyin_app_device_profile(self) -> str | None:
-        """抖音 App 端点设备参数 JSON 字符串，无首尾空白"""
+    def douyin_app_device_profile(self) -> str | dict | None:
+        """抖音 App 端点设备参数，str 时无首尾空白，否则原样 (dict/None)"""
         if self.parser_douyin_app_device_profile is None:
             return None
-        return self.parser_douyin_app_device_profile.strip() or None
+        if isinstance(self.parser_douyin_app_device_profile, str):
+            return self.parser_douyin_app_device_profile.strip() or None
+        return self.parser_douyin_app_device_profile
 
     @property
     def hongguo_device_id(self) -> str | None:

@@ -8,6 +8,8 @@ pn = "pn"
 orign = "orign"
 udid = "udid"
 open_udid = "open_udid"
+# X web 端内置 Bearer token 字符串片段（公开常量, 误报为 Is）
+Iz = "Iz"
 
 # 抖音分享短链 ID（含 ue 片段, 误报为 use/due）
 [default]

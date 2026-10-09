@@ -92,6 +92,17 @@ def test_parse_profile_valid_normalizes_values():
     }
 
 
+def test_parse_profile_accepts_dict_from_nonebot_env():
+    """dict 输入直收: NoneBot .env 管线会把形似 JSON 的值解码成 dict 再进
+    pydantic (部署实测 1c3ec6e 曾因 str-only 声明炸插件导入), 两种形态等价。"""
+    from nonebot_plugin_parser.parsers.douyin import appapi
+
+    raw_dict = json.loads(_PROFILE_JSON)
+    assert appapi.parse_profile(raw_dict) == appapi.parse_profile(_PROFILE_JSON)
+    # dict 形态下缺必填同样整体停用
+    assert appapi.parse_profile({"aid": "1128"}) is None
+
+
 @pytest.mark.parametrize(
     "raw",
     [

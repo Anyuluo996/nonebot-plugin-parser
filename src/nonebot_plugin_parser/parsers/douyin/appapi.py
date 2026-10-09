@@ -87,19 +87,27 @@ def _warn_once(key: str, message: str) -> None:
         logger.warning(message)
 
 
-def parse_profile(raw: str | None) -> dict[str, str] | None:
-    """解析配置里的设备参数 JSON; 未配置/非法返回 None (调用方跳过该形态)。
+def parse_profile(raw: str | dict | None) -> dict[str, str] | None:
+    """解析配置里的设备参数; 未配置/非法返回 None (调用方跳过该形态)。
+
+    raw 两种形态都收: JSON 字符串, 或 NoneBot .env 管线把形似 JSON 的值
+    自动解码出的 dict (此时 pydantic 侧已是对象, 无需再 json.loads)。
 
     - 值仅接受非空字符串与有限数字 (bool 除外), 统一转字符串;
     - 白名单外字段忽略; 必填 iid/device_id/aid/version_code 缺一即整体无效。
     """
-    if not raw or not (stripped := raw.strip()):
+    if raw is None:
         return None
-    try:
-        data = json.loads(stripped)
-    except ValueError:
-        _warn_once("not-json", "parser_douyin_app_device_profile 不是合法 JSON, app-api 形态停用")
-        return None
+    if isinstance(raw, dict):
+        data = raw
+    else:
+        if not raw.strip():
+            return None
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            _warn_once("not-json", "parser_douyin_app_device_profile 不是合法 JSON, app-api 形态停用")
+            return None
     if not isinstance(data, dict):
         _warn_once("not-object", "parser_douyin_app_device_profile 必须是 JSON 对象, app-api 形态停用")
         return None

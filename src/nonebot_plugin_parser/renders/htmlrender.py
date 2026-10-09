@@ -11,7 +11,7 @@ from nonebot_plugin_htmlrender import template_to_pic
 from . import resources
 from .base import ParseResult, ImageRenderer, pconfig
 from ..helper import UniHelper, UniMessage
-from ..parsers import ImageContent
+from ..parsers import ImageContent, VideoContent
 from ..browser_retry import with_browser_retry
 
 # 根因实测(2026-08-22 对照实验): card 模板的 backdrop-filter 毛玻璃层在
@@ -102,12 +102,18 @@ class HtmlRenderer(ImageRenderer):
             nodes.append(url_text)
         yield UniMessage(UniHelper.construct_forward_message(nodes))
 
+        # 分页分支只渲染了卡片切片, contents(视频/音频等)仍需走视频/音频通道,
+        # 否则长文 Article 内嵌视频会被静默丢弃 (ImageRenderer.render_contents
+        # 的覆写会顺便把 graphics 里的视频剥进 contents)
+        async for message in self.render_contents(result):
+            yield message
+
     def _needs_paging(self, result: ParseResult) -> bool:
         """graphics 估算页高（文字 + 图片）超安全高度才分页。"""
         return self._estimate_page_height(result.graphics) > _SAFE_PAGE_CSS_HEIGHT
 
     @staticmethod
-    def _estimate_item_height(item: str | ImageContent) -> int:
+    def _estimate_item_height(item: str | ImageContent | VideoContent) -> int:
         """估算单个 graphics 项的渲染高度（CSS px）。图片下载前拿不到真实尺寸,
         按模板限高统一估算(偏保守, 宁可多分一页也不超光栅上限)。"""
         import math
@@ -118,7 +124,7 @@ class HtmlRenderer(ImageRenderer):
         return _GRAPHICS_IMG_EST_PX
 
     @classmethod
-    def _estimate_page_height(cls, items: Sequence[str | ImageContent]) -> int:
+    def _estimate_page_height(cls, items: Sequence[str | ImageContent | VideoContent]) -> int:
         return _PAGE_OVERHEAD_PX + sum(cls._estimate_item_height(i) for i in items)
 
     @classmethod

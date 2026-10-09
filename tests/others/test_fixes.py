@@ -255,8 +255,8 @@ async def test_convert_video_to_gif_cleans_palette_on_failure(tmp_path, monkeypa
 # 转发链递归深度限制（#19）
 # --------------------------------------------------------------------------- #
 def test_twitter_repost_depth_limit():
-    """twitter _collect_result 超过 MAX_REPOST_DEPTH 不再递归，截断 repost。"""
-    from nonebot_plugin_parser.parsers.twitter import (
+    """twitter _collect_vx 超过 MAX_REPOST_DEPTH 不再递归，截断 repost。"""
+    from nonebot_plugin_parser.parsers.x import (
         TwitterParser,
         VxTwitterResponse,
         MAX_REPOST_DEPTH,
@@ -270,8 +270,6 @@ def test_twitter_repost_depth_limit():
         deep = VxTwitterResponse(
             article="title",
             date_epoch=0,
-            fetched_on=0,
-            likes=0,
             text="x",
             user_name="u",
             user_screen_name="s",
@@ -280,7 +278,8 @@ def test_twitter_repost_depth_limit():
         )
 
     # 不应抛 RecursionError；repost 链应在 MAX_REPOST_DEPTH 处截断
-    result = parser._collect_result(deep)
+    assert deep is not None
+    result = parser._collect_vx(deep)
     assert result is not None
     # 沿 repost 链走，最多 MAX_REPOST_DEPTH 层
     node = result

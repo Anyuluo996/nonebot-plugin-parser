@@ -254,8 +254,8 @@ class ParseResult:
     """来源链接"""
     contents: Sequence[MediaContent] = field(default_factory=list)
     """媒体内容"""
-    graphics: Sequence[str | ImageContent] = field(default_factory=list)
-    """图文内容"""
+    graphics: Sequence[str | ImageContent | VideoContent] = field(default_factory=list)
+    """图文内容 (htmlrender/common 渲染层支持内嵌 VideoContent 画封面, 本体走视频通道)"""
     extra: dict[str, Any] = field(default_factory=dict)
     """额外信息"""
     repost: ParseResult | None = None
@@ -437,6 +437,8 @@ class ParseResult:
         for gra in self.graphics:
             if isinstance(gra, ImageContent) and is_pending_path_task(gra.path_task):
                 return True
+            if isinstance(gra, VideoContent) and is_pending_path_task(gra.cover):
+                return True
         # 检查转发
         if self.repost and self.repost._has_pending_resources():
             return True
@@ -491,7 +493,7 @@ class ParseResultKwargs(TypedDict, total=False):
     title: str | None
     text: str | None
     contents: Sequence[MediaContent]
-    graphics: Sequence[str | ImageContent]
+    graphics: Sequence[str | ImageContent | VideoContent]
     timestamp: int | None
     url: str | None
     author: Author | None

@@ -33,7 +33,7 @@ except ImportError as _qqmusic_import_err:
     _QQMUSIC_AVAILABLE = False
     _QQMUSIC_IMPORT_ERROR = _qqmusic_import_err
 
-from .twitter import TwitterParser as TwitterParser
+from .x import TwitterParser as TwitterParser
 from .bilibili import BilibiliParser as BilibiliParser
 from .kuaishou import KuaiShouParser as KuaiShouParser
 from .telegram import TelegramParser as TelegramParser

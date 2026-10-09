@@ -29,6 +29,8 @@ class Config(BaseModel):
     """youtube cookies"""
     parser_xhs_ck: str | None = None
     """小红书 cookies"""
+    parser_x_ck: str | None = None
+    """X(Twitter) cookies(auth_token=xxx; ct0=xxx; ..., 浏览器导出), 提升直连接口限流额度"""
     parser_pixiv: str = "https://pixivnow-lyart.vercel.app"
     """PixivNow API 地址"""
     parser_pixivR18: bool = False
@@ -346,6 +348,11 @@ class Config(BaseModel):
     def xhs_ck(self) -> str | None:
         """小红书 cookies"""
         return self.parser_xhs_ck
+
+    @property
+    def x_ck(self) -> str | None:
+        """X(Twitter) cookies"""
+        return self.parser_x_ck
 
     @property
     def pixiv(self) -> str:

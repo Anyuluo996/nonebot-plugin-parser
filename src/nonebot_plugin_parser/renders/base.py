@@ -83,6 +83,11 @@ class BaseRenderer(ABC):
                 failed_count += 1
                 continue
 
+            if isinstance(cont, VideoContent):
+                # 图文插槽里的视频(X Article/小黑盒内嵌)按视频段发出, 不能当图片段
+                forwardable_segs.append(UniHelper.video_seg(path))
+                continue
+
             img_seg = UniHelper.img_seg(path)
             if cont.alt:
                 img_seg += cont.alt

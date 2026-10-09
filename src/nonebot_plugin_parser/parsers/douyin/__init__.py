@@ -119,8 +119,11 @@ class DouyinParser(BaseParser):
         # 链接类型仅用于 URL 匹配, 解析行为不再区分。
         return await self.parse_slides(searched.group("vid"))
 
-    async def _request_detail(self, video_id: str):
+    async def _request_detail(self, video_id: str, forms: tuple[str, ...] | None = None):
         """依次以五种形态请求 detail 接口: open-api -> app-api -> 签名 -> websign -> Bytespider。
+
+        forms 限定只走给定形态 (按上一轮过滤结论定向重试用, 如 story 过滤后
+        仅试 app-api), None 走全链。
 
         - open-api (主力): 极简参数 {aweme_id, aid} + Origin/Referer 指向
           open.douyin.com, 该入口不校验 a_bogus 签名与登录态, 2026-09 实测最稳
@@ -218,6 +221,8 @@ class DouyinParser(BaseParser):
 
         response = None
         for name, form_headers, url, params in variants:
+            if forms is not None and name not in forms:
+                continue
             try:
                 response = await self.request(url, headers=form_headers, params=params)
             except httpx.HTTPError as e:
@@ -269,10 +274,36 @@ class DouyinParser(BaseParser):
             timestamp=int(time.time()),
         )
 
+    async def _parse_story_via_app(self, video_id: str):
+        """story 渠道过滤后走 App 端点直连重试, 未配置设备参数/拿不到数据返回 None。
+
+        App 端点是 story 渠道内容的原生分发渠道: web 端被 story_25_filter
+        拒发的作品, App 直连通常仍下发完整 detail (2026-10-10 实测
+        7694643968583141755「租房李老师」: open-api 返回 story_25_filter,
+        App 直连返回全量含播放直链)。变体链对 open-api 的**非空过滤响应**
+        会即停 (无法在链内区分数据与过滤体), 故在此定向补试。
+        """
+        from . import slides
+        from ...config import pconfig
+
+        if appapi.parse_profile(pconfig.douyin_app_device_profile) is None:
+            return None
+        response = await self._request_detail(video_id, forms=("app-api",))
+        if response is None or not response.content:
+            logger.warning(f"douyin app endpoint no data for story-filtered {video_id}")
+            return None
+        try:
+            aweme_detail = slides.decode_aweme_detail(response.content)
+        except Exception as e:
+            logger.warning(f"douyin app endpoint decode failed for {video_id}: {e!r}")
+            return None
+        if aweme_detail is None or aweme_detail.is_deleted:
+            logger.warning(f"douyin app endpoint still filtered/unavailable for {video_id}")
+            return None
+        return self._build_slides_result(aweme_detail, video_id)
+
     async def parse_slides(self, video_id: str):
         from . import slides
-        from ...utils import ffmpeg_available
-        from ...config import pconfig
 
         response = await self._request_detail(video_id)
         if response is None or not response.content:
@@ -300,12 +331,15 @@ class DouyinParser(BaseParser):
             # 准确提示 (判定规则见 slides.is_deleted_response)
             if slides.is_deleted_response(response.content):
                 raise TipException("该抖音作品已被删除，无法解析")
-            # 内容级过滤 (如 story_25_filter): 服务端明确不下发数据, 属确定性
-            # 失败, 重试/换形态/L2 兜底都无意义 → TipException 立即提示不重试
-            # (parse_retry 对 TipException 不重试, matchers 发提示消息)
+            # 内容级过滤 (如 story_25_filter): 服务端对 web 端明确不下发数据,
+            # 属确定性失败 → TipException 不盲目重试 (parse_retry 对
+            # TipException 不重试, matchers 发提示消息)
             if reason := slides.extract_filter_reason(response.content):
                 if reason.startswith("story"):
-                    # 故事内容优先走模拟器采集服务 (配置了才有), 失败回退提示
+                    # story 渠道是 App 原生渠道: 先试 App 端点直连 (配置了设备
+                    # 参数才有), 拿不到再落模拟器采集服务, 最后提示
+                    if (app_result := await self._parse_story_via_app(video_id)) is not None:
+                        return app_result
                     if (story_result := await self._parse_story_via_service(video_id)) is not None:
                         return story_result
                     raise TipException("该内容是抖音「故事」，仅在抖音 App 内可见，无法解析")
@@ -316,6 +350,13 @@ class DouyinParser(BaseParser):
         # (媒体直链通常随之失效), 在构建内容前拦截
         if aweme_detail.is_deleted:
             raise TipException("该抖音作品已被删除，无法解析")
+
+        return self._build_slides_result(aweme_detail, video_id)
+
+    def _build_slides_result(self, aweme_detail, video_id: str):
+        """由解码后的 aweme_detail 构建 ParseResult (幻灯片合并/图文/实况/视频)。"""
+        from ...utils import ffmpeg_available
+        from ...config import pconfig
 
         contents = []
 

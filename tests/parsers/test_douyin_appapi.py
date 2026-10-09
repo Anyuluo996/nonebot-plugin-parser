@@ -238,3 +238,85 @@ async def test_appapi_variant_skipped_without_profile(monkeypatch):
     parser = DouyinParser()
     await parser._request_detail("7681253720335650091")
     assert [_classify(c) for c in calls] == ["open-api", "signed", "bytespider"]
+
+
+# === story 渠道过滤后的 App 直连重试 ===
+# 实战案例 (2026-10-10, 7694643968583141755「租房李老师」): open-api 返回
+# 非空 story_25_filter 过滤体, 变体链"非空即成功"即停, parse_slides 判定
+# 「故事」放弃; App 端点对该作品实际下发全量数据 → story 分支定向补试。
+
+_STORY_FILTER_JSON = json.dumps(
+    {
+        "status_code": 0,
+        "filter_detail": {"aweme_id": "7694643968583141755", "filter_reason": "story_25_filter"},
+    }
+).encode()
+
+
+def _pin_credentials(monkeypatch):
+    monkeypatch.setattr("nonebot_plugin_parser.parsers.douyin.ttwid.get_effective_credential", lambda: None)
+    monkeypatch.setattr("nonebot_plugin_parser.parsers.douyin.ttwid.get_effective_uifid", lambda: None)
+
+
+@pytest.mark.asyncio
+async def test_story_filter_retried_via_app_endpoint(monkeypatch):
+    """open-api 返回 story 过滤体 → App 直连拿到全量数据, 正常产出解析结果。"""
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.parsers import DouyinParser
+
+    monkeypatch.setattr(pconfig, "parser_douyin_app_device_profile", _PROFILE_JSON)
+    _pin_credentials(monkeypatch)
+
+    async def fake_request(_self, url, *, headers=None, params=None, **_kw):
+        call = {"url": str(url), "headers": dict(headers or {}), "params": params if params is None else dict(params)}
+        if _classify(call) == "app-api":
+            return _Resp(_DETAIL_JSON)
+        return _Resp(_STORY_FILTER_JSON)  # open-api (非空过滤体, 链内即停)
+
+    monkeypatch.setattr(DouyinParser, "request", fake_request)
+
+    parser = DouyinParser()
+    result = await parser.parse_slides("7694643968583141755")
+    assert result.title == "app-api endpoint regression", "story 过滤后应由 App 直连兜住"
+    assert result.author is not None, "作者为空"
+    assert result.author.name == "appapi-tester"
+
+
+@pytest.mark.asyncio
+async def test_story_filter_without_app_profile_tips(monkeypatch):
+    """未配置设备参数时 story 过滤维持原行为: 直接 TipException。"""
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.parsers import DouyinParser
+    from nonebot_plugin_parser.exception import TipException
+
+    monkeypatch.setattr(pconfig, "parser_douyin_app_device_profile", None)
+    _pin_credentials(monkeypatch)
+
+    async def fake_request(_self, _url, **_kw):
+        return _Resp(_STORY_FILTER_JSON)
+
+    monkeypatch.setattr(DouyinParser, "request", fake_request)
+
+    parser = DouyinParser()
+    with pytest.raises(TipException, match="故事"):
+        await parser.parse_slides("7694643968583141755")
+
+
+@pytest.mark.asyncio
+async def test_story_filter_app_endpoint_empty_falls_to_tip(monkeypatch):
+    """App 直连也拿不到数据 (空 body) 时回退 TipException, 不误报成功。"""
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.parsers import DouyinParser
+    from nonebot_plugin_parser.exception import TipException
+
+    monkeypatch.setattr(pconfig, "parser_douyin_app_device_profile", _PROFILE_JSON)
+    _pin_credentials(monkeypatch)
+
+    async def fake_request(_self, _url, **_kw):
+        return _Resp(_STORY_FILTER_JSON)
+
+    monkeypatch.setattr(DouyinParser, "request", fake_request)
+
+    parser = DouyinParser()
+    with pytest.raises(TipException, match="故事"):
+        await parser.parse_slides("7694643968583141755")

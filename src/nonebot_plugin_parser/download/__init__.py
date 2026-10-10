@@ -27,7 +27,7 @@ CURL_DOWNLOAD_TIMEOUT: tuple[float, float] = (DOWNLOAD_TIMEOUT.connect or 15.0, 
 
 # Referer 白名单：域名 → Referer 值
 _REFERRER_MAP: dict[str, str] = {
-    "img.nga.178.com": "https://nga.178.com/",
+    "img.nga.cn": "https://nga.178.com/",
 }
 
 # 单次解析内并发下载上限。贴吧/NGA 长帖可能一次解析几十张内嵌图,
@@ -39,7 +39,7 @@ _DOWNLOAD_SEM = asyncio.Semaphore(8)
 # curl 专用域名（httpx 会被检测拦截或受代理环境变量影响导致 TLS 握手失败）
 _CURL_ONLY_DOMAINS: frozenset[str] = frozenset(
     {
-        "img.nga.178.com",
+        "img.nga.cn",
         # 抖音视频播放域名（重定向至 CDN）
         "snssdk.com",
         # 抖音 CDN 域名（国内 CDN，走代理会导致 TLS 握手失败）

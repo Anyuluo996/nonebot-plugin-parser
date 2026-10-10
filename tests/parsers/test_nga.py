@@ -52,7 +52,7 @@ async def test_nga_parse():
         logger.debug(f"  {post['floor']}F uid={post['uid']} name={post['name']}")
 
     # ── 下载资源（主楼 graphics + 回复楼 images） ──
-    # 图床 (img.nga.178.com) 在 CI 环境偶发 403/超时, 下载后 path_uri 为 None。
+    # 图床 (img.nga.cn) 在 CI 环境偶发 403/超时, 下载后 path_uri 为 None。
     # 此属第三方图床波动而非解析/下载逻辑缺陷, 与快手等测试一致做 skip 保护,
     # 避免图床抖动导致 CI 红。仅当图床可达时才严格断言下载产物。
     await result.ensure_downloads_complete()
@@ -62,7 +62,7 @@ async def test_nga_parse():
     missing = [img for img in reply_imgs if img.path_uri is None]
     if missing:
         pytest.skip(
-            f"NGA 图床下载失败（img.nga.178.com 偶发 403/超时），"
+            f"NGA 图床下载失败（img.nga.cn 偶发 403/超时），"
             f"{len(missing)}/{len(reply_imgs)} 张回复楼图片无 path_uri，跳过"
         )
 

@@ -35,7 +35,8 @@ class NGAParser(BaseParser):
 
     @staticmethod
     def build_img_url(path: str) -> str:
-        return "https://img.nga.178.com/attachments" + path
+        # NGA 图床 2026-10 已从 img.nga.178.com 迁到 img.nga.cn, 旧域名 DNS 记录已删
+        return "https://img.nga.cn/attachments" + path
 
     @handle("nga", r"tid=(?P<tid>\d+)")
     async def _parse(self, searched: re.Match[str]):

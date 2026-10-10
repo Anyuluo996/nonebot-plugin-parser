@@ -132,7 +132,7 @@ async def test_download_and_convert():
     print("=" * 70)
 
     # 使用一个简单的 GIF 视频测试 URL
-    test_url = "https://img.nga.178.com/attachments/mon_202601/13/-zue37Q7eoy-6db6ZlT3cSdr-264.png"
+    test_url = "https://img.nga.cn/attachments/mon_202601/13/-zue37Q7eoy-6db6ZlT3cSdr-264.png"
     # 使用推特 GIF
     test_url = "https://x.com/i/status/2017344867878248543"
 

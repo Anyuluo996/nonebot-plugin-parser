@@ -133,6 +133,15 @@ async def test_slideshow_replaces_images_when_bgm_present(monkeypatch):
     ]
     assert composed["audio_path"] == Path("/fake/bgm.mp3")
 
+    # 降级出口接线: 合成失败时渲染层可惰性回退逐项直发(旧行为),
+    # 静默丢掉 fallback= 会让整个降级机制沦为死代码
+    from nonebot_plugin_parser.parsers import ImageContent
+
+    assert video.fallback is not None, "合成视频应携带 fallback 降级工厂"
+    fallback_items = video.fallback()
+    assert len(fallback_items) == 3, "降级工厂应产出 3 张原始图"
+    assert all(isinstance(item, ImageContent) for item in fallback_items)
+
 
 async def test_mixed_note_merges_into_single_video(monkeypatch):
     """静态图 + 实况照片混排 → 合并为单条视频。
@@ -312,17 +321,43 @@ async def test_compose_slideshow_all_images_failed(monkeypatch):
 
 
 async def test_compose_slideshow_conversion_timeout(monkeypatch):
-    """转换段(ffmpeg 编码)超 video_send_timeout → DownloadException, 不无限阻塞消息。"""
+    """转换段(ffmpeg 编码)超合成超时 → DownloadException, 不无限阻塞消息。"""
     from nonebot_plugin_parser import utils as utils_mod
     from nonebot_plugin_parser.config import pconfig
     from nonebot_plugin_parser.parsers import DouyinParser
     from nonebot_plugin_parser.exception import DownloadException
 
-    monkeypatch.setattr(pconfig, "parser_video_send_timeout", 1)
+    monkeypatch.setattr(pconfig, "parser_douyin_slideshow_timeout", 1)
 
     async def _slow(segments, audio_path, output_path, **kwargs):
         await asyncio.sleep(5)
         raise AssertionError("应被 wait_for 超时打断")
+
+    monkeypatch.setattr(utils_mod, "media_to_slideshow", _slow)
+
+    async def _ok() -> Path:
+        return Path("/fake/a.jpg")
+
+    parser = DouyinParser()
+    with pytest.raises(DownloadException):
+        await parser._compose_slideshow(
+            [asyncio.create_task(_ok())], ["image"], asyncio.create_task(_ok()), Path("/fake/out.mp4")
+        )
+
+
+async def test_compose_slideshow_timeout_decoupled_from_video_send_timeout(monkeypatch):
+    """合成超时独立于 video_send_timeout: 后者再大也不放宽前者(2026-10-11 yun
+    合成超时事故回归: 30s 的 video_send_timeout 掐死长合成)。"""
+    from nonebot_plugin_parser import utils as utils_mod
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.parsers import DouyinParser
+    from nonebot_plugin_parser.exception import DownloadException
+
+    monkeypatch.setattr(pconfig, "parser_video_send_timeout", 600)
+    monkeypatch.setattr(pconfig, "parser_douyin_slideshow_timeout", 1)
+
+    async def _slow(segments, audio_path, output_path, **kwargs):
+        await asyncio.sleep(5)
 
     monkeypatch.setattr(utils_mod, "media_to_slideshow", _slow)
 
@@ -763,3 +798,23 @@ async def test_merge_bgm_keeps_audible_track(tmp_path):
     out = await parser._merge_bgm(asyncio.create_task(_video()), asyncio.create_task(_bgm()))
     assert out == video, "可闻原声应跳过合并返回原视频"
     assert not (tmp_path / "orig_bgm.mp4").exists()
+
+
+async def test_slideshow_timeout_config_default():
+    """合成超时默认 90s, 独立于 video_send_timeout(30s)。"""
+    from nonebot_plugin_parser.config import pconfig
+
+    assert pconfig.parser_douyin_slideshow_timeout == 90.0
+    assert pconfig.douyin_slideshow_timeout == 90.0
+    assert pconfig.video_send_timeout == 30
+
+
+async def test_slideshow_timeout_config_falls_back(monkeypatch):
+    """合成超时配 <=0 时回落 video_send_timeout(旧配置兼容)。"""
+    from nonebot_plugin_parser.config import pconfig
+
+    monkeypatch.setattr(pconfig, "parser_douyin_slideshow_timeout", 0)
+    assert pconfig.douyin_slideshow_timeout == float(pconfig.video_send_timeout)
+
+    monkeypatch.setattr(pconfig, "parser_video_send_timeout", 15)
+    assert pconfig.douyin_slideshow_timeout == 15.0

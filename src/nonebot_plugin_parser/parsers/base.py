@@ -3,10 +3,10 @@ from abc import ABC
 from typing import TYPE_CHECKING, Any, TypeVar, ClassVar, cast
 from asyncio import Task
 from pathlib import Path
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Sequence, Coroutine
 from typing_extensions import Unpack, final
 
-from .data import Platform, ParseResult, ImageContent, ParseResultKwargs
+from .data import Platform, ParseResult, ImageContent, DynamicContent, ParseResultKwargs
 from ..config import pconfig as pconfig
 from ..download import DOWNLOADER
 from ..constants import IOS_HEADER, COMMON_HEADER, ANDROID_HEADER, COMMON_TIMEOUT
@@ -645,20 +645,23 @@ class BaseParser:
         *,
         cache_key: str | None = None,
         cover_url: str | None = None,
+        fallback: Callable[[], Sequence[ImageContent | DynamicContent]] | None = None,
     ):
         """把媒体项列表（静态图 + 实况视频混排）+ BGM 合成为单条轮播视频（抖音图文）。
 
         抖音图文在 App 内是随 BGM 轮播的幻灯片视频，逐张发静态图会丢掉音乐
         氛围，实况照片也一并合入同一条视频按原速播放（否则幻灯片+实况要发
         两条视频）。图片/BGM/视频下载与 ffmpeg 合成打包成一个 Task[Path]，
-        对渲染层就是普通 VideoContent；合成失败抛 DownloadException，该内容
-        跳过（与视频下载失败同待遇）。
+        对渲染层就是普通 VideoContent；合成失败抛 DownloadException，有
+        fallback 时渲染层降级直发原始媒体，否则该内容跳过（与视频下载失败
+        同待遇）。
 
         Args:
             media_items: ("image"|"video", 直链) 列表, 按原帖顺序。
             bgm_url: 背景音乐直链。
             cache_key: 产物缓存键; None 时按全部直链派生。
             cover_url: 无静态图项时的封面直链 (纯实况帖用实况封面)。
+            fallback: 合成失败时渲染层的降级出口, 惰性工厂 (调用才创建下载任务)。
         """
         import asyncio
         from hashlib import md5
@@ -703,7 +706,7 @@ class BaseParser:
             return await DOWNLOADER.download_img(cover_url, ext_headers=self.headers)
 
         cover_task = asyncio.create_task(_shielded_cover()) if (first_img_task is not None or cover_url) else None
-        return VideoContent(compose_task, cover=cover_task)
+        return VideoContent(compose_task, cover=cover_task, fallback=fallback)
 
     async def _compose_slideshow(
         self,
@@ -715,8 +718,8 @@ class BaseParser:
         """等待媒体/BGM 下载并合成幻灯片视频（create_slideshow_content 的执行体）。
 
         降级链：单个媒体失败用剩余项继续；BGM 失败降级为无声视频；全部媒体
-        失败或 ffmpeg 合成失败抛 DownloadException，渲染层跳过该视频、不阻塞
-        其它内容。
+        失败或 ffmpeg 合成失败抛 DownloadException——有 fallback 时渲染层降级
+        直发原始媒体，否则跳过该视频、不阻塞其它内容。
         """
         import asyncio
 
@@ -742,9 +745,11 @@ class BaseParser:
             # BGM 拿不到只损失氛围，不值得丢掉整个图文
             logger.warning("幻灯片 BGM 下载失败, 降级为无声视频")
 
-        # 至此下载段结束, 剩下纯 ffmpeg 转换段: 按契约套 video_send_timeout
-        # （与 GIF 转换同待遇; 0/负值不限时）。超时取消会 kill 子进程
-        timeout = pconfig.video_send_timeout
+        # 至此下载段结束, 剩下纯 ffmpeg 转换段: 合成耗时随时长/分辨率/宿主负载
+        # 波动大(2026-10-11 yun 负载尖峰 30s 帖贴穿 30s 的 video_send_timeout),
+        # 用独立超时; 0/负值回落 video_send_timeout, 与 GIF 转换同待遇。
+        # 超时取消会 kill 子进程
+        timeout = pconfig.douyin_slideshow_timeout
         per_image = pconfig.douyin_slideshow_per_image
         max_duration = pconfig.douyin_slideshow_max_duration
         try:

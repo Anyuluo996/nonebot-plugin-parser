@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from typing import Any, ClassVar
 from pathlib import Path
 from itertools import chain
+from collections import deque
 from collections.abc import AsyncGenerator
 from typing_extensions import override
 
@@ -42,15 +43,34 @@ class BaseRenderer(ABC):
         forwardable_segs: list[ForwardNodeInner] = []
         dynamic_segs: list[ForwardNodeInner] = []
 
-        for cont in chain(result.contents, result.repost.contents if result.repost else ()):
+        # pending 队列替代直接 for: 视频产出失败但有 fallback 时, 工厂产物
+        # (原始图/实况) 回灌队首, 按普通内容逐项直发(幻灯片合成失败的降级出口)
+        pending: deque[Any] = deque(chain(result.contents, result.repost.contents if result.repost else ()))
+        while pending:
+            cont = pending.popleft()
             try:
                 match cont:
                     case VideoContent():
                         # 渲染卡片(含视频缩略图)已先行发送, 这里直接等下载完成再补发视频。
                         # 下载层自带重试预算(重试耗尽才抛 DownloadException), 不设渲染层
                         # 超时——wait_for 会 cancel 底层 task, 把仍在重试、马上就会成功的
-                        # 下载判死(2026-09-25 推特 twimg 视频事故)。
-                        path = await cont.get_path()
+                        # 下载判死(2026-09-25 推特 twimg 视频事故)。唯一例外是幻灯片
+                        # 合成(纯 ffmpeg 段, 无重试语义), 走独立的合成超时。
+                        try:
+                            path = await cont.get_path()
+                        except DownloadException:
+                            if cont.fallback is None:
+                                raise
+                            try:
+                                fallback_items = cont.fallback()
+                            except Exception:
+                                # 工厂炸了不能带崩整条消息渲染, 降级为普通失败计数
+                                logger.warning("fallback 工厂构建失败, 按下载失败处理", exc_info=True)
+                                failed_count += 1
+                                continue
+                            logger.info("视频产出失败, 降级直发原始媒体")
+                            pending.extendleft(reversed(fallback_items))
+                            continue
                         yield UniMessage(UniHelper.video_seg(path))
                     case AudioContent():
                         path = await cont.get_path()

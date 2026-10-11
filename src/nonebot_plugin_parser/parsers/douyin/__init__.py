@@ -13,6 +13,7 @@ from ..base import (
     ParseException,
     handle,
 )
+from ..data import ImageContent, DynamicContent
 from ._abogus import ABogus
 from ...exception import TipException
 
@@ -380,9 +381,30 @@ class DouyinParser(BaseParser):
             if not any(kind == "image" for kind, _ in media_items):
                 covers = aweme_detail.dynamic_cover_urls
                 cover_url = covers[0] if covers else None
+
+            def _slides_fallback() -> list[ImageContent | DynamicContent]:
+                # 合成失败/超时时的降级出口: 回退逐项直发(旧行为)。惰性构建——
+                # 仅降级时才创建下载任务, 合成成功则零开销
+                items: list[ImageContent | DynamicContent] = []
+                if image_urls := aweme_detail.image_urls:
+                    items.extend(self.create_image_contents(image_urls))
+                if dynamic_urls := aweme_detail.dynamic_urls:
+                    items.extend(
+                        self.create_dynamic_contents(
+                            dynamic_urls,
+                            cover_urls=aweme_detail.dynamic_cover_urls,
+                            bgm_url=bgm_url,
+                        )
+                    )
+                return items
+
             contents.append(
                 self.create_slideshow_content(
-                    media_items, bgm_url, cache_key=f"douyin-slideshow-v4-{video_id}", cover_url=cover_url
+                    media_items,
+                    bgm_url,
+                    cache_key=f"douyin-slideshow-v4-{video_id}",
+                    cover_url=cover_url,
+                    fallback=_slides_fallback,
                 )
             )
         else:

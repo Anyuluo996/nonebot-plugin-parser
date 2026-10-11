@@ -6,7 +6,7 @@ from asyncio import Task
 from pathlib import Path
 from datetime import datetime
 from dataclasses import field, dataclass
-from collections.abc import Iterator, Sequence, Awaitable
+from collections.abc import Callable, Iterator, Sequence, Awaitable
 
 from nonebot import logger
 
@@ -66,6 +66,13 @@ class VideoContent(MediaContent):
     """视频封面"""
     duration: float = 0.0
     """时长 单位: 秒"""
+    fallback: Callable[[], Sequence[ImageContent | DynamicContent]] | None = None
+    """视频产出失败（下载/合成超时）时的降级出口。
+
+    惰性工厂：仅在失败时调用，产物由渲染层按普通图/实况逐项直发（如幻灯片
+    合成失败 → 原图 + 实况照片）。工厂内才创建下载任务，合成成功则零开销。
+    None 表示无降级，按普通失败计数。
+    """
 
     async def get_cover_path(self) -> Path | None:
         if self.cover is None:

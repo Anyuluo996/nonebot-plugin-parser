@@ -121,6 +121,14 @@ class Config(BaseModel):
     超长 BGM 只取开头一段（默认 60 秒），控制发送体积与合成耗时。
     <=0 视为不设上限（跟随完整 BGM）。
     """
+    parser_douyin_slideshow_timeout: float = 90.0
+    """图文幻灯片合成（ffmpeg）的超时（秒）。
+
+    合成耗时随时长、分辨率与宿主负载波动大（60s 帖空闲实测 ~14s，4vCPU 负载
+    尖峰下 30s 帖也曾贴穿 30s 的 video_send_timeout），故独立配置；到时 kill
+    ffmpeg 子进程并降级直发原始媒体。<=0 回落 ``parser_video_send_timeout``。
+    需完全不限时：把 ``parser_video_send_timeout`` 也置 <=0。
+    """
     parser_douyin_story_service: str | None = None
     """抖音「故事」采集服务地址（MuMu 模拟器 + frida 常驻管线）。
 
@@ -445,6 +453,12 @@ class Config(BaseModel):
         """图文幻灯片视频总时长上限（秒）；<=0 视为不设上限"""
         value = self.parser_douyin_slideshow_max_duration
         return value if value > 0 else float("inf")
+
+    @property
+    def douyin_slideshow_timeout(self) -> float:
+        """图文幻灯片合成超时（秒）；<=0 回落 video_send_timeout"""
+        value = self.parser_douyin_slideshow_timeout
+        return value if value > 0 else float(self.video_send_timeout)
 
     @property
     def douyin_story_service(self) -> str | None:

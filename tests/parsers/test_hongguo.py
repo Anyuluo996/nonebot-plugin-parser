@@ -85,6 +85,48 @@ def test_media_from_video_model_bad_spade_raises():
         parser._media_from_video_model(model)
 
 
+def test_guest_episode_request_shape():
+    """multi_video_detail 请求构造: 免签名头 + series_id 在 body。"""
+    from nonebot_plugin_parser.parsers.hongguo import _guest_episode_request
+
+    url, headers, body = _guest_episode_request("7687867423457823768")
+    assert "multi_video_detail/v1/" in url
+    assert "sinfonlinec" in url
+    assert re.search(r"iid=(\d{18})", url)
+    signed_headers = {"x-gorgon", "x-argus", "x-ladon", "cookie", "x-ss-stub"}
+    assert not signed_headers & {k.lower() for k in headers}, f"游客渠道不应携带签名/凭据头: {headers.keys()}"
+    payload = json.loads(body)
+    assert payload["series_id"] == "7687867423457823768"
+    assert payload["biz_param"]["source"] == 7
+
+
+def test_parse_episode_index_map():
+    """剧集列表解析: list/dict 双形态 + 病态输入返回 None。"""
+    from nonebot_plugin_parser.parsers.hongguo import _parse_episode_index_map
+
+    rows = [
+        {"vid": "7681", "vid_index": 1},
+        {"vid": "7682", "vid_index": 2},
+        {"vid": None, "vid_index": 3},  # 无 vid 的行跳过
+        {"vid": "bad", "vid_index": "x"},  # 集号非数字跳过
+    ]
+    as_list = {"data": {"sid": {"video_data": {"video_list": rows, "episode_cnt": 68}}}}
+    index_map, cnt = _parse_episode_index_map(as_list, "sid")
+    assert index_map == {"7681": 1, "7682": 2}
+    assert cnt == 68
+    # dict 变体 (键即 vid)
+    as_dict = {
+        "data": {"sid": {"video_data": {"video_list": {"7681": {"vid": "7681", "vid_index": 1}}, "episode_cnt": 9}}}
+    }
+    index_map, cnt = _parse_episode_index_map(as_dict, "sid")
+    assert index_map == {"7681": 1}
+    assert cnt == 9
+    # 形状不符 → None
+    assert _parse_episode_index_map({}, "sid") is None
+    assert _parse_episode_index_map({"data": {}}, "sid") is None
+    assert _parse_episode_index_map({"data": {"sid": {"video_data": {"video_list": []}}}}, "sid") is None
+
+
 @pytest.mark.asyncio
 async def test_share_short_link():
     """App 分享短链（真人剧，schemeParams 带 series_id + vid）。"""
@@ -163,12 +205,16 @@ async def test_share_text_only():
 
 @pytest.mark.asyncio
 async def test_full_episode_via_guest_api():
-    """非游客可看分集（第 51 集）经游客 multi_video_model 接口 + CENC 解密拿到可播放 mp4。
+    """深层分集经游客 multi_video_model 接口 + CENC 解密拿到可播放 mp4。
 
     2026-10-17 起主力渠道为免签名免注册的游客批量接口 (mixed_video_id_map
     type=1004), 全集可用; 解密链 (spade_a → AES-128-CTR) 不变。
     除上游整体失效外的一切异常照常 raise (原「无 skip 降级」原则,
     _skip_if_upstream_dead 只命中三渠道全灭特征)。
+
+    集号断言: 该 vid 权威 vid_index=2 (全 120 集, multi_video_detail 实测)。
+    历史名称里的「第 51 集」是网页 vid_list 推荐序造成的错位——恰为本功能
+    要修复的问题; 上游重排剧集会破坏此钉值, 失败时先核对 authoritative index。
     """
     from nonebot_plugin_parser.utils import ffmpeg_available
 
@@ -189,6 +235,7 @@ async def test_full_episode_via_guest_api():
         raise
     try:
         assert result.video_contents
+        assert "第2集" in (result.title or ""), f"标题应含权威集号: {result.title}"
         path = await result.video_contents[0].get_path()
         assert path.exists()
         assert path.stat().st_size > 0

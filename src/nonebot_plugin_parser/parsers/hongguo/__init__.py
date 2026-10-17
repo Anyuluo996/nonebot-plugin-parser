@@ -11,13 +11,17 @@
   （``window._ROUTER_DATA``，与抖音分享页同模式），含标题/封面/简介/全集
   ``vid_list``。游客仅开放前 ``accessible_episode_cnt``（通常 3）集的网页
   播放；完整分集列表不受限。
-- 分集播放: 番茄小说系 App 接口
-  ``api5-normal-sinfonlineb.fqnovel.com/novel/player/video_model/v1/``，
-  要求注册过的 TT 设备（见 :mod:`._device`）+ X-Gorgon 轻量签名（见
-  :mod:`._sign`），任意分集可用；返回 CENC 加密流 + ``spade_a`` 密钥材料
-  （见 :mod:`._crypto`），用 ffmpeg ``-decryption_key`` 流复制解密。
+- 分集播放（2026-10-17 起主力渠道）: 番茄小说系**游客**批量播放接口
+  ``api5-normal-sinfonlinec.fqnovel.com/novel/player/multi_video_model/v1/``，
+  随机 18 位 iid/device_id 直连，**免设备注册、免任何签名头**，body 以
+  ``mixed_video_id_map={"1004": [vid]}`` 携带分集，全集可用（2026-10-10 起的
+  ``video_model/v1`` 注册设备 + X-Gorgon 形态自 10-17 上游收紧后一律 200 空
+  body，保留作次选兜底）；返回 CENC 加密流 + ``spade_a`` 密钥材料（见
+  :mod:`._crypto`），用 ffmpeg ``-decryption_key`` 流复制解密。
 - 兜底: 网页版 ``/player/{series_id}/{vid}`` 的 SSR 数据对可开放分集直接
-  给出无加密 mp4 直链（无需签名与 ffmpeg）。
+  给出无加密 mp4 直链（无需签名与 ffmpeg）；2026-10-17 起网页端同样启用
+  播放保护（SSR 仅下发 ``protectedPlayback=true`` + SEO 数据），该兜底
+  仅在保护回退时生效。
 
 协议逆向参考: zhoufuweigg/guoapp（Go 站源实现）与
 lingbol088-spec/short-drama-downloader（Python 设备注册/签名/解密管线）。
@@ -28,6 +32,7 @@ import json
 import time
 import base64
 import asyncio
+import secrets
 from html import unescape
 from typing import ClassVar
 from hashlib import md5
@@ -52,6 +57,8 @@ from ...exception import TipException, IgnoreException, DownloadException
 
 _WEB_BASE = "https://hongguoduanju.com"
 _APP_BASE = "https://api5-normal-sinfonlineb.fqnovel.com"
+# 2026-10 改版后的游客批量播放端点（host 与旧 video_model 的 sinfonineb 不同）
+_GUEST_PLAYBACK_URL = "https://api5-normal-sinfonlinec.fqnovel.com/novel/player/multi_video_model/v1/"
 
 _APP_UA = _device.APP_UA
 
@@ -179,6 +186,83 @@ def _media_addresses(info: dict) -> list[str]:
                 if isinstance(item, str) and (url := _decode_maybe_base64(item)) and url not in addresses:
                     addresses.append(url)
     return addresses
+
+
+def _guest_playback_request(vids: list[str]) -> tuple[str, dict[str, str], bytes]:
+    """构造游客态 ``multi_video_model`` 请求的 ``(url, headers, body)``。
+
+    形态逆向自 hongguo-mac v0.8.1 的取流实现（Backend/hongguo.py video_models，
+    2026-10-17 实测 code=0 全清晰度下发，第 1/51 集均通）：
+
+    - 身份字段用随机 18 位数字，服务端不校验注册态，也不需要任何签名头
+      （无 X-Gorgon/X-Argus/Cookie，与旧 ``video_model/v1`` 的根本区别）;
+    - version 固定 71332 (7.1.3.32) 且 ``pv_player``/``player_so_load`` 等
+      播放器参数必须携带;
+    - body 以 ``mixed_video_id_map={"1004": vids}`` 携带分集（单次至多 5 个），
+      ``biz_param`` 的 ``device_level``/``video_platform`` 与旧接口取值不同;
+    - query 手拼原样发送（``*`` 不转义，与 ``_app_request`` 同款，均被接受）。
+    """
+    now_ms = int(time.time() * 1000)
+    query = {
+        "iid": str(10**17 + secrets.randbelow(9 * 10**17)),
+        "device_id": str(10**17 + secrets.randbelow(9 * 10**17)),
+        "ac": "wifi",
+        "channel": "update_64",
+        "aid": "8662",
+        "app_name": "novelread",
+        "version_code": "71332",
+        "version_name": "7.1.3.32",
+        "device_platform": "android",
+        "os": "android",
+        "ssmix": "a",
+        "device_type": _device.DEVICE_TYPE,
+        "device_brand": _device.DEVICE_BRAND,
+        "language": "zh",
+        "os_api": _device.OS_API,
+        "os_version": _device.OS_VERSION,
+        "manifest_version_code": "71332",
+        "resolution": _device.RESOLUTION,
+        "dpi": _device.DPI,
+        "update_version_code": "71332",
+        "host_abi": "arm64-v8a",
+        "dragon_device_type": "phone",
+        "pv_player": "71332",
+        "compliance_status": "0",
+        "need_personal_recommend": "1",
+        "player_so_load": "1",
+        "is_android_pad_screen": "0",
+        "_rticket": str(now_ms),
+    }
+    query_string = "&".join(f"{key}={value}" for key, value in query.items())
+    headers = {
+        "User-Agent": _APP_UA,
+        "Accept": "application/json; charset=utf-8,application/x-protobuf",
+        "Content-Type": "application/json; charset=UTF-8",
+        "x-xs-from-web": "0",
+        "x-ss-req-ticket": str(now_ms),
+        "x-tt-request-tag": "t=0;n=0",
+        "sdk-version": "2",
+        "passport-sdk-version": "50561",
+        "x-vc-bdturing-sdk-version": "3.7.2.cn",
+    }
+    body = json.dumps(
+        {
+            "biz_param": {
+                "detail_page_version": 0,
+                "device_level": 3,
+                "disable_digg_stat": False,
+                "need_all_video_definition": True,
+                "need_mp4_align": False,
+                "use_os_player": False,
+                "use_server_dns": False,
+                "video_platform": 1024,
+            },
+            "mixed_video_id_map": {"1004": vids},
+        },
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode()
+    return f"{_GUEST_PLAYBACK_URL}?{query_string}", headers, body
 
 
 # ---------------------------------------------------------------------------
@@ -375,8 +459,17 @@ class HongguoParser(BaseParser):
     # -- 播放地址 ------------------------------------------------------------
 
     async def _resolve_media(self, vid: str, series_id: str) -> _Media:
-        """解析单集播放地址：App 接口（全集）→ 网页 player 页（可开放分集）。"""
+        """解析单集播放地址：游客接口（全集，2026-10 起主力）→ 注册设备 App 接口
+        → 网页 player 页（可开放分集）。"""
         errors: list[str] = []
+        try:
+            return await self._media_via_guest(vid)
+        except (IgnoreException, TipException):
+            raise
+        except Exception as e:
+            errors.append(f"游客接口: {e}")
+            logger.warning(f"hongguo 游客取流失败 vid={vid}: {e!r}")
+
         try:
             return await self._media_via_app(vid)
         except (IgnoreException, TipException):
@@ -453,23 +546,14 @@ class HongguoParser(BaseParser):
             raise ParseException(f"红果 App 接口返回错误码 {code}")
         return data
 
-    async def _media_via_app(self, vid: str) -> _Media:
-        """App 播放接口取流（CENC 加密），设备被风控时自动换新重试一次。"""
-        payload = {
-            "video_id": vid,
-            "content_type": 1,
-            "biz_param": {"need_all_video_definition": True, "video_platform": 3},
-        }
-        data = await self._app_request("/novel/player/video_model/v1/", payload)
-        if data is None:
-            # 200 + 空 body = 设备被风控 / 签名失效，换新设备重试一次
-            logger.info("hongguo App 接口空响应，换新设备重试")
-            await _device.refresh_device()
-            data = await self._app_request("/novel/player/video_model/v1/", payload)
-        if data is None:
-            raise ParseException("红果播放接口无有效响应")
+    def _media_from_video_model(self, model: dict | str | None) -> _Media:
+        """从 video_model 载荷选取最高清晰度轨道（游客/App 两渠道共用）。
 
-        model = (data.get("data") or {}).get("video_model")
+        轨道结构与 2026-10 改版前一致: ``video_list`` (dict 或 list 变体) 每项
+        含 main_url/backup_url（可 base64）+ video_meta + encrypt_info.spade_a。
+        """
+        if model is None:
+            raise ParseException("红果播放数据缺失")
         if isinstance(model, str):
             try:
                 model = json.loads(model)
@@ -531,6 +615,57 @@ class HongguoParser(BaseParser):
             # 解密链路必需 ffmpeg；无可解密手段时交给上层回退网页直链
             raise DownloadException("红果加密视频需要 ffmpeg 解密，但 ffmpeg 不可用")
         return best
+
+    async def _media_via_guest(self, vid: str) -> _Media:
+        """游客批量播放接口取流（2026-10 改版后主力渠道，免签名免设备注册）。
+
+        2026-10-17 上游收紧后，旧 ``video_model/v1``（注册设备 + X-Gorgon）一律
+        200 空 body、网页 SSR 只下发 protectedPlayback 标记；游客态
+        ``multi_video_model/v1`` 对随机设备标识直接下发全清晰度加密流（含
+        spade_a），第 1/51 集实测均通，解密链不变。请求构造见
+        :func:`_guest_playback_request`。
+        """
+        url, headers, body = _guest_playback_request([vid])
+        resp = await self.request(
+            url,
+            method="POST",
+            content=body,
+            headers=headers,
+            raise_for_status=False,
+        )
+        if resp.status_code != 200 or not resp.content:
+            raise ParseException(f"红果游客播放接口无有效响应（HTTP {resp.status_code}）")
+        try:
+            payload = resp.json()
+        except ValueError as e:
+            raise ParseException("红果游客播放接口返回非 JSON") from e
+        code = payload.get("Code", payload.get("code", 0))
+        if code not in ("", 0, "0"):
+            raise ParseException(f"红果游客播放接口错误码 {code}")
+        entry = (payload.get("data") or {}).get(vid)
+        model = entry.get("video_model") if isinstance(entry, dict) else None
+        if not model:
+            raise ParseException("红果游客播放接口未返回该集播放数据")
+        return self._media_from_video_model(model)
+
+    async def _media_via_app(self, vid: str) -> _Media:
+        """旧注册设备 App 播放接口取流（2026-10-17 起被上游收紧为 200 空 body，
+        降为次选兜底，若上游回退签名策略仍可用）。"""
+        payload = {
+            "video_id": vid,
+            "content_type": 1,
+            "biz_param": {"need_all_video_definition": True, "video_platform": 3},
+        }
+        data = await self._app_request("/novel/player/video_model/v1/", payload)
+        if data is None:
+            # 200 + 空 body = 设备被风控 / 签名失效，换新设备重试一次
+            logger.info("hongguo App 接口空响应，换新设备重试")
+            await _device.refresh_device()
+            data = await self._app_request("/novel/player/video_model/v1/", payload)
+        if data is None:
+            raise ParseException("红果播放接口无有效响应")
+
+        return self._media_from_video_model((data.get("data") or {}).get("video_model"))
 
     async def _media_via_web(self, series_id: str, vid: str) -> _Media:
         """网页 player 页取流（仅游客可开放的分集有直链，无加密）。"""

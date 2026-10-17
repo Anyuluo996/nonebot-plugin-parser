@@ -1,5 +1,7 @@
 """红果短剧 parser 真实网络测试（tests/parsers/ 自动带 network marker）。"""
 
+import re
+import json
 import asyncio
 
 import httpx
@@ -18,14 +20,69 @@ def _cancel_pending(result) -> None:
 def _skip_if_upstream_dead(e: Exception) -> None:
     """红果上游播放保护收紧 (2026-10-17 实测) 的定向 skip。
 
-    App video_model 端点一律 200+空 body (换设备/换版本号均无效), web player 页
-    SSR 只下发 protectedPlayback=true + publicVideoSeo 不再内嵌播放数据, 两渠道
-    全灭属上游变更而非解析回归, 按 kuaishou 空响应先例转 skip (上游恢复或重新
-    逆向接入后自动恢复实跑)。其余异常原样上抛, 不掩盖解析层回归。
+    该日上游收紧后旧 App video_model 一律 200+空 body、web player 页不再内嵌
+    播放数据; 当日已接入游客 multi_video_model 渠道恢复 (形态逆向自
+    hongguo-mac v0.8.1)。本守卫保留: 若三渠道再次整体失效 (取流全灭特征
+    文案) 则 skip, 其余异常原样上抛, 不掩盖解析层回归。
     """
     text = str(e)
     if "红果播放接口无有效响应" in text or "红果网页播放数据为空" in text:
-        pytest.skip(f"红果上游播放保护收紧, 取流渠道全灭 (待重新逆向): {text}")
+        pytest.skip(f"红果上游取流渠道全灭 (待重新逆向): {text}")
+
+
+# === 离线单测: 游客播放请求构造 / video_model 轨道选择 ===
+
+
+def test_guest_playback_request_shape():
+    """multi_video_model 请求构造: 随机身份、免签名头、mixed_video_id_map body。"""
+    from nonebot_plugin_parser.parsers.hongguo import _guest_playback_request
+
+    url, headers, body = _guest_playback_request(["7687869271090678808"])
+    assert "multi_video_model/v1/" in url, f"应指向游客批量播放端点: {url}"
+    assert "sinfonlinec" in url, "2026-10 改版后 host 为 sinfoninec"
+    # 身份字段为随机 18 位数字, 每次构造不同
+    assert re.search(r"iid=(\d{18})", url)
+    assert re.search(r"device_id=(\d{18})", url)
+    assert _guest_playback_request(["7687869271090678808"])[0] != url
+    # 免签名免凭据: 无 X-Gorgon/X-Argus/Cookie/x-ss-stub
+    signed_headers = {"x-gorgon", "x-argus", "x-ladon", "x-khronos", "cookie", "x-ss-stub"}
+    assert not signed_headers & {k.lower() for k in headers}, f"游客渠道不应携带签名/凭据头: {headers.keys()}"
+    assert headers["sdk-version"] == "2"
+    payload = json.loads(body)
+    assert payload["mixed_video_id_map"] == {"1004": ["7687869271090678808"]}
+    assert payload["biz_param"]["video_platform"] == 1024
+    assert payload["biz_param"]["need_all_video_definition"] is True
+
+
+def test_media_from_video_model_picks_highest():
+    """轨道选择取最高清晰度, 毫秒 duration 落到 _Media, 明文轨 key_hex=None。"""
+    from nonebot_plugin_parser.parsers import HongguoParser
+
+    parser = HongguoParser()
+    model = {
+        "video_duration": "15000",
+        "video_list": [
+            {"main_url": "https://cdn.example/low.mp4", "video_meta": {"vheight": 360}},
+            {"main_url": "https://cdn.example/high.mp4", "video_meta": {"vheight": 1080}},
+            {"main_url": "https://cdn.example/mid.mp4", "video_meta": {"vheight": 720}},
+        ],
+    }
+    media = parser._media_from_video_model(model)
+    assert media.url == "https://cdn.example/high.mp4"
+    assert media.key_hex is None
+    assert media.duration == 15000.0
+    assert media.backup_urls == []
+
+
+def test_media_from_video_model_bad_spade_raises():
+    """轨道带非法 spade_a 时报密钥不可用, 而非静默选明文轨。"""
+    from nonebot_plugin_parser.parsers import HongguoParser
+    from nonebot_plugin_parser.exception import ParseException
+
+    parser = HongguoParser()
+    model = {"video_list": [{"main_url": "https://cdn.example/a.mp4", "encrypt_info": {"spade_a": "!!!"}}]}
+    with pytest.raises(ParseException, match="密钥不可用"):
+        parser._media_from_video_model(model)
 
 
 @pytest.mark.asyncio
@@ -105,13 +162,13 @@ async def test_share_text_only():
 
 
 @pytest.mark.asyncio
-async def test_full_episode_via_app_api():
-    """非游客可看分集（第 51 集）经 App 接口 + CENC 解密拿到可播放 mp4。
+async def test_full_episode_via_guest_api():
+    """非游客可看分集（第 51 集）经游客 multi_video_model 接口 + CENC 解密拿到可播放 mp4。
 
-    原则「无 skip 降级」保持: 解密链路是本平台核心路径, 除上游失效外的一切
-    异常照常 raise。2026-10-17 起上游播放保护收紧致取流全灭 (见
-    _skip_if_upstream_dead), 该形态下解密链路根本不会被触达, 定向 skip 的
-    只是这种整体失效; 上游恢复后自动恢复实跑。
+    2026-10-17 起主力渠道为免签名免注册的游客批量接口 (mixed_video_id_map
+    type=1004), 全集可用; 解密链 (spade_a → AES-128-CTR) 不变。
+    除上游整体失效外的一切异常照常 raise (原「无 skip 降级」原则,
+    _skip_if_upstream_dead 只命中三渠道全灭特征)。
     """
     from nonebot_plugin_parser.utils import ffmpeg_available
 

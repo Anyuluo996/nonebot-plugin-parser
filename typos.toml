@@ -11,9 +11,10 @@ open_udid = "open_udid"
 # X web 端内置 Bearer token 字符串片段（公开常量, 误报为 Is）
 Iz = "Iz"
 
-# 抖音分享短链 ID（含 ue 片段, 误报为 use/due）
+# 抖音分享短链 ID（含 ue 片段, 误报为 use/due）；
+# 红果 App 抓包的 image_shrink_datas_str（线上协议字段, "datas" 为上游拼写, 勿改）
 [default]
-extend-ignore-re = ['4ueJKZQ0tpI']
+extend-ignore-re = ['4ueJKZQ0tpI', 'image_shrink_datas_str']
 
 # 历史 API 抓取数据 / 渲染输出，含中文用户名、原始字段，非人工撰写文本
 [files]

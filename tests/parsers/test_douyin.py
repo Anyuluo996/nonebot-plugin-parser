@@ -179,9 +179,12 @@ async def test_detail_open_api_primary_and_fallback_order(monkeypatch):
             return "bytespider"
         return "unknown"
 
+    params_by_form: dict[str, dict] = {}
+
     async def fake_request(_self, url, *, headers=None, params=None, **_kwargs):
         form = _classify(dict(headers or {}), dict(params or {}))
         calls.append(form)
+        params_by_form[form] = dict(params or {})
         if form == "bytespider":
             # open-api 与签名被 403, Bytespider 返回完整数据
             return _Resp(detail_json)
@@ -206,6 +209,11 @@ async def test_detail_open_api_primary_and_fallback_order(monkeypatch):
 
     # 依次退回: open-api(主力) -> 签名 -> Bytespider
     assert calls == ["open-api", "signed", "bytespider"], f"退回顺序异常: {calls}"
+    # open-api 必须携带 version_code: 缺了服务端按过旧客户端处理, desc 被截断
+    # 并追加「……版本过低，升级后可展示全部信息」(2026-10-17 实测)
+    assert params_by_form["open-api"].get("version_code"), (
+        f"open-api 形态缺 version_code, 会触发服务端 desc 截断降级: {params_by_form['open-api']}"
+    )
     logger.success("open-api 主力 + 依次退回链路验证通过")
 
 

@@ -59,6 +59,8 @@ _WEB_BASE = "https://hongguoduanju.com"
 _APP_BASE = "https://api5-normal-sinfonlineb.fqnovel.com"
 # 2026-10 改版后的游客批量播放端点（host 与旧 video_model 的 sinfonineb 不同）
 _GUEST_PLAYBACK_URL = "https://api5-normal-sinfonlinec.fqnovel.com/novel/player/multi_video_model/v1/"
+# 游客剧集列表端点（免签形态与播放接口一致，取全集 vid_index 定位分集序号）
+_GUEST_EPISODE_URL = "https://api5-normal-sinfonlinec.fqnovel.com/novel/player/multi_video_detail/v1/"
 
 _APP_UA = _device.APP_UA
 
@@ -69,6 +71,13 @@ _WEB_STREAM_HEADERS = {"User-Agent": _APP_UA, "Referer": f"{_WEB_BASE}/"}
 _ROUTER_DATA_RE = re.compile(r"(?:window\.)?_ROUTER_DATA\s*=\s*")
 # 分享 H5 页内嵌的 applink（schemeParams 单层编码；\u002F 为 JS 转义的斜杠）
 _EMBEDDED_APPLINK_RE = re.compile(r"applink\.novelquickapp\.com(?:/|\\u002F)+dVu4P\?schemeParams=([^\"'\s<]+)")
+
+# 剧集序号缓存: series_id -> (过期时刻, {vid: 集号}, 总集数)。
+# 追剧场景同一部剧的分集分享会连续出现，缓存避免每集都拉全量列表
+# （TTL 6h 与 hongguo-mac 的 episodes 缓存一致；上限防无界增长）。
+_EPISODE_CACHE: dict[str, tuple[float, dict[str, int], int]] = {}
+_EPISODE_CACHE_TTL = 6 * 3600.0
+_EPISODE_CACHE_MAX = 64
 
 
 # ---------------------------------------------------------------------------
@@ -188,19 +197,12 @@ def _media_addresses(info: dict) -> list[str]:
     return addresses
 
 
-def _guest_playback_request(vids: list[str]) -> tuple[str, dict[str, str], bytes]:
-    """构造游客态 ``multi_video_model`` 请求的 ``(url, headers, body)``。
+def _guest_query() -> tuple[dict[str, str], int]:
+    """游客态公共 query（随机 18 位身份 + 固定 71332 版本 + 播放器参数）。
 
-    形态逆向自 hongguo-mac v0.8.1 的取流实现（Backend/hongguo.py video_models，
-    2026-10-17 实测 code=0 全清晰度下发，第 1/51 集均通）：
-
-    - 身份字段用随机 18 位数字，服务端不校验注册态，也不需要任何签名头
-      （无 X-Gorgon/X-Argus/Cookie，与旧 ``video_model/v1`` 的根本区别）;
-    - version 固定 71332 (7.1.3.32) 且 ``pv_player``/``player_so_load`` 等
-      播放器参数必须携带;
-    - body 以 ``mixed_video_id_map={"1004": vids}`` 携带分集（单次至多 5 个），
-      ``biz_param`` 的 ``device_level``/``video_platform`` 与旧接口取值不同;
-    - query 手拼原样发送（``*`` 不转义，与 ``_app_request`` 同款，均被接受）。
+    返回 (query, 当前毫秒时间戳)；`_rticket`/`x-ss-req-ticket` 同源。身份字段
+    服务端不校验注册态，也不需要任何签名头——与旧注册设备 + X-Gorgon 形态的
+    根本区别（2026-10-17 逆向自 hongguo-mac v0.8.1）。
     """
     now_ms = int(time.time() * 1000)
     query = {
@@ -233,8 +235,12 @@ def _guest_playback_request(vids: list[str]) -> tuple[str, dict[str, str], bytes
         "is_android_pad_screen": "0",
         "_rticket": str(now_ms),
     }
-    query_string = "&".join(f"{key}={value}" for key, value in query.items())
-    headers = {
+    return query, now_ms
+
+
+def _guest_headers(now_ms: int) -> dict[str, str]:
+    """游客态公共 headers（query 手拼原样发送，``*`` 不转义，均被服务端接受）。"""
+    return {
         "User-Agent": _APP_UA,
         "Accept": "application/json; charset=utf-8,application/x-protobuf",
         "Content-Type": "application/json; charset=UTF-8",
@@ -245,6 +251,20 @@ def _guest_playback_request(vids: list[str]) -> tuple[str, dict[str, str], bytes
         "passport-sdk-version": "50561",
         "x-vc-bdturing-sdk-version": "3.7.2.cn",
     }
+
+
+def _guest_playback_request(vids: list[str]) -> tuple[str, dict[str, str], bytes]:
+    """构造游客态 ``multi_video_model`` 请求的 ``(url, headers, body)``。
+
+    形态逆向自 hongguo-mac v0.8.1 的取流实现（Backend/hongguo.py video_models，
+    2026-10-17 实测 code=0 全清晰度下发，第 1/51 集均通）：
+
+    - body 以 ``mixed_video_id_map={"1004": vids}`` 携带分集（单次至多 5 个），
+      ``biz_param`` 的 ``device_level``/``video_platform`` 与旧接口取值不同。
+    """
+    query, now_ms = _guest_query()
+    query_string = "&".join(f"{key}={value}" for key, value in query.items())
+    headers = _guest_headers(now_ms)
     body = json.dumps(
         {
             "biz_param": {
@@ -263,6 +283,78 @@ def _guest_playback_request(vids: list[str]) -> tuple[str, dict[str, str], bytes
         ensure_ascii=False,
     ).encode()
     return f"{_GUEST_PLAYBACK_URL}?{query_string}", headers, body
+
+
+# 图片缩放常量（App 抓包固定值，base64 的 image_shrink_datas_str，hongguo-mac 同款）
+_IMAGE_SHRINK = (
+    "W3siaW1hZ2VfdHlwZSI6MywiaW1hZ2Vfd2lkdGgiOjkwMCwic2hyaW5rX3R5cGUiOjN9"
+    "LHsiaW1hZ2VfdHlwZSI6NCwiaW1hZ2Vfd2lkdGgiOjU0LCJzaHJpbmtfdHlwZSI6NH1d\n"
+)
+
+
+def _guest_episode_request(series_id: str) -> tuple[str, dict[str, str], bytes]:
+    """构造游客态 ``multi_video_detail`` 请求（取全集列表定位分集序号）。
+
+    与播放接口同为免签游客形态（2026-10-18 实测未签名 code=0，Mac 客户端
+    走签名通道但服务端不强制）。body 形态对齐 App 抓包（hongguo-mac
+    ``_episodes_body``）。响应: ``data[series_id].video_data`` 含权威
+    ``video_list[].vid_index`` 与 ``episode_cnt``。
+    """
+    query, now_ms = _guest_query()
+    query_string = "&".join(f"{key}={value}" for key, value in query.items())
+    headers = _guest_headers(now_ms)
+    body = json.dumps(
+        {
+            "biz_param": {
+                "detail_page_version": 0,
+                "disable_digg_stat": False,
+                "disable_video_relate_book": False,
+                "image_shrink_datas_str": _IMAGE_SHRINK,
+                "need_all_video_definition": False,
+                "need_mp4_align": False,
+                "screen_width_px": "900",
+                "source": 7,
+                "use_os_player": False,
+                "use_server_dns": False,
+            },
+            "series_id": series_id,
+        },
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode()
+    return f"{_GUEST_EPISODE_URL}?{query_string}", headers, body
+
+
+def _parse_episode_index_map(payload: dict, series_id: str) -> tuple[dict[str, int], int] | None:
+    """从 multi_video_detail 响应提取 ``{vid: 集号}`` 与总集数；形状不符返回 None。
+
+    video_list 兼容 list / dict 两种变体（与 video_list 播放轨道同款双形态）。
+    """
+    data = payload.get("data") if isinstance(payload, dict) else None
+    entry = data.get(series_id) if isinstance(data, dict) else None
+    video_data = entry.get("video_data") if isinstance(entry, dict) else None
+    if not isinstance(video_data, dict):
+        return None
+    rows = video_data.get("video_list")
+    if isinstance(rows, dict):
+        rows = list(rows.values())
+    if not isinstance(rows, list):
+        return None
+    index_map: dict[str, int] = {}
+    for row in rows:
+        if not isinstance(row, dict) or row.get("vid") is None:
+            continue
+        try:
+            index_map[str(row["vid"])] = int(row.get("vid_index") or 0)
+        except (TypeError, ValueError):
+            continue
+    if not index_map:
+        return None
+    try:
+        episode_cnt = int(video_data.get("episode_cnt") or 0)
+    except (TypeError, ValueError):
+        episode_cnt = 0
+    return index_map, episode_cnt
 
 
 # ---------------------------------------------------------------------------
@@ -695,6 +787,50 @@ class HongguoParser(BaseParser):
             duration = 0.0
         return _Media(url=addresses[0], duration=duration, backup_urls=addresses[1:], headers=_WEB_STREAM_HEADERS)
 
+    async def _fetch_episode_index(self, series_id: str, vid: str) -> tuple[int, int] | None:
+        """游客剧集列表定位 vid 的 ``(集号, 总集数)``；任何失败返回 None（调用方降级）。
+
+        网页 SSR 的 ``vid_list`` 是推荐序不可用作集号；游客 ``multi_video_detail``
+        的 ``vid_index`` 是权威剧集序（与播放接口同款免签形态，2026-10-18 实测
+        未签名 code=0）。带 6h 进程内缓存（追剧场景同一部剧连续分享常见）。
+        """
+        now = time.time()
+        cached = _EPISODE_CACHE.get(series_id)
+        if cached is not None:
+            expires_at, index_map, cnt = cached
+            if expires_at > now:
+                if idx := index_map.get(vid):
+                    return idx, cnt
+                return None
+            _EPISODE_CACHE.pop(series_id, None)
+
+        try:
+            url, headers, body = _guest_episode_request(series_id)
+            resp = await self.request(url, method="POST", content=body, headers=headers, raise_for_status=False)
+            if resp.status_code != 200 or not resp.content:
+                logger.warning(f"hongguo 剧集列表无响应（集号降级不标注）series={series_id} HTTP {resp.status_code}")
+                return None
+            payload = resp.json()
+        except Exception as e:
+            logger.warning(f"hongguo 剧集列表获取失败（集号降级不标注）series={series_id}: {e!r}")
+            return None
+
+        parsed = _parse_episode_index_map(payload, series_id)
+        if parsed is None:
+            logger.warning(f"hongguo 剧集列表形状异常（集号降级不标注）series={series_id}")
+            return None
+        index_map, cnt = parsed
+        if len(_EPISODE_CACHE) >= _EPISODE_CACHE_MAX:
+            # 防膨胀: 先清过期条目, 仍超限则丢弃最早写入的
+            for key in [k for k, (exp, _, _) in _EPISODE_CACHE.items() if exp <= now]:
+                _EPISODE_CACHE.pop(key, None)
+            while len(_EPISODE_CACHE) >= _EPISODE_CACHE_MAX:
+                _EPISODE_CACHE.pop(next(iter(_EPISODE_CACHE)))
+        _EPISODE_CACHE[series_id] = (now + _EPISODE_CACHE_TTL, index_map, cnt)
+        if idx := index_map.get(vid):
+            return idx, cnt
+        return None
+
     # -- 下载与解密 ----------------------------------------------------------
 
     async def _download_and_decrypt(self, media: _Media) -> Path:
@@ -766,15 +902,25 @@ class HongguoParser(BaseParser):
         if not target_vid:
             raise ParseException(f"红果短剧《{series.title}》没有可播放的分集")
 
-        media = await self._resolve_media(target_vid, series.series_id or series_id)
+        resolve_sid = series.series_id or series_id
+        # 集号定位与取流并行（游客 multi_video_detail 的 vid_index 是权威剧集序;
+        # 该调用内部吞掉一切失败返回 None, 不阻塞解析）
+        episode_task = asyncio.create_task(self._fetch_episode_index(resolve_sid, target_vid)) if resolve_sid else None
+        media = await self._resolve_media(target_vid, resolve_sid)
         video_task = asyncio.create_task(self._download_and_decrypt(media))
 
-        # 集数编号：网页/分享数据均无可靠分集序（vid_list 为推荐序而非剧集序，
-        # App 端 video_detail 又不开放），不臆造集号，只标注总集数
-        title = series.title
+        episode_label = ""
+        episode_cnt = series.episode_cnt
+        if episode_task is not None:
+            located = await episode_task
+            if located is not None:
+                idx, fetched_cnt = located
+                episode_cnt = fetched_cnt or episode_cnt
+                episode_label = f" 第{idx}集"
+        title = series.title + episode_label
         text_parts = []
-        if series.episode_cnt > 1:
-            text_parts.append(f"全{series.episode_cnt}集")
+        if episode_cnt > 1:
+            text_parts.append(f"全{episode_cnt}集")
         if series.category:
             text_parts.append(f"#{series.category}")
         if series.intro:

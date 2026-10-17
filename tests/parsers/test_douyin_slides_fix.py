@@ -291,8 +291,8 @@ async def test_picture_note_decodes_picture_list(monkeypatch):
     而是全部作为 video 段合入单条幻灯片视频。
     """
     import json as _json
-    from pathlib import Path
     from typing import ClassVar
+    from pathlib import Path
 
     from nonebot_plugin_parser.parsers import DouyinParser
 
@@ -355,7 +355,9 @@ async def test_picture_note_decodes_picture_list(monkeypatch):
     assert len(result.video_contents) == 1, f"应合并为 1 条幻灯片视频, 实际 {len(result.video_contents)}"
     video = result.video_contents[0]
     assert await video.get_path() == Path("/fake/slideshow.mp4"), "合成任务应正常完成"
-    assert [k for _, k in composed["segments"]] == ["video"] * 4, f"4 段 live photo 应全为 video 段: {composed['segments']}"
+    assert [k for _, k in composed["segments"]] == ["video"] * 4, (
+        f"4 段 live photo 应全为 video 段: {composed['segments']}"
+    )
 
     # 断言: createTime 毫秒 -> 秒 转换正确 (datetime.fromtimestamp 期望秒)
     assert result.timestamp == 1734761606, f"createTime 毫秒没转秒: {result.timestamp}"
@@ -569,7 +571,7 @@ async def test_normal_video_decodes_play_addr(monkeypatch):
     assert aweme_detail.video_url is not None, "普通视频应解出 video_url"
     assert "playwm" not in aweme_detail.video_url, "未去水印 (期望 playwm→play)"
     assert aweme_detail.cover_url is not None, "应解出 cover_url"
-    assert aweme_detail.duration_ms == 5620, f"duration_ms 应为 5620, 实际 {aweme_detail.duration_ms}"
+    assert aweme_detail.duration_seconds == 5.62, f"duration_seconds 应为 5.62 秒, 实际 {aweme_detail.duration_seconds}"
 
     class _MockResp:
         status_code = 200
@@ -606,7 +608,7 @@ async def test_normal_video_decodes_play_addr(monkeypatch):
     assert result.img_contents == [], "普通视频不应有图片"
     vc = result.video_contents[0]
     assert vc.cover is not None, "VideoContent 应带封面 (来自 video.cover)"
-    assert vc.duration == 5620, f"时长应为 5620ms, 实际 {vc.duration}"
+    assert vc.duration == 5.62, f"时长应为 5.62 秒 (API 毫秒 5620 已转秒), 实际 {vc.duration}"
     assert result.title == "#福建话 #福建方言 #闽南语 #方言趣味分享 #福建人"
     assert result.author is not None
     assert result.author.name == "吴影默"
@@ -964,9 +966,7 @@ async def test_detail_api_http_error_falls_back_before_raise(monkeypatch):
 
     monkeypatch.setattr(parser, "request", _fake_request)
     # 钉住无 uifid: 避免环境 cookie 含 UIFID 时注入 websign 形态干扰三形态断言
-    monkeypatch.setattr(
-        "nonebot_plugin_parser.parsers.douyin.ttwid.get_effective_uifid", lambda: None
-    )
+    monkeypatch.setattr("nonebot_plugin_parser.parsers.douyin.ttwid.get_effective_uifid", lambda: None)
 
     with pytest.raises(ParseException, match="detail API unavailable"):
         await parser.parse_slides(NORMAL_VIDEO_VID)
@@ -1030,9 +1030,7 @@ async def test_detail_empty_body_falls_back_through_forms(monkeypatch):
     monkeypatch.setattr(parser.downloader, "download_video", _stub_dl)
     monkeypatch.setattr(parser.downloader, "download_img", _stub_dl)
     # 钉住无 uifid: 避免环境 cookie 含 UIFID 时注入 websign 形态干扰三次请求断言
-    monkeypatch.setattr(
-        "nonebot_plugin_parser.parsers.douyin.ttwid.get_effective_uifid", lambda: None
-    )
+    monkeypatch.setattr("nonebot_plugin_parser.parsers.douyin.ttwid.get_effective_uifid", lambda: None)
 
     result = await parser.parse_slides(NORMAL_VIDEO_VID)
 
@@ -1044,10 +1042,12 @@ async def test_detail_empty_body_falls_back_through_forms(monkeypatch):
     second_params = detail_calls[1]["params"] or {}
     third_headers = detail_calls[2]["headers"] or {}
     third_params = detail_calls[2]["params"] or {}
-    # open-api 形态 (主力): 极简参数 + open.douyin.com Origin/Referer, 免签名
+    # open-api 形态 (主力): 极简参数 + version_code + open.douyin.com Origin/Referer, 免签名
     assert first_headers.get("Origin") == "https://open.douyin.com", "首次请求应为 open-api 形态"
     assert first_headers.get("Referer") == "https://open.douyin.com/"
-    assert set(first_params) == {"aweme_id", "aid"}, "open-api 形态应只带极简参数"
+    assert set(first_params) == {"aweme_id", "aid", "version_code"}, (
+        "open-api 形态应只带 aweme_id/aid/version_code (version_code 缺失触发服务端 desc 截断降级)"
+    )
     # 签名形态 (次选): 完整参数 + a_bogus
     assert "a_bogus" in second_params, "第二次请求应为带 a_bogus 的签名请求"
     assert second_headers.get("X-Requested-With") == "XMLHttpRequest", "签名形态应带 X-Requested-With"

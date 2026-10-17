@@ -39,13 +39,19 @@ _ABOGUS = ABogus()
 # 签名形态的通用请求参数（仿抖音 web 端 getCommonData）。
 # 这些字段会被 a_bogus 签名纳入计算，缺失会导致签名失效被风控返回空 body。
 # 取值用常量而非动态读取 navigator.*，服务端仅做存在性 + 格式校验。
+#
+# version_code 单独提常量: open-api / Bytespider 两个免签名形态也必须携带
+# (缺失会被服务端按过旧客户端处理, 把 desc 截断追加「版本过低」提示),
+# 三处共用一份, 升级时不会漏改。
+_VERSION_CODE = "170400"
+
 _PC_WEB_COMMON_PARAMS: dict[str, str] = {
     "aid": "6383",
     "channel": "channel_pc_web",
     "device_platform": "webapp",
     "pc_client_type": "1",
     "pc_libra_divert": "Windows",
-    "version_code": "170400",
+    "version_code": _VERSION_CODE,
     "version_name": "17.4.0",
     "cookie_enabled": "true",
     "browser_language": "zh-CN",
@@ -126,9 +132,9 @@ class DouyinParser(BaseParser):
         forms 限定只走给定形态 (按上一轮过滤结论定向重试用, 如 story 过滤后
         仅试 app-api), None 走全链。
 
-        - open-api (主力): 极简参数 {aweme_id, aid} + Origin/Referer 指向
-          open.douyin.com, 该入口不校验 a_bogus 签名与登录态, 2026-09 实测最稳
-          (上游 fllesser #584 同款形态);
+        - open-api (主力): 极简参数 {aweme_id, aid, version_code} + Origin/Referer
+          指向 open.douyin.com, 该入口不校验 a_bogus 签名与登录态, 2026-09 实测
+          最稳 (上游 fllesser #584 同款形态);
         - app-api: 安卓 App 端点 (aweme.snssdk.com) 免签名免 Cookie 直连, 设备
           参数由 parser_douyin_app_device_profile 配置注入 (背景见 appapi 模块
           文档)。与 web 端不同 host/风控域, 排在签名形态之前——open-api 失败
@@ -155,7 +161,9 @@ class DouyinParser(BaseParser):
         # 字节一致, 编码由 websign 全权负责)
         variants: list[tuple[str, dict[str, str], str, dict[str, str] | None]] = []
 
-        # 1. open-api 形态 (主力)
+        # 1. open-api 形态 (主力)。version_code 不可省: 缺了服务端按过旧客户端
+        # 处理, 把 desc 截断并追加「……版本过低，升级后可展示全部信息」(2026-10-17
+        # 实测 7697490232783271763, 仅补该参数即恢复完整文案)。
         variants.append(
             (
                 "open-api",
@@ -165,7 +173,7 @@ class DouyinParser(BaseParser):
                     "Referer": "https://open.douyin.com/",
                 },
                 _DETAIL_URL,
-                {"aweme_id": video_id, "aid": "6383"},
+                {"aweme_id": video_id, "aid": "6383", "version_code": _VERSION_CODE},
             )
         )
 
@@ -214,7 +222,7 @@ class DouyinParser(BaseParser):
                 {
                     "aweme_id": video_id,
                     "aid": "6383",
-                    "version_code": "170400",
+                    "version_code": _VERSION_CODE,
                     "device_platform": "webapp",
                 },
             )
@@ -426,7 +434,7 @@ class DouyinParser(BaseParser):
         # 自抖音 2026-08 改版, 普通视频改由 detail API 提供直链。
         # `if not contents` 确保仅纯视频进此分支, 图文/实况不受影响。
         if not contents and (video_url := aweme_detail.video_url):
-            contents.append(self.create_video_content(video_url, aweme_detail.cover_url, aweme_detail.duration_ms))
+            contents.append(self.create_video_content(video_url, aweme_detail.cover_url, aweme_detail.duration_seconds))
 
         # 构建作者
         author = self.create_author(aweme_detail.name, aweme_detail.avatar_url)

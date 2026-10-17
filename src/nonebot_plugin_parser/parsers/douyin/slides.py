@@ -196,9 +196,13 @@ class SlidesData(Struct):
         return None
 
     @property
-    def duration_ms(self) -> int:
-        """视频时长 (毫秒), 对齐 create_video_content 期望的 ms 单位。"""
-        return self.video.duration if self.video else 0
+    def duration_seconds(self) -> float:
+        """视频时长 (秒); API 的 video.duration 是毫秒, 在此转秒。
+
+        对齐 create_video_content / VideoContent.duration 的秒单位契约
+        (曾误以毫秒直传, 渲染卡片时长放大 1000 倍)。
+        """
+        return self.video.duration / 1000 if self.video else 0.0
 
 
 # === 新格式: isPicture=true 的 picture 类型图文 ===
@@ -352,8 +356,8 @@ class PictureSlidesData(Struct):
         return None
 
     @property
-    def duration_ms(self) -> int:
-        return 0
+    def duration_seconds(self) -> float:
+        return 0.0
 
 
 # === 顶层响应结构 + 智能 dispatch ===

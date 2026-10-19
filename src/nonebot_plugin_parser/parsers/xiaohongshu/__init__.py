@@ -11,17 +11,32 @@ from ..data import MediaContent
 class XiaoHongShuParser(BaseParser):
     platform: ClassVar[Platform] = Platform(name=PlatformEnum.XIAOHONGSHU, display_name="小红书")
 
+    # 2026-10-19 上游 WAF 按 UA 拦截老旧指纹: 全局 COMMON_HEADER(Chrome/55 UBrowser)的
+    # explore 请求拿到"页面不见了"骨架页(note 空对象), IOS_HEADER(iOS 16.6 + Edg)的
+    # discovery 请求拿到无 __INITIAL_STATE__ 小页; 现代浏览器 UA 均放行,
+    # discovery 路径免 cookie 即可拿到完整 noteData
+    MODERN_PC_UA: ClassVar[str] = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/132.0.0.0 Safari/537.36"
+    )
+    MODERN_IOS_UA: ClassVar[str] = (
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 "
+        "(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+    )
+
     def __init__(self):
         super().__init__()
         explore_headers = {
+            "User-Agent": self.MODERN_PC_UA,
             "accept": (
                 "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,"
                 "image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7"
-            )
+            ),
         }
         self.headers.update(explore_headers)
 
         discovery_headers = {
+            "User-Agent": self.MODERN_IOS_UA,
             "origin": "https://www.xiaohongshu.com",
             "x-requested-with": "XMLHttpRequest",
             "sec-fetch-site": "same-origin",

@@ -318,12 +318,22 @@ class TwitterParser(BaseParser):
         if article_content:
             # 保序: 文本段与内嵌媒体按原文交错, 模板按顺序渲染 (拼一块会毁掉图文排版)
             graphics: list[str | Any] = list(article_content)
-            # Article 正文已包含 legacy 文本, 不再走 text 渲染
+            # Article 正文 (content_state / preview_text) 不含 legacy 文本: 作者写在
+            # Article 外的那句评论只能从 legacy.text 取。历史事故: 旧注释误以为正文
+            # 已包含 legacy, 结果「评论 + Article」的评论整条丢失。
+            # 注意不能改用 get_text(): 它对 Article 推文返回 legacy + 正文全文
+            # (见 model.py `Tweet.get_text`), 插进图文区会让正文出现两遍。
+            if own_text := legacy.text.strip():
+                graphics.insert(0, own_text)
             text: str | None = None
         elif card is not None and card.preview_url:
             # 卡片推文正文很短, 用卡片预览图占据图文区域, 卡片文字并入正文
+            # (历史事故: 早期直接 `text = self._card_text(card)` 覆盖, 用户自己写的
+            # 那句话被吞掉; 此处按「正文\n\n卡片信息」合并)
             graphics = [self._create_image(card.preview_url)]
-            text = self._card_text(card)
+            card_text = self._card_text(card)
+            own_text = tweet.get_text().strip()
+            text = f"{own_text}\n\n{card_text}" if own_text else card_text
         else:
             graphics = []
             text = tweet.get_text()

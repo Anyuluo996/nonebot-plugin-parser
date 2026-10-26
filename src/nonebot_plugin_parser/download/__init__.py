@@ -1,4 +1,6 @@
+import os
 import asyncio
+from uuid import uuid4
 from pathlib import Path
 from functools import partial
 from contextlib import contextmanager
@@ -95,6 +97,29 @@ _REDIRECT_STATUSES: frozenset[int] = frozenset({301, 302, 303, 307, 308})
 
 class _RetryDownload(Exception):
     """Signal that the current request should be retried."""
+
+
+# 明确不可重试的 HTTP 状态（鉴权/资源不存在/客户端错误）：重试或轮换 CDN 都不会变好
+_PERMANENT_HTTP_STATUSES: frozenset[int] = frozenset({400, 401, 404, 405, 410, 451})
+
+
+def _temp_path(final: Path) -> Path:
+    """为最终缓存文件生成同目录唯一临时文件名。
+
+    写临时文件 + ``os.replace`` 发布, 是并发下载同一 URL（两个群同时发同一链接,
+    结果缓存要等发送完才写入）不互相截断的关键: 各协程写各自的临时文件,
+    发布是原子的, 最终路径任何时刻都是某个完整文件。
+
+    后缀保留最终文件后缀且置于末尾（``.part.mp4`` 而不是 ``.mp4.part``）:
+    ffmpeg 按最后一个后缀猜容器格式, 以 ``.part`` 结尾会被判定为未知格式。
+    """
+    return final.with_name(f".{final.stem}.{uuid4().hex[:8]}.part{final.suffix}")
+
+
+def _publish(tmp: Path, final: Path) -> Path:
+    """把临时文件原子发布为最终缓存文件（同一文件系统内 ``os.replace`` 是原子的）。"""
+    os.replace(tmp, final)
+    return final
 
 
 class _FollowRedirect(Exception):
@@ -203,9 +228,14 @@ async def _download_by_curl(
                     raise _RetryDownload("567 频率限制")
 
                 if status != 200:
-                    await safe_unlink(file_path)
-                    logger.error("curl_cffi 下载失败 HTTP {} | url: {}", status, current_url)
-                    raise DownloadException("媒体下载失败")
+                    # 非 200 不再直接判死: 抖音 CDN 单节点的 403/5xx 多为瞬时问题,
+                    # 按重试预算轮换 backup_urls 往往能救回 (与 httpx 路径对称)。
+                    # 只有确定性失败(400/401/404/...)才直接判定失败。
+                    if status in _PERMANENT_HTTP_STATUSES:
+                        await safe_unlink(file_path)
+                        logger.error("curl_cffi 下载失败 HTTP {} | url: {}", status, current_url)
+                        raise DownloadException("媒体下载失败")
+                    raise _RetryDownload(f"HTTP {status}")
 
                 # 流式写盘 + 大小上限校验（修复：原先 len(resp.content) 已把整文件载入内存）
                 downloaded_size = 0
@@ -241,14 +271,16 @@ async def _download_by_curl(
         except (IgnoreException, DownloadException):
             # 语义明确的业务异常：不应被重试，直接上抛
             raise
-        except _RetryDownload:
+        except _RetryDownload as e:
+            reason = str(e) or "需要重试"
             if attempt == max_retries:
                 await safe_unlink(file_path)
-                logger.error("567 重试耗尽 | url: {}", current_url)
+                logger.error("curl 重试耗尽({}) | url: {}", reason, current_url)
                 raise DownloadException("媒体下载失败")
             wait = 2**attempt
             logger.warning(
-                "媒体服务器返回 567 (疑似频率限制), {}s 后重试 ({}/{}) | url: {}",
+                "curl 请求需重试({}), {}s 后重试 ({}/{}) | url: {}",
+                reason,
                 wait,
                 attempt + 1,
                 max_retries,
@@ -345,10 +377,16 @@ class StreamDownloader:
             if auto_ref := _auto_referer(url):
                 headers["Referer"] = auto_ref
 
+        # 写临时文件再原子发布: 同一 URL 被两处并发解析时(结果缓存要等发送完才写),
+        # 两个协程各写各的临时文件, 不会以 "wb" 交替截断同一路径; 亦不会出现
+        # 「下载到一半的截断文件因 st_size != 0 被永久当有效缓存」。
+        tmp_path = _temp_path(file_path)
+
         use_curl_result = _use_curl(url)
         logger.debug("_use_curl check | url: {}, result: {}", url[:80], use_curl_result)
         if use_curl_result:
-            return await _download_by_curl(url, file_path, headers, max_retries, backup_urls=backup_urls)
+            tmp_path = await _download_by_curl(url, tmp_path, headers, max_retries, backup_urls=backup_urls)
+            return _publish(tmp_path, file_path)
 
         client = self.direct_client if _bypass_proxy(url) else self.client
         max_size_bytes = pconfig.max_size * 1024 * 1024
@@ -375,7 +413,7 @@ class StreamDownloader:
 
                             if status == 567:
                                 if attempt == max_retries:
-                                    await safe_unlink(file_path)
+                                    await safe_unlink(tmp_path)
                                     logger.error("567 重试耗尽 | url: {}", current_url)
                                     raise DownloadException("媒体下载失败")
                                 raise _RetryDownload
@@ -385,7 +423,7 @@ class StreamDownloader:
                                 if redirect_url:
                                     redirect_count += 1
                                     if redirect_count > max_redirects:
-                                        await safe_unlink(file_path)
+                                        await safe_unlink(tmp_path)
                                         logger.error(
                                             "重定向次数超过上限 {} | url: {}",
                                             max_redirects,
@@ -431,13 +469,16 @@ class StreamDownloader:
                                 file_name,
                                 content_length,
                             ) as update_progress:
-                                async with aiofiles.open(file_path, "wb") as file:
+                                async with aiofiles.open(tmp_path, "wb") as file:
                                     async for chunk in response.aiter_bytes(chunk_size):
                                         if not chunk:
                                             continue
 
                                         downloaded_size += len(chunk)
-                                        if content_length is None and downloaded_size > max_size_bytes:
+                                        # 累计校验对压缩响应同样生效: Content-Length 是
+                                        # 传输编码后长度, aiter_bytes 返回解压后字节,
+                                        # 仅靠长度预检会让 gzip 膨胀响应绕过磁盘上限。
+                                        if downloaded_size > max_size_bytes:
                                             exceed_size_limit = True
                                             break
 
@@ -445,7 +486,7 @@ class StreamDownloader:
                                         update_progress(advance=len(chunk))
 
                             if exceed_size_limit:
-                                await safe_unlink(file_path)
+                                await safe_unlink(tmp_path)
                                 file_size = downloaded_size / 1024 / 1024
                                 logger.warning(
                                     "媒体 url: {} 大小 {:.2f} MB, 超过 {} MB, 取消下载",
@@ -456,7 +497,7 @@ class StreamDownloader:
                                 raise IgnoreException
 
                             if downloaded_size == 0:
-                                await safe_unlink(file_path)
+                                await safe_unlink(tmp_path)
                                 logger.warning(
                                     "媒体 url: {}, 大小为 0, 取消下载",
                                     current_url,
@@ -464,7 +505,7 @@ class StreamDownloader:
                                 raise IgnoreException
 
                             logger.debug(f"下载完成: {file_path.name} ({downloaded_size / 1024:.0f} KB)")
-                            return file_path
+                            return _publish(tmp_path, file_path)
                     except _FollowRedirect as redirect:
                         current_url = redirect.location
                         continue
@@ -484,7 +525,7 @@ class StreamDownloader:
                 # HTTP 状态错误带状态码, 传输层错误(超时/连错)带异常类名, 便于排查
                 reason = f"HTTP {e.response.status_code}" if isinstance(e, HTTPStatusError) else type(e).__name__
                 if attempt == max_retries:
-                    await safe_unlink(file_path)
+                    await safe_unlink(tmp_path)
                     logger.exception(
                         "下载失败 {} | url: {}, file_path: {}",
                         reason,
@@ -503,7 +544,9 @@ class StreamDownloader:
                 )
                 await asyncio.sleep(wait)
 
-        return file_path
+        # 循环出口只可能是重试预算耗尽: 不能返回不存在的临时/最终文件
+        await safe_unlink(tmp_path)
+        raise DownloadException("媒体下载失败")
 
     @auto_task
     async def download_video(
@@ -568,8 +611,18 @@ class StreamDownloader:
             self.download_video(v_url, ext_headers=ext_headers, backup_urls=v_backup_urls),
             self.download_audio(a_url, ext_headers=ext_headers, backup_urls=a_backup_urls),
         )
-        await merge_av(v_path=v_path, a_path=a_path, output_path=output_path)
-        return output_path
+        if output_path.exists() and output_path.stat().st_size > 0:
+            logger.debug(f"合并产物缓存命中: {output_path.name}")
+            return output_path
+        # 合并产物同样临时文件 + 原子发布: 两处并发解析同一视频时, 两路 ffmpeg
+        # 不会同时写同一输出文件（并发写会得到无法播放的坏文件且被永久缓存）
+        tmp_path = _temp_path(output_path)
+        try:
+            await merge_av(v_path=v_path, a_path=a_path, output_path=tmp_path)
+        except BaseException:
+            await safe_unlink(tmp_path)
+            raise
+        return _publish(tmp_path, output_path)
 
     async def download_imgs_without_raise(
         self,
@@ -588,7 +641,14 @@ class StreamDownloader:
                 return await self.download_img(url, ext_headers=ext_headers)
 
         paths_or_errs = await asyncio.gather(*[_one(url) for url in urls], return_exceptions=True)
-        return [p for p in paths_or_errs if isinstance(p, Path)]
+        paths: list[Path] = []
+        for url, item in zip(urls, paths_or_errs):
+            if isinstance(item, Path):
+                paths.append(item)
+                continue
+            # 静默丢弃会让「整贴图床 403」只剩卡片少图、日志无线索
+            logger.warning(f"图片下载失败, 跳过该张 | url: {url[:100]} - {type(item).__name__}: {item}")
+        return paths
 
     @auto_task
     async def download_m3u8(
@@ -603,17 +663,27 @@ class StreamDownloader:
             video_name = generate_file_name(m3u8_url, ".mp4")
 
         video_path = pconfig.cache_dir / video_name
+        if video_path.exists() and video_path.stat().st_size > 0:
+            logger.debug(f"m3u8 缓存命中: {video_path.name}")
+            return video_path
+
         max_size_bytes = pconfig.max_size * 1024 * 1024
         slice_headers = ext_headers or {}
+        # 与 download_file 同策略: 临时文件 + 原子发布, 避免并发解析同一链接时
+        # 以 "wb" 截断正在发送/下载的同一路径文件
+        tmp_path = _temp_path(video_path)
 
         try:
-            async with aiofiles.open(video_path, "wb") as f:
+            async with aiofiles.open(tmp_path, "wb") as f:
                 total_size = 0
                 exceed_size_limit = False
                 with self.rich_progress(desc=video_name) as update_progress:
                     for url in await self._get_m3u8_slices(m3u8_url):
                         slice_client = self.direct_client if _bypass_proxy(url) else self.client
                         async with slice_client.stream("GET", url, headers=slice_headers) as response:
+                            # 分片同样要判状态码: 过期/限流分片返回 403 时, 错误页会被
+                            # 原样拼进 mp4, 产出无法播放的视频且日志无任何线索
+                            response.raise_for_status()
                             async for chunk in response.aiter_bytes(chunk_size=1024 * 1024):
                                 total_size += len(chunk)
                                 # 大小上限校验：构造/被劫持的 m3u8 可让 bot 无限写盘到磁盘满
@@ -625,12 +695,16 @@ class StreamDownloader:
                         if exceed_size_limit:
                             break
         except HTTPError:
-            await safe_unlink(video_path)
+            await safe_unlink(tmp_path)
             logger.exception("m3u8 视频下载失败")
             raise DownloadException("m3u8 视频下载失败")
+        except BaseException:
+            # 取消/磁盘写入异常同样清理临时文件, 不留半截 .part
+            await safe_unlink(tmp_path)
+            raise
 
         if exceed_size_limit:
-            await safe_unlink(video_path)
+            await safe_unlink(tmp_path)
             logger.warning(
                 "m3u8 视频 url: {} 大小 {:.2f} MB, 超过 {} MB, 取消下载",
                 m3u8_url,
@@ -639,7 +713,7 @@ class StreamDownloader:
             )
             raise IgnoreException
 
-        return video_path
+        return _publish(tmp_path, video_path)
 
     async def _get_m3u8_slices(self, m3u8_url: str):
         """获取 m3u8 分片"""

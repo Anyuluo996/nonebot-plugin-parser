@@ -177,7 +177,7 @@ def _fallback_select_streams(
                 url=url,
                 video_quality=q,
                 video_codecs=codecs_enum,
-                backup_url=list(vd.get("backup_url", [])),
+                backup_url=list(vd.get("backup_url") or []),
                 bandwidth=int(vd.get("bandwidth", 0) or 0),
                 codecs=str(vd.get("codecs", "")),
                 frame_rate=frame_rate,
@@ -197,14 +197,16 @@ def _fallback_select_streams(
         url = ad.get("baseUrl") or ad.get("base_url")
         if not url:
             continue
-        if q.value > AudioQuality._192K.value:
+        # 只收常规音质: bilibili-api 17.4.2 的枚举值里 _192K(30280) 已是最大值,
+        # 原写法 `q.value > _192K.value` 恒为假 → Hi-Res/Dolby 不会被排除。
+        if q not in (AudioQuality._64K, AudioQuality._132K, AudioQuality._192K):
             continue
         seg = ad.get("segment_base") or {}
         audio_streams.append(
             AudioStreamDownloadURL(
                 url=url,
                 audio_quality=q,
-                backup_url=list(ad.get("backup_url", [])),
+                backup_url=list(ad.get("backup_url") or []),
                 bandwidth=int(ad.get("bandwidth", 0) or 0),
                 codecs=str(ad.get("codecs", "")),
                 mime_type=str(ad.get("mime_type", "")),

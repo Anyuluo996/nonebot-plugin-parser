@@ -409,6 +409,9 @@ class CommonRenderer(ImageRenderer):
         # 图文内容
         if graphics := ctx.result.graphics:
             for text_or_img in graphics:
+                # 逐项兜底: 初始画布只按「固定开销 + 单项图限高」估, 超长段落/竖长图
+                # 实际更高; 画布不足时 paste 越界会被 PIL 静默裁剪(内容凭空消失)
+                self._ensure_height_enough(ctx, self._graphics_item_height(ctx, text_or_img))
                 if isinstance(text_or_img, str):
                     await self._render_text(ctx, text_or_img)
                 elif isinstance(text_or_img, VideoContent):
@@ -417,6 +420,12 @@ class CommonRenderer(ImageRenderer):
                     await self._render_video_in_graphics(ctx, text_or_img)
                 else:
                     await self._render_img_in_graphics(ctx, text_or_img)
+
+    def _graphics_item_height(self, ctx: RenderContext, item: str | ImageContent | VideoContent) -> int:
+        """估算单个 graphics 项绘制所需高度（扩画布兜底用）"""
+        if isinstance(item, str):
+            return self._estimate_text_height(item, self.fontset.text, ctx.content_width) + self.SECTION_SPACING
+        return self.MAX_COVER_HEIGHT + self.SECTION_SPACING  # 图片/视频封面按模板限高
 
     async def _render_video_in_graphics(self, ctx: RenderContext, video_content: VideoContent) -> None:
         """渲染图文插槽里的视频: 画封面 + 播放按钮, 无封面时跳过"""
@@ -623,11 +632,21 @@ class CommonRenderer(ImageRenderer):
             return
 
         with Image.open(path) as img:
-            if img.width > ctx.content_width:
-                ratio = ctx.content_width / img.width
-                img = img.resize((ctx.content_width, int(img.height * ratio)), Image.Resampling.LANCZOS)
+            # 先按内容宽度适配, 再按 MAX_COVER_HEIGHT 等比封顶(与 _estimate_height 的
+            # 高度预算一致)。旧实现只缩宽度: 竖长图/长截图高度可达数千 px, 预算却按
+            # 800 算, paste 越界后被 PIL 静默裁剪 —— 卡片上表现为图片下半截凭空消失。
+            ratio = min(1.0, ctx.content_width / img.width, self.MAX_COVER_HEIGHT / img.height)
+            if ratio < 1.0:
+                size = (max(1, int(img.width * ratio)), max(1, int(img.height * ratio)))
+                img = img.resize(size, Image.Resampling.LANCZOS)
             else:
                 img = img.copy()
+
+        # 精确兜底: 图高 + alt 行 + 段间距（整项估算只按限高, 不含 alt）
+        needed = img.height + self.SECTION_SPACING
+        if image_content.alt:
+            needed += self.fontset.extra.line_height + self.SECTION_SPACING
+        self._ensure_height_enough(ctx, needed)
 
         x_pos = self.PADDING + (ctx.content_width - img.width) // 2
         ctx.image.paste(img, (x_pos, ctx.y_pos))

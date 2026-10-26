@@ -68,7 +68,9 @@ class Renderer(ImageRenderer):
     async def render_messages(self, result: ParseResult):
         """贴吧的文字与图片已全部渲染进长图（主楼 graphics + 回复楼层 images），
 
-        不再调用 render_contents 重复发送，避免主楼内容以文字消息二次发出。
+        不再把 graphics 当消息二次发出；但 ``result.contents``（主楼/楼层视频）
+        画不进长图，必须走内容通道单独发送 —— ``ImageRenderer.render_contents``
+        会临时清空 graphics 复用基类分发逻辑，不会重复发文字/图片。
         长图切片逻辑（MAX_LONG_IMAGE_HEIGHT）复用基类 ImageRenderer._split_long_image。
         单图直接发送；多图（≥2 张）合并转发，避免逐条刷屏。
         """
@@ -96,3 +98,7 @@ class Renderer(ImageRenderer):
             if url_text:
                 nodes.append(url_text)
             yield UniMessage(UniHelper.construct_forward_message(nodes))
+
+        # 视频（主楼 + 前几楼）在长图之外单独发送
+        async for message in self.render_contents(result):
+            yield message

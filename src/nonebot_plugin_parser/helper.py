@@ -103,9 +103,13 @@ class UniHelper:
         """视频 Seg"""
         # 检测文件大小
         file_size_byte_count = int(video_path.stat().st_size)
+        # 阈值跟随 parser_max_size（MB），与下载层上限保持同一口径：
+        # 超过它的文件本就被下载层拦截，这里只兜住历史缓存/旁路写入的超限文件，
+        # 改配置后不再出现「下载层放行、发送层却按 100MB 硬编码」的口径分裂。
+        max_size_bytes = pconfig.max_size * 1024 * 1024
         if file_size_byte_count == 0:
             return Text("视频为空文件")
-        elif file_size_byte_count > 100 * 1024 * 1024:
+        elif file_size_byte_count > max_size_bytes:
             # 转为文件 Seg
             return cls.file_seg(video_path, display_name=video_path.name)
         else:

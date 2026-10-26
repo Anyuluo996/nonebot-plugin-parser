@@ -149,8 +149,9 @@ async def start_login_qr(qr_wait_timeout: float = 30.0) -> LoginQrHandle:
     if not is_tdl_available():
         return LoginQrHandle(error="tdl 不可用，无法执行登录")
 
-    # 先清理可能残留的 tdl 进程（避免 bolt 数据库锁冲突）
-    _kill_stale_tdl_processes()
+    # 先清理可能残留的 tdl 进程（避免 bolt 数据库锁冲突）。
+    # /proc 扫描 + kill + flock 等待都是同步阻塞操作，丢到线程里避免卡事件循环
+    await asyncio.to_thread(_kill_stale_tdl_processes)
 
     cmd = [*_build_base_args(), "login", "--type", "qr"]
     logger.info(f"tdl login qr 启动（pty 模式，等待二维码，最长 {qr_wait_timeout}s）")
@@ -420,6 +421,20 @@ def _terminate_handle(handle: LoginQrHandle) -> None:
     handle.master_fd = None
 
 
+def _is_our_tdl(argv: list[str]) -> bool:
+    """判断某进程 argv 是否为本插件调用的 tdl 二进制。
+
+    只看 argv[0] 的文件名（``tdl`` / ``tdl.exe`` / ``parser_tdl_path`` 的 basename），
+    不做整条 cmdline 的子串匹配：旧实现 ``"tdl" in cmdline`` 会把
+    ``vim ~/tdl.py``、``tail -f ~/.tdl/log``、另一实例的 ``tdl dl`` 等进程一起
+    SIGKILL -9（进程命令行里带 tdl 太常见），误杀代价与收益完全不成比例。
+    """
+    if not argv:
+        return False
+    expected = {Path(pconfig.tdl_path).name, "tdl", "tdl.exe"}
+    return Path(argv[0]).name in expected
+
+
 def _kill_stale_tdl_processes() -> None:
     """清理所有残留的 tdl 进程 + 损坏的 bolt 数据库锁，确保 login 能干净启动。
 
@@ -436,9 +451,6 @@ def _kill_stale_tdl_processes() -> None:
     会话目录结构：~/.tdl/data/<namespace>（如 default）
     Windows 无 /proc，跳过。
     """
-    import time
-    from pathlib import Path
-
     if os.name != "posix":
         return
     proc_dir = "/proc"
@@ -454,19 +466,19 @@ def _kill_stale_tdl_processes() -> None:
             continue
         try:
             with open(f"{proc_dir}/{pid}/cmdline", "rb") as f:
-                cmdline = f.read().replace(b"\x00", b" ").decode(errors="replace")
+                argv = [arg.decode(errors="replace") for arg in f.read().split(b"\x00") if arg]
         except (FileNotFoundError, ProcessLookupError, PermissionError):
             continue
-        # 匹配所有 tdl 二进制调用（login/dl/export/chat 等子命令均可能持锁或残留）
-        if "tdl" in cmdline:
-            try:
-                os.kill(pid, 9)
-                killed += 1
-                logger.warning(f"清理残留 tdl 进程: PID={pid} cmd={cmdline[:80]}")
-            except (ProcessLookupError, PermissionError):
-                pass
+        if not _is_our_tdl(argv):
+            continue
+        try:
+            os.kill(pid, 9)
+            killed += 1
+            logger.warning(f"清理残留 tdl 进程: PID={pid} cmd={' '.join(argv)[:80]}")
+        except (ProcessLookupError, PermissionError):
+            pass
     if killed:
-        # 等 bolt flock 释放
+        # 等 bolt flock 释放（本函数跑在 to_thread 里，同步 sleep 不阻塞事件循环）
         time.sleep(1)
 
     # 删除当前 namespace 的会话数据库文件，避免脏锁导致 login 失败。

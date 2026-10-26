@@ -211,10 +211,15 @@ async def _ensure_qimei(client: Any) -> None:
     _QIMEI_TRIED = True
     try:
         q = await client.ensure_qimei()
-        _save_device(_DEVICE)
-        logger.info(f"QQ音乐: QIMEI 申请成功 {q.q36[:12]}…")
     except Exception as e:
+        # 失败必须复位：请求前置位 + 不复位的旧写法，让一次网络抖动/上游限流后
+        # 进程内从此不再申请 QIMEI，而无 QIMEI 的搜索是**静默返回 0 条**（不报错），
+        # 表现为 QQ 音乐搜索永久空结果，只能重启插件。
+        _QIMEI_TRIED = False
         logger.warning(f"QQ音乐: QIMEI 申请失败（搜索可能返回 0 条）: {e!r}")
+        return
+    _save_device(_DEVICE)
+    logger.info(f"QQ音乐: QIMEI 申请成功 {q.q36[:12]}…")
 
 
 # --------------------------------------------------------------------------- #

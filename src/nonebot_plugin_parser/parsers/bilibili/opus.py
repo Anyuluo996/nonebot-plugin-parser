@@ -112,10 +112,13 @@ class OpusItem(Struct):
 
     @property
     def timestamp(self) -> int | None:
-        """获取发布时间戳"""
+        """获取发布时间戳（非纯数字字符串回退 None, 不让时间戳打断整条解析）"""
         for module in self.item.modules:
             if module.module_type == "MODULE_TYPE_AUTHOR" and module.module_author:
-                return int(module.module_author.pub_ts)
+                try:
+                    return int(module.module_author.pub_ts)
+                except (TypeError, ValueError):
+                    return None
         return None
 
     def extract_nodes(self):

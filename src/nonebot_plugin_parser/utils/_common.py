@@ -6,13 +6,12 @@
 import re
 import hashlib
 import importlib.util
-from typing import Any, TypeVar
+from typing import TypeVar
 from pathlib import Path
 from collections import OrderedDict
 from urllib.parse import urlparse
 
 from anyio import Path as AnyioPath
-from nonebot import logger
 
 K = TypeVar("K")
 V = TypeVar("V")
@@ -65,20 +64,6 @@ def generate_file_name(url: str, default_suffix: str = "") -> str:
     url_hash = hashlib.md5(url.encode()).hexdigest()[:16]
     file_name = f"{url_hash}{suffix}"
     return file_name
-
-
-def write_json_to_data(data: dict[str, Any] | str, file_name: str):
-    """将数据写入数据目录"""
-    import json
-
-    from ..config import pconfig
-
-    path = pconfig.data_dir / file_name
-    if isinstance(data, str):
-        data = json.loads(data)
-    with open(path, "w") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
-    logger.success(f"数据写入 {path} 成功")
 
 
 def is_module_available(module_name: str) -> bool:

@@ -43,24 +43,49 @@ _DEFAULT_ORDER_PLATFORMS: list[music_search.PlatformName] = ["netease", "qqmusic
 def _get_music_parser(platform: music_search.PlatformName) -> BaseParser:
     """按 platform 取已注册的音乐 Parser 实例。
 
-    QQ 音乐在缺包时未注册,会抛 ``ValueError``（由调用方捕获转为 TipException）。
+    ``get_parser_by_type`` 在目标平台被 ``parser_disabled_platforms`` 关掉（或 QQ
+    音乐缺包）时抛 ``ValueError``；这里统一转成 ``TipException`` —— 调用方只处理
+    业务提示异常，ValueError 漏出去会让 ``par<序号>`` 选择走通用 except 报
+    「解析失败,请稍后重试」，把「平台被关闭」这类可读原因丢掉。
     """
     # 懒导入避免与 matchers/__init__ 循环
     from . import get_parser_by_type
 
-    if platform == "netease":
-        return get_parser_by_type(NCMParser)
-    if platform == "kugou":
-        return get_parser_by_type(KuGouParser)
-    if platform == "qqmusic":
-        from ..parsers import _QQMUSIC_AVAILABLE
+    try:
+        if platform == "netease":
+            return get_parser_by_type(NCMParser)
+        if platform == "kugou":
+            return get_parser_by_type(KuGouParser)
+        if platform == "qqmusic":
+            from ..parsers import _QQMUSIC_AVAILABLE
 
-        if not _QQMUSIC_AVAILABLE:
-            raise TipException("搜索失败,请稍后重试")
-        from ..parsers import QQMusicParser
+            if not _QQMUSIC_AVAILABLE:
+                raise TipException("搜索失败,请稍后重试")
+            from ..parsers import QQMusicParser
 
-        return get_parser_by_type(QQMusicParser)
+            return get_parser_by_type(QQMusicParser)
+    except ValueError as e:
+        raise TipException("搜索失败,请稍后重试") from e
     raise TipException("搜索失败,请稍后重试")
+
+
+def _get_http_parser() -> BaseParser | None:
+    """取一个已注册的 Parser 实例，仅用于复用其 HTTP 请求封装（代理/UA/cookie）。
+
+    搜索请求本身与服务无关，优先借网易云（历史上默认）；但网易云被
+    ``parser_disabled_platforms`` 关掉时 ``get_parser_by_type(NCMParser)`` 会抛
+    ``ValueError`` —— 旧实现没接住，整组点歌命令（含 qq/酷狗）静默无回复。
+    这里回退到 ``KEYWORD_PARSER_MAP`` 里任一已注册实例（懒导入，不新增顶层依赖）。
+    """
+    from . import KEYWORD_PARSER_MAP, get_parser_by_type
+
+    try:
+        return get_parser_by_type(NCMParser)
+    except ValueError:
+        pass
+    for parser in KEYWORD_PARSER_MAP.values():
+        return parser
+    return None
 
 
 async def _do_music_search(
@@ -75,15 +100,15 @@ async def _do_music_search(
     - 默认三服务并发: 单服务失败静默, 由其他服务补齐; 全失败才提示。
     - 指定服务: 失败直接提示「搜索失败,请稍后重试」。
     """
-    # 懒导入避免与 matchers/__init__ 循环
-    from . import get_parser_by_type
-
     keyword = keyword.strip()
     if not keyword:
         await matcher.finish(f"请输入要搜索的歌曲名,如「{pconfig.parse_prefix or 'par'}点歌 周杰伦」")
 
-    # 用任意已注册 Parser 复用 request 封装发 HTTP (这里借 NCMParser 实例)
-    http_parser = get_parser_by_type(NCMParser)
+    # 用任意已注册 Parser 复用 request 封装发 HTTP（优先网易云，被关闭时回退到任一实例）
+    http_parser = _get_http_parser()
+    if http_parser is None:
+        # 一个 parser 都没注册 = 所有平台都被关闭，此时搜索必然全失败，直接说清楚
+        await matcher.finish("点歌不可用: 当前没有已启用的解析平台")
     items = await music_search.aggregate_search(http_parser, keyword, platforms)
 
     if not items:

@@ -57,7 +57,7 @@
 > 状态列说明：✅ 表示已实测稳定；🧪 表示**实验性**，受上游接口/风控影响，可能不稳定：
 > - **音乐类**：**网易云**已实测稳定，直连官方公开接口，**开箱即用无需配置**；**QQ 音乐**已基于 `qqmusic-api-python` 自建直连，免费歌曲**开箱即用**，VIP/付费歌曲用「qqmusic登录」扫码授权（凭证持久化）；**酷狗**直连官方接口（MD5 签名 + curl_cffi 绕过 SSA 反爬），**开箱即用无需配置**；**汽水**未实测成功；
 > - **小黑盒**：签名算法已实现，但存在 **IP 级风控**（`show_captcha`），需配合代理或更换出口 IP。
-> - **红果短剧**：App 分享短链 / 网页链接 / 纯文本分享均可解析；播放地址走番茄系 App 接口（首次解析自动注册设备并持久化，无需配置），CENC 加密流经 ffmpeg 解密（需安装 ffmpeg）。不标注集数（接口未提供可靠分集序）。
+> - **红果短剧**：App 分享短链 / 网页链接 / 纯文本分享均可解析；播放地址走番茄系 App 接口（首次解析自动注册设备并持久化，无需配置），CENC 加密流经 ffmpeg 解密（需安装 ffmpeg）。卡片标题标注集号（「第 N 集」取自接口的权威分集序 `vid_index`；接口不可用时降级为不标注）。
 
 支持的链接，可参考 [测试链接](https://github.com/fllesser/nonebot-plugin-parser/blob/master/tests/others/test_urls.md)
 
@@ -302,9 +302,15 @@ parser_pixiv=""
 # 默认为 false（不解析），设为 true 允许解析
 parser_pixivR18=false
 
-# [可选] 代理, 仅作用于 youtube, tiktok, Pixiv 解析
-# 推特解析会自动读取环境变量中的 http_proxy / https_proxy(代理软件通常会自动设置)
+# [可选] 全局代理
+# 所有媒体下载、curl_cffi 请求、yt-dlp 下载，以及 YouTube / TikTok / Pixiv / X 的接口请求默认走它；
+# 国内平台（B站/抖音/微博等）的普通 httpx 请求默认直连，也不读环境变量里的 http_proxy / https_proxy
+# 抖音 CDN 域名默认仍直连；部署机直连抖音 CDN 不通时，用 parser_douyin_cdn_via_proxy=true 让它们也走本代理
 parser_proxy=None
+
+# [可选] 是否校验 HTTPS 证书，默认 true
+# 登录 Cookie 与全部媒体都经这条 TLS 链路；仅在部署环境证书链不完整（请求报证书错误）时才设为 false
+parser_verify_ssl=true
 
 # [可选] 音频解析，是否需要上传群文件
 parser_need_upload=False
@@ -473,7 +479,7 @@ par全局授权 @运维 抖音cookie
 - 候选列表渲染为图片发送，按 `par<序号>` 选择；选定后复用对应平台的链接解析流程（音乐卡片 + 音频）。
 - 选择窗口期为 **5 分钟**，且按用户 + 场景隔离（不同用户/群聊互不影响）。
 
-> Telegram 解析需消耗本机 tdl 会话，仅 SUPERUSER 或被 SUPERUSER 授权（`tg授权 <用户ID/@用户名>`）的用户可触发。
+> Telegram 解析需消耗本机 tdl 会话，仅 SUPERUSER 或被 SUPERUSER 授权（`tg授权 <@用户 或 数字用户ID>`；白名单按数字 ID 匹配，手打 `@用户名` 不生效）的用户可触发。
 > 首次使用需登录：SUPERUSER 执行 `tg登录`，bot 会把二维码渲染成图片发回，用 Telegram App 扫码即可（会话写入 `~/.tdl`）。
 > ⚠ `tg登录`（bot 全自动登录）仅支持 **Linux / macOS / Docker / WSL**，Windows 原生环境不可用。Windows 用户请使用容器/WSL 部署，或在终端执行 `tdl login` 手动登录（详见上方「Telegram 登录方式」）。
 

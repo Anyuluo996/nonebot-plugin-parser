@@ -58,7 +58,9 @@ class IlluParser(BaseParser):
             raise ParseException(str(data)) from e
 
     # 文章
-    @handle("illund.com/share.html", r"articleId%3D(?P<articleId>[0-9a-z]+)")
+    # keyword 必须与图集区分: 同 keyword 会共用 _handlers 单键, 后者覆盖前者,
+    # 文章链接会被派给 parse_drawing 再取不存在的 mainId 分组 → IndexError。
+    @handle("articleId%3D", r"articleId%3D(?P<articleId>[0-9a-z]+)")
     async def parse_article(self, searched: re.Match[str]):
         object_id = searched.group("articleId")
         result: ArticleByIdV2 = await self._fetch_detail(object_id, BizType.Article)  # type: ignore[assignment]  # overload 已声明, pyright 对枚举 Literal 匹配有限
@@ -89,7 +91,7 @@ class IlluParser(BaseParser):
         )
 
     # 图集
-    @handle("illund.com/share.html", r"mainid%3D(?P<mainId>[0-9a-z]+)")
+    @handle("mainid%3D", r"mainid%3D(?P<mainId>[0-9a-z]+)")
     async def parse_drawing(self, searched: re.Match[str]):
         object_id = searched.group("mainId")
         detail: DrawingDetail = await self._fetch_detail(object_id, BizType.Drawing)  # type: ignore[assignment]  # overload 已声明, pyright 对枚举 Literal 匹配有限

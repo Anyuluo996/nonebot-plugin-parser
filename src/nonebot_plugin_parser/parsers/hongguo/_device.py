@@ -228,11 +228,6 @@ def _tt_encrypt(payload: bytes) -> bytes:
 # ---------------------------------------------------------------------------
 
 
-def _random_device_id() -> str:
-    """生成 19 位随机数字（与真机 device_id 形态一致的占位，仅用于注册载荷）"""
-    return str(random.randint(1_000_000_000_000_000_000, 8_999_999_999_999_999_999))
-
-
 def _random_hex(length: int) -> str:
     return "".join(random.choices("0123456789abcdef", k=length))
 

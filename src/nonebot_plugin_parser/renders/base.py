@@ -290,7 +290,10 @@ class ImageRenderer(BaseRenderer):
             return UniHelper.img_seg(image_path), image_raw
 
         # 走缓存路径：从已落盘文件读回 bytes 供切片，图片段仍按 use_base64 决定
-        image_raw = result.render_image.read_bytes()
+        # read_bytes 是同步 IO（长图可达数十 MB），丢线程池避免阻塞事件循环
+        import asyncio
+
+        image_raw = await asyncio.to_thread(result.render_image.read_bytes)
         if pconfig.use_base64:
             return UniHelper.img_seg(image_raw), image_raw
         return UniHelper.img_seg(result.render_image), image_raw

@@ -1,10 +1,94 @@
 """测试新增平台解析器：知乎、网易云、酷狗、汽水音乐、虎扑、酷安、
 LOFTER、堆糖、BUFF、小黑盒、ILLU、贴吧。
 
-均为真实网络请求，失败时 skip（与现有 parser 测试风格一致）。
+均为真实网络请求。**只有「上游不可用」类异常才 skip**（链接失效/下架/风控/无
+播放权限/网络不通/环境缺依赖——这些重跑也一样，改代码也变不绿）；解析器自身的
+编程错误（TypeError/KeyError/IndexError/AttributeError/msgspec 校验错误等）必须
+上抛让用例失败，否则平台改版造成的结构性回归会被 skip 掩盖，CI 永远绿。
+分类依据见 ``_is_upstream_unavailable`` 注释。
 """
 
+import contextlib
+
+import httpx
 import pytest
+
+# 上游明确拒绝时的文案特征（删除/下架/风控/付费墙/限流）。
+# 同时适用于 ParseException 与 ValueError: 贴吧 utils 直接把接口 errmsg 包成 ValueError。
+_UPSTREAM_PARSE_HINTS = (
+    "删除",
+    "不存在",
+    "失效",
+    "风控",
+    "验证码",
+    "频繁",
+    "限流",
+    "下架",
+    "无版权",
+    "版权",
+    "VIP",
+    "vip",
+    "付费",
+    "未找到",
+    "没有可播放",
+)
+
+
+def _is_upstream_unavailable(error: BaseException) -> bool:
+    """判断异常是否来自「上游不可用」而非解析器自身缺陷。
+
+    skip 白名单（按异常来源分类）:
+    - ``httpx.TransportError`` 家族: 连接/超时/代理/TLS 等网络层失败；
+    - ``httpx.HTTPStatusError``: 上游 4xx/5xx（403 风控、404 删除、400 参数失效等）；
+    - ``curl_cffi`` 的请求异常（酷狗/NGA 走 TLS 指纹链路时的网络失败）；
+    - ``IgnoreException`` / ``TipException``: 业务上「忽略/提示用户」的语义化分支
+      （内容不可见、无播放权限等），不是代码缺陷；
+    - 消息带删除/失效/风控/VIP 等语义的 ``ParseException`` / ``ValueError``:
+      上游明确拒绝该内容（ValueError 覆盖贴吧把接口 errmsg 直接上抛的写法）；
+    - 环境缺失: ``ModuleNotFoundError`` 提到 nonebot、nonebot 的
+      ``Cannot load plugin`` / ``Cannot detect caller plugin``（caller-plugin 未加载）。
+
+    不在白名单里的（TypeError/KeyError/IndexError/AttributeError/msgspec 校验错误/
+    其余 ValueError 等）视为解析器崩溃，调用方必须让用例失败。
+    """
+    # 网络层（httpx）: TransportError 含 TimeoutException/ConnectError/ProxyError 等子类
+    if isinstance(error, (httpx.HTTPStatusError, httpx.TransportError)):
+        return True
+
+    # 酷狗/NGA 等用 curl_cffi: 网络失败抛其自有异常，按模块名判定以免硬依赖该包
+    if type(error).__module__.startswith("curl_cffi"):
+        return True
+
+    # 环境缺依赖/缺 caller-plugin（与平台上游无关，也不是解析器缺陷）
+    if isinstance(error, ModuleNotFoundError) and "nonebot" in str(error):
+        return True
+    if isinstance(error, RuntimeError) and any(
+        hint in str(error) for hint in ("Cannot load plugin", "Cannot detect caller plugin")
+    ):
+        return True
+
+    from nonebot_plugin_parser.exception import TipException, ParseException, IgnoreException
+
+    # 语义化业务异常: 明确表示「无法解析该内容」而非代码崩
+    if isinstance(error, (IgnoreException, TipException)):
+        return True
+    if isinstance(error, (ParseException, ValueError)):
+        message = str(error)
+        return any(hint in message for hint in _UPSTREAM_PARSE_HINTS)
+
+    return False
+
+
+@contextlib.contextmanager
+def _skip_on_upstream_unavailable(platform: str):
+    """解析阶段守卫: 上游不可用才 skip，其余异常原样上抛让用例失败。"""
+    try:
+        yield
+    except Exception as e:
+        if not _is_upstream_unavailable(e):
+            raise
+        pytest.skip(f"{platform} 上游不可用（网络/风控/链接失效），跳过: {e!r}")
+
 
 ZHIHU_ANSWER = "https://www.zhihu.com/question/67423622/answer/1396759249"
 # 酷狗「舍得 - 王唯旖」(免费歌曲 privilege=0)，hash 直接在 URL 参数中
@@ -38,10 +122,8 @@ async def test_zhihu_answer():
     parser = ZhiHuParser()
     keyword, matched = parser.search_url(ZHIHU_ANSWER)
     assert matched, "知乎回答 URL 应被匹配"
-    try:
+    with _skip_on_upstream_unavailable("知乎"):
         result = await parser.parse(keyword, matched)
-    except Exception as e:
-        pytest.skip(f"知乎解析失败（网络/签名），跳过: {e!r}")
     assert result.title, "应提取标题"
     assert result.author, "应提取作者"
     assert result.graphics, "应有正文富内容"
@@ -55,10 +137,8 @@ async def test_netease():
     # 注: 歌曲 id=1945263 已下架/无版权，test_netease 会 skip；需替换为有效的免费歌曲 id
     keyword, matched = parser.search_url("https://y.music.163.com/m/song?id=1945263")
     assert matched
-    try:
+    with _skip_on_upstream_unavailable("网易云"):
         result = await parser.parse(keyword, matched)
-    except Exception as e:
-        pytest.skip(f"网易云解析失败（第三方服务），跳过: {e!r}")
     assert result.contents, "应有音频内容"
 
 
@@ -111,18 +191,13 @@ def test_qqmusic_long_url_not_regression_after_card_handler():
 @pytest.mark.asyncio
 async def test_qqmusic():
     from nonebot_plugin_parser.parsers import QQMusicParser
-    from nonebot_plugin_parser.exception import IgnoreException
 
     parser = QQMusicParser()
     keyword, matched = parser.search_url(QQMUSIC_SONG)
     assert matched, "QQ音乐歌曲 URL 应被匹配"
-    try:
+    # 未登录态下 VIP/付费曲目拿不到播放地址属上游限制（IgnoreException），由守卫 skip
+    with _skip_on_upstream_unavailable("QQ音乐"):
         result = await parser.parse(keyword, matched)
-    except IgnoreException as e:
-        # 未登录态下 VIP/付费曲目拿不到播放地址属预期，跳过而非判失败
-        pytest.skip(f"QQ音乐该曲目无匿名播放权限（VIP/付费），跳过: {e!r}")
-    except Exception as e:
-        pytest.skip(f"QQ音乐解析失败（网络/第三方服务），跳过: {e!r}")
     assert result.contents, "应有音频内容"
 
 
@@ -133,10 +208,8 @@ async def test_kugou():
     parser = KuGouParser()
     keyword, matched = parser.search_url(KUGOU_SHARE)
     assert matched
-    try:
+    with _skip_on_upstream_unavailable("酷狗"):
         result = await parser.parse(keyword, matched)
-    except Exception as e:
-        pytest.skip(f"酷狗解析失败，跳过: {e!r}")
     assert result.contents, "应有音频内容"
 
 
@@ -150,10 +223,8 @@ async def test_kugou_chain():
     assert matched, "chain 分享链接应被匹配"
     # 正则应匹配完整 URL（含 ?chain= 参数），不被截断在 .html 处
     assert "chain=" in matched.group(0), "应包含 chain 参数"
-    try:
+    with _skip_on_upstream_unavailable("酷狗"):
         result = await parser.parse(keyword, matched)
-    except Exception as e:
-        pytest.skip(f"酷狗解析失败，跳过: {e!r}")
     assert result.contents, "应有音频内容"
 
 
@@ -164,10 +235,8 @@ async def test_hupu():
     parser = HupuParser()
     keyword, matched = parser.search_url(HUPU)
     assert matched
-    try:
+    with _skip_on_upstream_unavailable("虎扑"):
         result = await parser.parse(keyword, matched)
-    except Exception as e:
-        pytest.skip(f"虎扑解析失败，跳过: {e!r}")
     assert result.title, "应提取标题"
     assert result.author, "应提取作者"
 
@@ -179,10 +248,8 @@ async def test_coolapk():
     parser = CoolapkParser()
     keyword, matched = parser.search_url(COOLAPK)
     assert matched
-    try:
+    with _skip_on_upstream_unavailable("酷安"):
         result = await parser.parse(keyword, matched)
-    except Exception as e:
-        pytest.skip(f"酷安解析失败，跳过: {e!r}")
     assert result.author, "应提取作者"
 
 
@@ -193,10 +260,8 @@ async def test_lofter():
     parser = LofterParser()
     keyword, matched = parser.search_url(LOFTER)
     assert matched
-    try:
+    with _skip_on_upstream_unavailable("LOFTER"):
         result = await parser.parse(keyword, matched)
-    except Exception as e:
-        pytest.skip(f"LOFTER 解析失败，跳过: {e!r}")
     assert result.author, "应提取作者"
 
 
@@ -207,10 +272,8 @@ async def test_duitang():
     parser = DuiTangParser()
     keyword, matched = parser.search_url(DUITANG)
     assert matched
-    try:
+    with _skip_on_upstream_unavailable("堆糖"):
         result = await parser.parse(keyword, matched)
-    except Exception as e:
-        pytest.skip(f"堆糖解析失败，跳过: {e!r}")
     assert result.graphics, "应有图集内容"
 
 
@@ -221,10 +284,8 @@ async def test_buff():
     parser = BuffParser()
     keyword, matched = parser.search_url(BUFF_NEWS)
     assert matched
-    try:
+    with _skip_on_upstream_unavailable("BUFF"):
         result = await parser.parse(keyword, matched)
-    except Exception as e:
-        pytest.skip(f"BUFF 解析失败，跳过: {e!r}")
     assert result.title, "应提取标题"
 
 
@@ -235,10 +296,8 @@ async def test_heybox():
     parser = HeyBoxParser()
     keyword, matched = parser.search_url(HEYBOX)
     assert matched
-    try:
+    with _skip_on_upstream_unavailable("小黑盒"):
         result = await parser.parse(keyword, matched)
-    except Exception as e:
-        pytest.skip(f"小黑盒解析失败，跳过: {e!r}")
     assert result.title, "应提取标题"
 
 
@@ -284,10 +343,8 @@ async def test_illu():
     parser = IlluParser()
     keyword, matched = parser.search_url(ILLU_DRAWING)
     assert matched
-    try:
+    with _skip_on_upstream_unavailable("ILLU"):
         result = await parser.parse(keyword, matched)
-    except Exception as e:
-        pytest.skip(f"ILLU 解析失败，跳过: {e!r}")
     assert result.title, "应提取标题"
 
 
@@ -298,9 +355,7 @@ async def test_tieba():
     parser = TiebaParser()
     keyword, matched = parser.search_url(TIEBA)
     assert matched
-    try:
+    with _skip_on_upstream_unavailable("贴吧"):
         result = await parser.parse(keyword, matched)
-    except Exception as e:
-        pytest.skip(f"贴吧解析失败，跳过: {e!r}")
     assert result.title, "应提取标题"
     assert result.author, "应提取作者"

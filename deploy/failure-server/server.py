@@ -84,6 +84,12 @@ ALLOWED_DOMAINS: frozenset[str] = frozenset(
         "zhihu.com",
         # tieba
         "tieba.baidu.com",
+        # hongguo（红果短剧）: App 分享短链/H5 中间页在 novelquickapp.com，
+        # applink.novelquickapp.com 是深链子域，网页版为 hongguoduanju.com。
+        # 缺这三个域名时红果失败上报 100% 403，客户端 mark_reported 后永久丢弃。
+        "novelquickapp.com",
+        "applink.novelquickapp.com",
+        "hongguoduanju.com",
         # 其他平台
         "lofter.com",
         "coolapk.com",
@@ -108,6 +114,7 @@ ALLOWED_PLATFORMS: frozenset[str] = frozenset(
         "douyin",
         "duitang",
         "heybox",
+        "hongguo",
         "hupu",
         "illu",
         "kuaishou",

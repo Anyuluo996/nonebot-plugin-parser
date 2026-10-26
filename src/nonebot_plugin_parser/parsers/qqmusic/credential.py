@@ -21,6 +21,7 @@ from collections.abc import Callable
 from nonebot import logger
 
 from ...config import _data_dir
+from ...persist import atomic_write_json
 
 _CRED_FILE = _data_dir / "qqmusic_credential.json"
 
@@ -167,7 +168,9 @@ def save_credential(credential: Any) -> None:
         data["musickey_create_time"] = int(time.time())
     if not data.get("key_expires_in"):
         data["key_expires_in"] = _DEFAULT_KEY_EXPIRES_IN
-    _CRED_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 原子写：直接 write_text 在崩溃/断电时会留下截断的 JSON，下次启动读取即
+    # 降级匿名（刚扫码的登录态白丢）；netease 凭据已迁移到同一套 persist 工具。
+    atomic_write_json(_CRED_FILE, data)
 
 
 def parse_ck(raw: str) -> Any:

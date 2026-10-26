@@ -35,16 +35,14 @@ class Config(BaseModel):
     """PixivNow API 地址"""
     parser_pixivR18: bool = False
     """是否解析 R18 内容"""
-    parser_ncm_api: str | None = None
-    """[已弃用] 网易云音乐 API 地址，网易云现已直连官方接口，无需配置"""
     parser_proxy: str | None = None
     """代理"""
-    parser_verify_ssl: bool = False
-    """是否校验 HTTPS 证书（TLS 校验），默认 False（保持历史行为）。
+    parser_verify_ssl: bool = True
+    """是否校验 HTTPS 证书（TLS 校验），默认校验。
 
-    部分平台接口 / CDN 证书链不完整（或部署环境缺系统根证书），历史上全局
-    ``verify=False``。出于安全默认收敛为可配置项：部署环境证书正常时建议开启
-    （True），防止下载内容与凭据被中间人劫持；开启后若某平台报证书错误再回退。
+    登录 Cookie 与全部媒体都经该 TLS 链路传输，关闭校验等于放弃对中间人的防御，
+    故默认 True。仅在部署环境证书链不完整（缺系统根证书 / 目标平台自签或漏装
+    中间证书）导致请求报证书错误时，才显式设为 False 回退。
     """
     parser_douyin_ttwid: str | None = None
     """抖音 PC web 详情接口用的登录态 ttwid Cookie（图文/实况照片解析）。
@@ -176,11 +174,19 @@ class Config(BaseModel):
     """是否需要上传音频文件"""
     parser_use_base64: bool = False
     """是否使用 base64 编码发送图片，音频，视频"""
-    parser_max_size: int = 90
-    """资源最大大小 默认 90 单位 MB"""
-    parser_duration_maximum: int = 480
-    """视频/音频最大时长"""
-    parser_video_send_timeout: int = 30
+    parser_max_size: int = Field(default=90, ge=1)
+    """资源最大大小 默认 90 单位 MB。
+
+    必须 >=1: 下载层按 ``max_size * 1024 * 1024`` 算上限，0/负数会让所有媒体
+    都被判为「超过上限」而无法下载。
+    """
+    parser_duration_maximum: int = Field(default=480, ge=1)
+    """视频/音频最大时长（秒）。
+
+    必须 >=1: 判据是 ``duration > duration_maximum``，0/负数会让所有视频都被
+    判为超长而拒绝下载。需要「不限制」请填一个足够大的值。
+    """
+    parser_video_send_timeout: int = Field(default=30, ge=0)
     """媒体后处理等待阈值（秒），0 表示不限时。
 
     只约束下载完成之后的阶段: GIF 转换(palettegen+paletteuse)、渲染卡片取材
@@ -188,14 +194,14 @@ class Config(BaseModel):
     两者不再互相截断(2026-09-25 推特 twimg 视频事故: 下载 35s 重试后成功,
     却先被渲染层 30s 超时判死)。
     """
-    parser_parse_timeout: int = 90
+    parser_parse_timeout: int = Field(default=90, ge=0)
     """解析顶层超时（秒）。解析超时后记录失败并打 warning 日志，不再无限挂起。
 
     仅作用于解析（元数据抓取）阶段，不影响后续渲染/视频下载（那两层各有自身超时）。
     Telegram 平台豁免（其解析阶段需同步下载媒体，tdl 自身 timeout=600s 兜底）。
     设为 0 可禁用此行为（恢复不限时等待的旧行为）。
     """
-    parser_parse_retry_max: int = 3
+    parser_parse_retry_max: int = Field(default=3, ge=0)
     """解析失败即时重试次数（解析层，0 关闭）。单次解析最多尝试 1+N 次，全部失败才向用户报错。
 
     防抖音等平台结构改版/风控导致的偶发失败（快进快出的 403/空 body），几秒后
@@ -204,8 +210,8 @@ class Config(BaseModel):
     （parser_failure_*，L2）是互补的两层机制：本层在用户消息上下文内即时重试、
     成功可直接发给用户；L2 无消息上下文，成功也无法回推。
     """
-    parser_parse_retry_delay: float = 1.0
-    """解析重试基础间隔（秒），按失败次数指数退避：1x → 2x → 4x"""
+    parser_parse_retry_delay: float = Field(default=1.0, ge=0.0)
+    """解析重试基础间隔（秒），按失败次数指数退避：1x → 2x → 4x；0 表示不等待"""
     parser_append_url: bool = False
     """是否在解析结果中附加原始URL"""
     parser_disabled_platforms: list[PlatformEnum] = Field(default_factory=list)
@@ -247,16 +253,14 @@ class Config(BaseModel):
     # ── 解析失败链接收集：重试(L2) + 上报(L3) ──────────────────────────
     parser_failure_retry_enabled: bool = True
     """是否启用失败链接定时重试（L2）"""
-    parser_failure_retry_interval: int = 10
-    """失败链接重试间隔（分钟）"""
-    parser_failure_retry_max: int = 3
-    """失败链接最大重试次数，超过后停止重试"""
+    parser_failure_retry_interval: int = Field(default=10, ge=1)
+    """失败链接重试间隔（分钟）。必须 >=1：apscheduler interval 触发器的间隔不可为 0。"""
+    parser_failure_retry_max: int = Field(default=3, ge=0)
+    """失败链接最大重试次数，超过后停止重试（0 表示不重试、直接进入上报/标记）"""
     parser_failure_report_enabled: bool = False
     """是否启用失败链接上报到远程服务器（L3），默认关闭"""
     parser_failure_report_url: str | None = None
     """失败链接上报地址（HTTP，通常经 nginx 反代 + HTTPS）"""
-    parser_failure_report_key: str | None = None
-    """失败链接上报 API key（与服务端 API_KEY 一致）"""
 
     @field_validator("parser_bili_video_codes", mode="before")
     @classmethod
@@ -390,13 +394,6 @@ class Config(BaseModel):
     def pixivR18(self) -> bool:
         """是否解析 R18 内容"""
         return self.parser_pixivR18
-
-    @property
-    def ncm_api(self) -> str | None:
-        """网易云音乐 API 地址（NeteaseCloudMusicApi），无尾斜杠"""
-        if self.parser_ncm_api is None:
-            return None
-        return self.parser_ncm_api.rstrip("/")
 
     @property
     def proxy(self) -> str | None:
@@ -604,11 +601,15 @@ class Config(BaseModel):
         """失败链接上报地址"""
         return self.parser_failure_report_url
 
-    @property
-    def failure_report_key(self) -> str | None:
-        """失败链接上报 API key"""
-        return self.parser_failure_report_key
-
 
 pconfig: Config = get_plugin_config(Config)
 """插件配置"""
+
+# 关闭 TLS 校验属于安全降级：登录 Cookie 与全部媒体都走这条链路，中间人可读可改。
+# 放在模块层而非 __init__，是为了让任何导入 config 的路径（含仅加载解析器的场景）
+# 都能看到这条告警；部署环境证书链正常时不应出现该日志。
+if not pconfig.verify_ssl:
+    logger.warning(
+        "parser_verify_ssl=False：凭据与媒体将不经 TLS 证书校验，存在中间人劫持风险；"
+        "仅在部署环境证书链不完整时使用，证书正常请改回 True。"
+    )

@@ -116,14 +116,27 @@ def _get_cached_result(cache_key: str) -> ParseResult | None:
     # NOTE: deepcopy 在 is_cache_valid 通过后执行, 之间存在 TOCTOU 窗口
     # (并发下另一协程可能修改 result.repost 的延迟任务)。单线程 asyncio 下
     # dict 操作无 await, 实际安全; 若未来在 deepcopy 前插入 await 需重新评估。
-    return deepcopy(result)
+    try:
+        return deepcopy(result)
+    except (TypeError, RecursionError) as e:
+        # 缓存项异常（残留 Task 等）时按未命中处理，避免一条坏缓存打死该链接
+        logger.warning(f"缓存深拷贝失败, 移除该缓存: {cache_key[:80]} - {e!r}")
+        _RESULT_CACHE.pop(cache_key, None)
+        return None
 
 
 def _cache_result(cache_key: str, result: ParseResult) -> None:
     if not result.is_cache_valid():
         logger.debug(f"跳过缓存运行态结果: {cache_key}")
         return
-    _RESULT_CACHE[cache_key] = deepcopy(result)
+    try:
+        snapshot = deepcopy(result)
+    except (TypeError, RecursionError) as e:
+        # 兜底：结果里若残留未落库的 Task（is_cache_valid 漏判的路径），deepcopy 会抛
+        # TypeError。缓存只是加速手段，不能让它把「已成功发送」翻成「解析失败」。
+        logger.warning(f"跳过缓存(深拷贝失败): {cache_key[:80]} - {e!r}")
+        return
+    _RESULT_CACHE[cache_key] = snapshot
 
 
 def clear_result_cache():

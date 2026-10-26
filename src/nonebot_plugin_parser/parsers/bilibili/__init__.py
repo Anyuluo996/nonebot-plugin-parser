@@ -142,7 +142,10 @@ class BilibiliParser(BaseParser):
         )
 
     @handle("BV", r"^(?P<bvid>BV[0-9a-zA-Z]{10})(?:\s)?(?P<page_num>\d{1,3})?$")
-    @handle("/BV", r"bilibili\.com(?:/video)?/(?P<bvid>BV[0-9a-zA-Z]{10})")
+    # 分P 参数必须由 URL 形式一并捕获: 分享链接最常见的形态是
+    # `.../BVxxxx?p=3`, 去掉该命名组会让 `group("page_num")` 抛 IndexError
+    # 被下方 except 吞成 1 → 多P视频静默解析第 1 P（内容/封面/时长全错）。
+    @handle("/BV", r"bilibili\.com(?:/video)?/(?P<bvid>BV[0-9a-zA-Z]{10})(?:.*?[?&]p=(?P<page_num>\d{1,3}))?")
     async def _parse_bv(self, searched: Match[str]):
         """解析视频信息"""
         bvid = str(searched.group("bvid"))
@@ -155,7 +158,7 @@ class BilibiliParser(BaseParser):
         return await self.parse_video(bvid=bvid, page_num=page_num)
 
     @handle("av", r"^av(?P<avid>\d{6,})(?:\s)?(?P<page_num>\d{1,3})?$")
-    @handle("/av", r"bilibili\.com(?:/video)?/av(?P<avid>\d{6,})")
+    @handle("/av", r"bilibili\.com(?:/video)?/av(?P<avid>\d{6,})(?:.*?[?&]p=(?P<page_num>\d{1,3}))?")
     async def _parse_av(self, searched: Match[str]):
         """解析视频信息"""
         avid = int(searched.group("avid"))

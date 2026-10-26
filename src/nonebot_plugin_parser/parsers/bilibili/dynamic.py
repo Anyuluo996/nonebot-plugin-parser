@@ -148,8 +148,16 @@ class DynamicModule(Struct):
 
     @property
     def pub_ts(self) -> int:
-        """获取发布时间戳"""
-        return int(self.module_author.pub_ts)
+        """获取发布时间戳
+
+        ``pub_ts`` 类型放宽为 ``int | str``（兼容 B 站字符串形态）后, 非纯数字
+        字符串会让 ``int()`` 抛 ValueError 穿透整条动态解析; 时间戳是可选项,
+        解析不了回退 0 即可。
+        """
+        try:
+            return int(self.module_author.pub_ts)
+        except (TypeError, ValueError):
+            return 0
 
     @property
     def _major_info(self) -> dict[str, Any] | None:

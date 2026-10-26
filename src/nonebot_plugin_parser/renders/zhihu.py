@@ -40,7 +40,16 @@ class Renderer(ImageRenderer):
             from . import get_global_renderer
 
             global_renderer = get_global_renderer()
-            return await global_renderer.render_image(result)  # type: ignore[attr-defined]
+            render_image = getattr(global_renderer, "render_image", None)
+            if render_image is not None:
+                return await render_image(result)
+
+            # render_type=default 时全局渲染器是 DefaultRenderer（纯文本，没有
+            # render_image），直接调用会 AttributeError 崩掉所有知乎文章/单回答链接。
+            # 回退 CommonRenderer（其 render_image 内部自己 load_resources）。
+            from .common import CommonRenderer
+
+            return await CommonRenderer().render_image(result)
 
         if _template_to_pic is None:
             raise RuntimeError("知乎渲染器: 无可用的 template_to_pic 后端 (htmlrender/htmlkit)")

@@ -86,11 +86,13 @@ async def get_post(parser, tid: int) -> Posts:
     return parse_res(data)
 
 
-def _frags_to_graphics(contents_objs, create_image, create_video=None) -> list:
-    """把一个楼层的 Contents.objs 碎片列表转为 graphics（文本 + 图片 + 视频）。
+def _frags_to_graphics(contents_objs, create_image) -> list:
+    """把一个楼层的 Contents.objs 碎片列表转为 graphics（文本 + 图片）。
 
-    相邻文本碎片合并，@/链接拼到当前文本末尾，图片/视频独立成项。
+    相邻文本碎片合并，@/链接拼到当前文本末尾，图片独立成项。
     build_content（主楼）与 build_reply_floors（回复楼层）共用本逻辑。
+    视频碎片（FragVideo）不在这里产出：它会被画进卡片却无法播放,
+    统一由 build_video_contents 收进 result.contents 单独发送。
     """
     out: list = []
     for part in contents_objs:
@@ -109,13 +111,38 @@ def _frags_to_graphics(contents_objs, create_image, create_video=None) -> list:
                 out[-1] += url_str
             else:
                 out.append(url_str)
-        elif isinstance(part, FragVideo) and create_video:
-            out.append(create_video(part.src, cover_url=part.cover_src, duration=part.duration))
     return out
 
 
-def build_content(posts: Posts, create_image, create_video=None) -> list:
-    """构建主楼正文为 graphics（文本 + 图片 + 视频）。"""
+def build_video_contents(posts: Posts, create_video) -> list:
+    """收集主楼 + 前 ``MAX_REPLY_FLOORS`` 层回复里的视频，转成 VideoContent 列表。
+
+    贴吧视频不在 PbContent 碎片里（``_type == 5`` 无字段），主楼视频挂在
+    ``thread.video_info``（由 ``Thread.from_tbdata`` 附加到 Thread.contents.video），
+    楼层视频是 ``FragVideo`` 碎片。两者都画不进长图，必须走内容通道单独发送,
+    否则视频贴在卡片上只剩标题与空正文（README 声称支持视频，实际永远不产出）。
+    """
+    videos: list = []
+    if not create_video:
+        return videos
+
+    main_video = posts.thread.contents.video
+    if isinstance(main_video, FragVideo) and main_video:
+        videos.append(create_video(main_video.src, cover_url=main_video.cover_src, duration=main_video.duration))
+
+    for post in posts.objs[1 : 1 + MAX_REPLY_FLOORS]:
+        for part in post.contents.objs:
+            if isinstance(part, FragVideo) and part:
+                videos.append(create_video(part.src, cover_url=part.cover_src, duration=part.duration))
+    return videos
+
+
+def build_content(posts: Posts, create_image) -> list:
+    """构建主楼正文为 graphics（文本 + 图片）。
+
+    主楼视频不在这里：graphics 是渲染进卡片长图的图文插槽，视频必须走
+    ``result.contents``（见 ``build_video_contents``）。
+    """
     contents: list = []
     if posts.thread.title:
         contents.append(posts.thread.title)
@@ -123,7 +150,7 @@ def build_content(posts: Posts, create_image, create_video=None) -> list:
     if not posts.objs:
         return contents
 
-    contents.extend(_frags_to_graphics(posts.objs[0].contents.objs, create_image, create_video))
+    contents.extend(_frags_to_graphics(posts.objs[0].contents.objs, create_image))
     return contents
 
 
@@ -131,7 +158,7 @@ def build_content(posts: Posts, create_image, create_video=None) -> list:
 MAX_REPLY_FLOORS = 4
 
 
-def build_reply_floors(posts: Posts, create_image, create_video=None, limit: int = MAX_REPLY_FLOORS) -> list:
+def build_reply_floors(posts: Posts, create_image, limit: int = MAX_REPLY_FLOORS) -> list:
     """从 posts.objs[1:] 构造前 ``limit`` 个回复楼层，供专用渲染器画长图。
 
     每个 floor dict 字段对齐 NGA 的 posts 结构：
@@ -147,7 +174,7 @@ def build_reply_floors(posts: Posts, create_image, create_video=None, limit: int
         if len(floors) >= limit:
             break
 
-        graphics = _frags_to_graphics(post.contents.objs, create_image, create_video)
+        graphics = _frags_to_graphics(post.contents.objs, create_image)
         text_parts = [g for g in graphics if isinstance(g, str)]
         images = [g for g in graphics if not isinstance(g, str)]
 

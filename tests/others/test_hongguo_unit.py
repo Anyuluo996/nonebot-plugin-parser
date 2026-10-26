@@ -136,3 +136,141 @@ def test_media_addresses_base64():
     info = {"main_url": "https://a.com/1.mp4", "backup_url_1": encoded, "bad": "///"}
     addresses = _media_addresses(info)
     assert addresses == ["https://a.com/1.mp4", "https://example.com/v.mp4"]
+
+
+# --------------------------------------------------------------------------- #
+# _build_result: 只有 vid 的入口（/video/{vid}、?video_id=、仅含 vid 的 App 分享）
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_build_result_vid_only_uses_vid(monkeypatch):
+    """series 为 None 但 vid 有效时继续取流, 不再误报「缺少剧集信息」。"""
+    from pathlib import Path
+
+    from nonebot_plugin_parser.parsers.hongguo import HongguoParser, _Media
+
+    parser = HongguoParser()
+    calls: dict[str, tuple[str, str]] = {}
+
+    async def _fake_resolve(vid: str, series_id: str) -> _Media:
+        calls["resolve"] = (vid, series_id)
+        return _Media(url="https://example.com/v.mp4", duration=42.0)
+
+    async def _fake_episode(series_id: str, vid: str):
+        calls["episode"] = (series_id, vid)
+        return None
+
+    async def _fake_download(media: _Media) -> Path:
+        return Path("v.mp4")
+
+    monkeypatch.setattr(parser, "_resolve_media", _fake_resolve)
+    monkeypatch.setattr(parser, "_fetch_episode_index", _fake_episode)
+    monkeypatch.setattr(parser, "_download_and_decrypt", _fake_download)
+
+    result = await parser._build_result("", "1234567890", None, "https://hongguoduanju.com/video/1234567890")
+
+    # 取流只用 vid, series_id 为空串 (不触发依赖 series 的网页兜底)
+    assert calls["resolve"] == ("1234567890", "")
+    # 没有 series_id 就不发集号查询
+    assert "episode" not in calls
+    # 不编造剧名: 回退到平台名, 集数/简介等 series 专属信息全部省略
+    assert result.title == "红果短剧"
+    assert result.text is None
+
+
+@pytest.mark.asyncio
+async def test_build_result_missing_ids_reports_missing_marker(monkeypatch):
+    """两个标识都没有时报「缺少作品标识」, 与「已失效」区分开。"""
+    from nonebot_plugin_parser.exception import ParseException
+    from nonebot_plugin_parser.parsers.hongguo import HongguoParser
+
+    parser = HongguoParser()
+    with pytest.raises(ParseException, match="缺少作品标识") as exc_info:
+        await parser._build_result("", "", None, "https://novelquickapp.com/s/xxxx")
+    assert "已失效" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_build_result_series_detail_failure_reports_invalid_link(monkeypatch):
+    """只有 series_id 且详情拿不到 = 链接失效, 文案要指向失效而非缺标识。"""
+    from nonebot_plugin_parser.exception import ParseException
+    from nonebot_plugin_parser.parsers.hongguo import HongguoParser
+
+    parser = HongguoParser()
+
+    async def _fake_fetch(series_id: str):
+        raise ParseException("红果剧集详情数据为空（可能已下架）")
+
+    monkeypatch.setattr(parser, "_fetch_series", _fake_fetch)
+
+    with pytest.raises(ParseException, match="链接可能已失效") as exc_info:
+        await parser._build_result("7689336045552274457", "", None, "https://hongguoduanju.com/detail?series_id=x")
+    assert "缺少作品标识" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_build_result_cancels_episode_task_on_media_failure(monkeypatch):
+    """取流失败时集号任务必须取消, 否则成为没人 await 的孤儿请求。"""
+    import asyncio
+
+    from nonebot_plugin_parser.exception import ParseException
+    from nonebot_plugin_parser.parsers.hongguo import HongguoParser, _Series
+
+    parser = HongguoParser()
+    episode_tasks: list[asyncio.Task] = []
+
+    async def _fake_fetch(series_id: str) -> _Series:
+        return _Series(title="测试剧", series_id=series_id, vid_list=["111"])
+
+    async def _slow_episode(series_id: str, vid: str):
+        task = asyncio.current_task()
+        assert task is not None
+        episode_tasks.append(task)
+        await asyncio.sleep(60)
+        return None
+
+    async def _failing_resolve(vid: str, series_id: str):
+        # 让集号任务真正跑起来, 才能观察到取消
+        await asyncio.sleep(0)
+        raise ParseException("游客接口不可用")
+
+    monkeypatch.setattr(parser, "_fetch_series", _fake_fetch)
+    monkeypatch.setattr(parser, "_fetch_episode_index", _slow_episode)
+    monkeypatch.setattr(parser, "_resolve_media", _failing_resolve)
+
+    with pytest.raises(ParseException, match="游客接口不可用"):
+        await parser._build_result("7689336045552274457", "111", None, "https://hongguoduanju.com/detail?series_id=x")
+
+    assert len(episode_tasks) == 1
+    with pytest.raises(asyncio.CancelledError):
+        await episode_tasks[0]
+
+
+@pytest.mark.asyncio
+async def test_web_url_vid_only_entry(monkeypatch):
+    """网页 /video/{vid} 与 ?video_id= 入口直达取流, 不再在入口处误报缺剧集。"""
+    from pathlib import Path
+
+    from nonebot_plugin_parser.parsers.hongguo import HongguoParser, _Media
+
+    parser = HongguoParser()
+    resolved: list[tuple[str, str]] = []
+
+    async def _fake_resolve(vid: str, series_id: str) -> _Media:
+        resolved.append((vid, series_id))
+        return _Media(url="https://example.com/v.mp4", duration=1.0)
+
+    async def _fake_download(media: _Media) -> Path:
+        return Path("v.mp4")
+
+    monkeypatch.setattr(parser, "_resolve_media", _fake_resolve)
+    monkeypatch.setattr(parser, "_download_and_decrypt", _fake_download)
+
+    for url, expected_vid in (
+        ("https://hongguoduanju.com/video/7689337797118807065", "7689337797118807065"),
+        ("https://hongguoduanju.com/detail?video_id=7689337797118807065", "7689337797118807065"),
+    ):
+        _keyword, searched = HongguoParser.search_url(url)
+        assert searched is not None, f"未匹配: {url}"
+        result = await parser._parse_web_url(searched)
+        assert result.title == "红果短剧"
+        assert resolved[-1] == (expected_vid, "")

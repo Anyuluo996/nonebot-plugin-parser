@@ -83,6 +83,11 @@ class VideoContent(MediaContent):
         try:
             self.cover = await self.cover if timeout <= 0 else await asyncio.wait_for(self.cover, timeout=timeout)
         except asyncio.TimeoutError as e:
+            # wait_for 超时会 cancel 底层 Task, 但赋值语句不会执行 → 字段仍留着已取消的
+            # Task。后续任何一次再取(如卡片先取封面再画网格)都会 await 已取消 Task 抛
+            # CancelledError(BaseException), 穿透渲染层与 matcher 的 except Exception,
+            # 让整条消息静默丢失。超时即置 None: 封面属装饰, 丢弃比二次崩溃好。
+            self.cover = None
             raise DownloadException("封面下载超时") from e
         return self.cover
 
@@ -118,8 +123,16 @@ class DynamicContent(MediaContent):
     cover: Path | Task[Path] | None = None
     frames: list[dict[str, Any]] | None = None
     """Ugoira 帧信息列表 [{"file": "000000.jpg", "delay": 1000}]，用于提取缩略图"""
+    _gif_failed: bool = field(default=False, repr=False, compare=False)
+    """GIF 转换是否已失败（超时/异常）。
+
+    失败后把 ``gif_path`` 置 None 并置位本标记, 保证重复取值行为稳定:
+    仅置 None 会让第二次取值退回 ``get_path()``(ugoira 的 zip), 被当视频发出。
+    """
 
     async def get_gif_path(self) -> Path | None:
+        if self._gif_failed:
+            raise DownloadException("动图转换失败")
         if self.gif_path is None:
             return None
         if isinstance(self.gif_path, Path):
@@ -133,10 +146,17 @@ class DynamicContent(MediaContent):
                 await self.gif_path if timeout <= 0 else await asyncio.wait_for(self.gif_path, timeout=timeout)
             )
         except asyncio.TimeoutError as e:
+            # 同 get_cover_path: wait_for 已取消底层 Task, 不清理会二次抛 CancelledError
+            self.gif_path = None
+            self._gif_failed = True
             raise DownloadException("动图转换超时") from e
         except DownloadException:
+            self.gif_path = None
+            self._gif_failed = True
             raise
         except Exception as e:
+            self.gif_path = None
+            self._gif_failed = True
             raise DownloadException(f"GIF 转换失败: {e!r}") from e
         return self.gif_path
 
@@ -149,6 +169,8 @@ class DynamicContent(MediaContent):
         try:
             self.cover = await self.cover if timeout <= 0 else await asyncio.wait_for(self.cover, timeout=timeout)
         except asyncio.TimeoutError as e:
+            # 理由同 VideoContent.get_cover_path: 避免重复 await 已取消的 Task
+            self.cover = None
             raise DownloadException("封面下载超时") from e
         return self.cover
 
@@ -351,6 +373,38 @@ class ParseResult:
                 return await cont.get_thumbnail_path()
         return None
 
+    def _iter_extra_images(self) -> Iterator[ImageContent]:
+        """extra 里内嵌的图片（楼层回复/回答正文 + 作者头像）。
+
+        下载（``_iterate_download_coros``）与缓存有效性判定（``_has_pending_resources``）
+        共用这一处：此前只下载不判 pending, 下载失败的内嵌图会以 Task 形态留在结果里,
+        ``_cache_result`` 的 deepcopy 于是抛 TypeError, 让已成功发出的消息被记成
+        「解析失败」并触发 L2 重试。
+        """
+        posts = self.extra.get("posts")
+        if isinstance(posts, list):
+            for post in posts:
+                if not isinstance(post, dict):
+                    continue
+                for img in post.get("images") or ():
+                    if isinstance(img, ImageContent):
+                        yield img
+                avatar = post.get("avatar")
+                if isinstance(avatar, ImageContent):
+                    yield avatar
+
+        answers = self.extra.get("answers")
+        if isinstance(answers, list):
+            for ans in answers:
+                if not isinstance(ans, dict):
+                    continue
+                for img in ans.get("content") or ():
+                    if isinstance(img, ImageContent):
+                        yield img
+                avatar = ans.get("avatar")
+                if isinstance(avatar, ImageContent):
+                    yield avatar
+
     def _iterate_download_coros(self, img_only: bool = False) -> Iterator[Awaitable[Path | None]]:
         if author := self.author:
             if author.avatar:
@@ -389,23 +443,9 @@ class ParseResult:
                 # 的视频通道带超时单独处理, 不在此等待
                 yield gra.get_cover_path()
 
-        # extra["posts"] 中的图片（NGA/贴吧回复楼层内嵌图 + 贴吧作者头像）
-        for post in self.extra.get("posts", []) if isinstance(self.extra.get("posts"), list) else ():
-            if isinstance(post, dict):
-                for img in post.get("images", []):
-                    if isinstance(img, ImageContent):
-                        yield img.get_path()
-                if isinstance(post.get("avatar"), ImageContent):
-                    yield post["avatar"].get_path()
-
-        # extra["answers"] 中的图片（如知乎问题页高赞回答内嵌图 + 作者头像）
-        for ans in self.extra.get("answers", []) if isinstance(self.extra.get("answers"), list) else ():
-            if isinstance(ans, dict):
-                for img in ans.get("content", []) if isinstance(ans.get("content"), list) else ():
-                    if isinstance(img, ImageContent):
-                        yield img.get_path()
-                if isinstance(ans.get("avatar"), ImageContent):
-                    yield ans["avatar"].get_path()
+        # extra["posts"]/["answers"] 中的图片（NGA/贴吧回复楼层、知乎回答内嵌图 + 作者头像）
+        for img in self._iter_extra_images():
+            yield img.get_path()
 
         if self.repost is not None:
             yield from self.repost._iterate_download_coros(img_only)
@@ -445,6 +485,15 @@ class ParseResult:
             if isinstance(gra, ImageContent) and is_pending_path_task(gra.path_task):
                 return True
             if isinstance(gra, VideoContent) and is_pending_path_task(gra.cover):
+                return True
+        # 检查 extra 内嵌图（楼层/回答）：不判这里会让失败的内嵌图留在结果里,
+        # 缓存 deepcopy 时对残留 Task 抛 TypeError（见 _iter_extra_images 注释）
+        for img in self._iter_extra_images():
+            if is_pending_path_task(img.path_task):
+                return True
+        # GIF 转换已失败：结果本身不可复用（get_gif_path 恒抛），不写缓存
+        for cont in self.contents:
+            if isinstance(cont, DynamicContent) and cont._gif_failed:
                 return True
         # 检查转发
         if self.repost and self.repost._has_pending_resources():

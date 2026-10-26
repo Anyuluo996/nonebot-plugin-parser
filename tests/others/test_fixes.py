@@ -681,3 +681,147 @@ async def test_weibo_parse_weibo_id_deleted_returns_parse_exception(monkeypatch)
     # 不应抛 msgspec.ValidationError，而应转成语义化 ParseException
     with pytest.raises(ParseException, match="微博数据解析失败"):
         await parser.parse_weibo_id("QsPbt51HH")
+
+
+# --------------------------------------------------------------------------- #
+# X 卡片 / Article 正文合并（用户自己写的那句话不能丢）
+# --------------------------------------------------------------------------- #
+class _StubTweet:
+    """X 推文最小替身: 只实现 _collect_result 读取的属性 / 方法。
+
+    用替身而不是 msgspec 结构体, 是为了把断言锁在「文本怎么合并」这一层,
+    卡片结构解析 (parse_link_card) 有独立单测, 不在本用例职责内。
+    """
+
+    def __init__(self, text: str, article_content: list | None = None):
+        from types import SimpleNamespace
+
+        self.legacy = SimpleNamespace(text=text, time_local=0)
+        self.core = SimpleNamespace(
+            user_results=SimpleNamespace(
+                result=SimpleNamespace(
+                    core=SimpleNamespace(name="作者", screen_name="author"),
+                    avatar_url=None,
+                    description=None,
+                )
+            )
+        )
+        self.card = None
+        self.title = None
+        self.rest_id = "1234567890"
+        self.quoted_status_result = None
+        self.retweeted_status_result = None
+        self._article_content = article_content or []
+
+    def get_article_content(self, create_image, create_video):
+        return self._article_content
+
+    def get_text(self) -> str:
+        return self.legacy.text
+
+    def get_medias(self, create_image, create_video):
+        return []
+
+
+def _stub_entry(tweet: _StubTweet):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(result=SimpleNamespace(as_tweet=tweet))
+
+
+@pytest.mark.asyncio
+async def test_x_card_merges_own_text_with_card_text(monkeypatch):
+    """卡片推文: 用户正文与卡片信息合并, 不再被 _card_text 覆盖丢失。"""
+    from nonebot_plugin_parser.parsers.x import TwitterParser
+    from nonebot_plugin_parser.parsers.x.util import LinkCardData
+
+    parser = TwitterParser()
+    card = LinkCardData(
+        url="https://example.com/post",
+        title="卡片标题",
+        site_name="示例站点",
+        preview_url="https://example.com/cover.jpg",
+    )
+    monkeypatch.setattr(parser, "_get_link_card", lambda tweet: card)
+    monkeypatch.setattr(parser, "_create_image", lambda url: f"IMG:{url}")
+
+    result = await parser._collect_result(_stub_entry(_StubTweet("自己写的那句话")))
+
+    assert result.text == "自己写的那句话\n\n卡片标题\n示例站点\nhttps://example.com/post"
+    assert result.graphics == ["IMG:https://example.com/cover.jpg"]
+
+
+@pytest.mark.asyncio
+async def test_x_card_without_own_text_uses_card_text(monkeypatch):
+    """正文为空时只展示卡片信息 (不留下空行)。"""
+    from nonebot_plugin_parser.parsers.x import TwitterParser
+    from nonebot_plugin_parser.parsers.x.util import LinkCardData
+
+    parser = TwitterParser()
+    card = LinkCardData(
+        url="https://example.com/post",
+        title="卡片标题",
+        preview_url="https://example.com/cover.jpg",
+    )
+    monkeypatch.setattr(parser, "_get_link_card", lambda tweet: card)
+    monkeypatch.setattr(parser, "_create_image", lambda url: f"IMG:{url}")
+
+    result = await parser._collect_result(_stub_entry(_StubTweet("   ")))
+
+    assert result.text == "卡片标题\nhttps://example.com/post"
+    assert result.graphics == ["IMG:https://example.com/cover.jpg"]
+
+
+@pytest.mark.asyncio
+async def test_x_article_prepends_own_comment(monkeypatch):
+    """Article 推文: 作者写在正文外的那句评论插到图文区首位 (保序)。"""
+    from nonebot_plugin_parser.parsers.x import TwitterParser
+
+    parser = TwitterParser()
+    article_content = ["Article 第一段", "IMG:https://example.com/a.jpg", "Article 第二段"]
+    result = await parser._collect_result(_stub_entry(_StubTweet("评论一句", article_content)))
+
+    assert list(result.graphics) == ["评论一句", *article_content]
+    assert result.text is None
+
+
+# --------------------------------------------------------------------------- #
+# 抖音「故事」: avatars 为空数组不应 IndexError
+# --------------------------------------------------------------------------- #
+@pytest.mark.asyncio
+async def test_douyin_story_empty_avatars(monkeypatch):
+    """服务侧对无头像作品返回 `avatars: []`, 旧代码 avatars[0] 直接 IndexError。"""
+    from types import SimpleNamespace
+
+    from nonebot_plugin_parser import config as config_module
+    from nonebot_plugin_parser.parsers import douyin as douyin_module
+
+    monkeypatch.setattr(
+        config_module,
+        "pconfig",
+        SimpleNamespace(douyin_story_service="http://127.0.0.1:1", douyin_story_token=None),
+    )
+
+    async def _fake_request(service: str, params: dict):
+        assert service == "http://127.0.0.1:1"
+        return {
+            "ok": True,
+            "images": ["https://p3.douyinpic.com/story.jpg"],
+            "avatars": [],
+            "desc": "故事标题",
+            "nickname": "",
+        }
+
+    monkeypatch.setattr(douyin_module, "_request_story_service", _fake_request)
+
+    parser = douyin_module.DouyinParser()
+    # 图片下载会真联网, 本用例只关心 avatars 取值
+    monkeypatch.setattr(parser, "create_image_contents", lambda urls: [])
+
+    result = await parser._parse_story_via_service("7694643968583141755")
+
+    assert result is not None
+    assert result.author is not None
+    assert result.author.avatar is None
+    assert result.author.name == "抖音用户"
+    assert result.title == "故事标题"

@@ -1052,13 +1052,16 @@ class Thread:
         create_time = thread_proto.create_time
 
         if not is_share:
-            real_thread_proto = thread_proto.origin_thread_info
-            contents = Contents.from_tbdata(real_thread_proto)
-            vote_info = VoteInfo.from_tbdata(real_thread_proto.poll_info)
+            # 普通帖: 主楼内容/投票/视频都在 thread_proto 自身。
+            # 原实现读 origin_thread_info（那是「分享帖的原帖」字段，普通帖恒为空）,
+            # 导致 Thread.contents 永远为空、video_info 判定恒 False → 主楼视频丢失。
+            own_proto = thread_proto
+            contents = Contents.from_tbdata(own_proto)
+            vote_info = VoteInfo.from_tbdata(own_proto.poll_info)
             share_origin = ShareThread()
             # 视频贴: 主楼视频在 video_info 中, PbContent 碎片不含视频字段
-            if real_thread_proto.HasField("video_info") and real_thread_proto.video_info.video_width:
-                video = FragVideo.from_tbdata(real_thread_proto.video_info)
+            if own_proto.HasField("video_info") and own_proto.video_info.video_width:
+                video = FragVideo.from_tbdata(own_proto.video_info)
                 contents.objs.append(video)
                 contents.video = video
         else:

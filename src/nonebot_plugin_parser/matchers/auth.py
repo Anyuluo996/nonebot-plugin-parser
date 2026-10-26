@@ -83,8 +83,12 @@ def resolve_item(raw: str) -> str | None:
     for item in COMMAND_TO_ITEM.values():
         if text == item:
             return item
-    # 3. 命令名直接匹配(去前缀后查映射)
-    return COMMAND_TO_ITEM.get(_strip_prefix(text))
+    # 3. 命令名直接匹配(原串优先, 再去前缀后查映射)
+    # 历史事故: 凭据命令注册的是**带前缀**的真实命令名(register_command_item 传
+    # ``f"{prefix}qq登录"``), 这里曾只查去前缀串 ``qq登录``, 于是
+    # ``par授权 @某人 parqq登录`` 在 parser_force_prefix 非空时一律报「未识别的受控项」。
+    # 两串都查: 原串命中前缀形态, 去前缀串命中「用户手打不带前缀」的形态。
+    return COMMAND_TO_ITEM.get(text) or COMMAND_TO_ITEM.get(_strip_prefix(text))
 
 
 def _strip_prefix(cmd: str) -> str:

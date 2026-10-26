@@ -2,7 +2,9 @@
 
 apscheduler 定时扫描本地失败记录，对每条重新解析：
 - 成功 → mark_success（静默删除）
-- 失败 → mark_retried；若 retries>=max 且 L3 启用 → report_failure_record
+- 语义异常（TipException/IgnoreException：下架/无版权/需登录）→ mark_reported
+  终止该记录，不重试（与 parse_retry.py 口径一致）
+- 其它失败 → mark_retried；若 retries>=max 且 L3 启用 → report_failure_record
 
 重试在定时任务里跑，无用户消息上下文，无法把成功结果回推原用户。
 """
@@ -13,7 +15,7 @@ from nonebot import logger
 
 from .config import pconfig
 from .parsers import BaseParser
-from .exception import ParseException
+from .exception import TipException, ParseException, IgnoreException
 from .failure_store import mark_retried, mark_success, mark_reported, get_retryable_failures
 from .failure_reporter import report_failure_record
 
@@ -47,6 +49,14 @@ async def _retry_one(record: dict) -> None:
         # 成功：静默删除
         mark_success(url)
         logger.debug(f"失败链接重试成功，已删除: {url}")
+    except (TipException, IgnoreException) as e:
+        # Tip/Ignore 是**语义性**结果（作品下架/无版权/需登录/内容不宜等），重试只会
+        # 得到同样的答案。旧实现走下面的通用 except 重试 3 轮，把用户本就该看到的
+        # 「已下架」一路顶到 failure_retry_max 后当故障上报（可能误报 L3）。
+        # 口径与 parse_retry.py 一致：语义异常不重试。这里 mark_reported 终止记录
+        # （reported=True 让 get_retryable_failures 不再返回它），但不占 L3 上报配额。
+        mark_reported(url)
+        logger.debug(f"失败链接重试遇到语义异常, 不再重试: {url} - {type(e).__name__}: {e!s}")
     except Exception as e:
         err = f"{type(e).__name__}: {e!s}"
         # mark_retried 内部对 _failures 的原记录 retries+=1（与本次传入的 record 拷贝解耦）。

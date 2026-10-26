@@ -890,45 +890,66 @@ class HongguoParser(BaseParser):
                 raise
             except ParseException as e:
                 if not vid:
-                    raise
+                    # 只有 series_id 而详情拿不到 = 剧集下架/链接失效 (区别于"没解析出标识")
+                    raise ParseException(f"红果剧集信息获取失败（链接可能已失效）: {e}") from e
                 logger.warning(f"hongguo 剧集详情获取失败（继续按分享数据解析）: {e}")
         if series is None and share_page is not None:
             series = await self._series_from_share_page(share_page)
+        if series is None and not vid:
+            raise ParseException(f"红果链接缺少作品标识（未找到剧集或分集 ID）: {url[:80]}")
+
         if series is None:
-            raise ParseException("红果分享缺少剧集信息（链接可能已失效）")
+            # 只有 vid 的入口（/video/{vid}、?video_id=、schemeParams 仅含 vid 的
+            # App 分享）: 取流接口只要 vid，series 才能提供的标题/集数/集号全部降级。
+            # 历史事故: 旧逻辑在这里一律抛"缺少剧集信息（链接可能已失效）"，
+            # 而 vid 本身有效、取流能成功 —— 100% 误报。
+            target_vid = vid
+        else:
+            chapter_list = series.vid_list
+            target_vid = vid or (chapter_list[0] if chapter_list else "")
+            if not target_vid:
+                raise ParseException(f"红果短剧《{series.title}》没有可播放的分集")
 
-        chapter_list = series.vid_list
-        target_vid = vid or (chapter_list[0] if chapter_list else "")
-        if not target_vid:
-            raise ParseException(f"红果短剧《{series.title}》没有可播放的分集")
-
-        resolve_sid = series.series_id or series_id
+        # 无剧集元数据时为空串: _fetch_episode_index 与网页取流兜底都依赖 series_id
+        resolve_sid = (series.series_id or series_id) if series is not None else ""
         # 集号定位与取流并行（游客 multi_video_detail 的 vid_index 是权威剧集序;
         # 该调用内部吞掉一切失败返回 None, 不阻塞解析）
         episode_task = asyncio.create_task(self._fetch_episode_index(resolve_sid, target_vid)) if resolve_sid else None
-        media = await self._resolve_media(target_vid, resolve_sid)
+        try:
+            media = await self._resolve_media(target_vid, resolve_sid)
+        except BaseException:
+            # 取流抛错时集号任务还在飞: 不取消就没人 await, 网络请求与任务对象一起泄漏
+            if episode_task is not None:
+                episode_task.cancel()
+            raise
         video_task = asyncio.create_task(self._download_and_decrypt(media))
 
         episode_label = ""
-        episode_cnt = series.episode_cnt
+        episode_cnt = series.episode_cnt if series is not None else 0
         if episode_task is not None:
             located = await episode_task
             if located is not None:
                 idx, fetched_cnt = located
                 episode_cnt = fetched_cnt or episode_cnt
                 episode_label = f" 第{idx}集"
-        title = series.title + episode_label
-        text_parts = []
-        if episode_cnt > 1:
-            text_parts.append(f"全{episode_cnt}集")
-        if series.category:
-            text_parts.append(f"#{series.category}")
-        if series.intro:
-            text_parts.append(series.intro[:150])
+        # vid-only 入口没有剧名: 用平台名占位, 绝不编造剧名
+        cover = ""
+        text_parts: list[str] = []
+        if series is not None:
+            title = series.title + episode_label
+            cover = series.cover
+            if episode_cnt > 1:
+                text_parts.append(f"全{episode_cnt}集")
+            if series.category:
+                text_parts.append(f"#{series.category}")
+            if series.intro:
+                text_parts.append(series.intro[:150])
+        else:
+            title = self.platform.display_name
 
         return self.result(
             title=title,
             text="\n".join(part for part in text_parts if part) or None,
-            contents=[self.create_video_content(video_task, series.cover or None, media.duration)],
+            contents=[self.create_video_content(video_task, cover or None, media.duration)],
             url=url,
         )

@@ -268,7 +268,9 @@ class DouyinParser(BaseParser):
         if not images:
             return None
         avatars = data.get("avatars") or []
-        avatar = avatars[0] if isinstance(avatars, list) and isinstance(avatars[0], str) else None
+        # 空列表必须一起判: `avatars[0]` 在 `avatars == []` 时直接 IndexError,
+        # 会把整条故事解析打挂并被上层重试 3 次 (服务侧对无头像作品返回空数组)
+        avatar = avatars[0] if isinstance(avatars, list) and avatars and isinstance(avatars[0], str) else None
         nickname = data.get("nickname")
         author = self.create_author(
             nickname if isinstance(nickname, str) and nickname else "抖音用户",

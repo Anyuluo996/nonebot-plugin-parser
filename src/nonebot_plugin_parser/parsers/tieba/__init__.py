@@ -8,7 +8,7 @@ import re
 from typing import ClassVar
 
 from ..base import Platform, BaseParser, PlatformEnum, handle
-from .utils import get_post, build_content, build_reply_floors
+from .utils import get_post, build_content, build_reply_floors, build_video_contents
 from .._format import format_num
 
 
@@ -28,14 +28,18 @@ class TiebaParser(BaseParser):
             avatar_url=f"http://tb.himg.baidu.com/sys/portraith/item/{thread.user.portrait}",
         )
 
-        contents = build_content(posts, self.create_image_content, self.create_video_content)
+        contents = build_content(posts, self.create_image_content)
+
+        # 主楼/楼层视频画不进长图, 走内容通道单独发送
+        videos = build_video_contents(posts, self.create_video_content)
 
         # 前几楼回复，渲染进长图（与 NGA/知乎对齐的多楼层模式）
-        reply_floors = build_reply_floors(posts, self.create_image_content, self.create_video_content)
+        reply_floors = build_reply_floors(posts, self.create_image_content)
 
         return self.result(
             title=thread.title,
             graphics=contents,
+            contents=videos,
             timestamp=thread.create_time,
             url=f"https://tieba.baidu.com/p/{post_id}",
             author=author,

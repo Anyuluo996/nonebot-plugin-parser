@@ -115,13 +115,25 @@ class BaseParser:
         cls._handlers = {}
         cls._key_patterns = []
 
-        # 获取所有被 handle 装饰的方法
+        # 获取所有被 handle 装饰的方法。
+        # 同一 keyword 注册两个 handler 会互相覆盖（dict 单键），且 search_url 只回传
+        # keyword、不回传命中的 pattern —— 后写者永远截胡，前者变成不可达代码
+        # （ILLU 文章/图集曾共用 keyword，文章链接必然走进图集 handler 抛 IndexError）。
+        owners: dict[str, str] = {}
         for attr_name in dir(cls):
             attr = getattr(cls, attr_name)
             if callable(attr) and hasattr(attr, _KEY_PATTERNS):
                 key_patterns: KeyPatterns = getattr(attr, _KEY_PATTERNS)
                 handler = cast(HandlerFunc, attr)
                 for keyword, pattern in key_patterns:
+                    if (prev := owners.get(keyword)) and prev != attr_name:
+                        from nonebot import logger
+
+                        logger.warning(
+                            f"[{cls.__name__}] keyword {keyword!r} 被 {prev} 与 {attr_name} 重复注册, "
+                            f"后者会覆盖前者; 请为每个 handler 使用独立 keyword"
+                        )
+                    owners[keyword] = attr_name
                     cls._handlers[keyword] = handler
                     cls._key_patterns.append((keyword, pattern))
 

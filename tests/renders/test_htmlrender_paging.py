@@ -177,5 +177,113 @@ async def test_chunk_result_keeps_context():
     assert chunk_result.repost is None, "清空 repost"
 
 
+def test_estimate_item_height_counts_newlines():
+    """文字项必须按 \\n 分行估算（template 是 pre-wrap），空行也算一行。
+
+    回归：旧模型 len(item)/_CHARS_PER_LINE 把整篇多行正文算成一两行。
+    """
+    from nonebot_plugin_parser.renders.htmlrender import HtmlRenderer, _CHARS_PER_LINE, _LINE_HEIGHT_PX
+
+    assert HtmlRenderer._estimate_item_height("a\nb") == 2 * _LINE_HEIGHT_PX + 4, "两个换行段落应算 2 行"
+    assert HtmlRenderer._estimate_item_height("a\n\nb") == 3 * _LINE_HEIGHT_PX + 4, "空行也占 1 行"
+    assert HtmlRenderer._estimate_item_height("\n") == _LINE_HEIGHT_PX + 4, "纯空行至少 1 行"
+    assert HtmlRenderer._estimate_item_height("") == _LINE_HEIGHT_PX + 4, "空串至少 1 行"
+    # 单行长文本仍按字符数折行
+    wrapped = "x" * (_CHARS_PER_LINE * 3)
+    assert HtmlRenderer._estimate_item_height(wrapped) == 3 * _LINE_HEIGHT_PX + 4
+    # 多行 + 折行叠加: 2 个满宽行(86 字符) + 1 满宽行 + 1 短行 = 4 行
+    mixed = "x" * (_CHARS_PER_LINE * 2) + "\n" + "y" * _CHARS_PER_LINE + "\n" + "z"
+    assert HtmlRenderer._estimate_item_height(mixed) == 4 * _LINE_HEIGHT_PX + 4
+
+
+def test_multiline_single_paragraph_needs_paging():
+    """单个 graphics 字符串内含大量换行（酷安/Lofter/ILLU 整篇正文）必须分页。
+
+    旧模型: 300 行短句共 899 字符 ≈ 21 折行 ≈ 546px → 不分页 → 超光栅上限尾部空白。
+    """
+    from nonebot_plugin_parser.renders.htmlrender import HtmlRenderer
+
+    text = "\n".join(["短句"] * 300)
+    result = _result(graphics=[text])
+
+    assert HtmlRenderer()._needs_paging(result), "300 行正文（≈7800px）应触发分页"
+
+
+@pytest.mark.asyncio
+async def test_single_huge_string_split_into_chunks():
+    """单个超长字符串（无换行）也要被拆成多块，不能整篇塞进一页。"""
+    from nonebot_plugin_parser.renders.htmlrender import HtmlRenderer
+
+    text = "x" * 200_000
+    result = _result(graphics=[text])
+    chunks = HtmlRenderer._chunk_graphics(result)
+
+    assert len(chunks) >= 2, f"200000 字符应拆成多块，实际 {len(chunks)}"
+    for chunk in chunks:
+        est = HtmlRenderer._estimate_page_height(chunk)
+        assert est <= 7000, f"块估算高度 {est}px 超安全高度（拆项后不应再溢出）"
+    # 内容不丢: 硬切处补的换行去掉后应与原文一致
+    assert "".join(str(item) for chunk in chunks for item in chunk).replace("\n", "") == text
+
+
+def test_needs_paging_counts_repost():
+    """引用转发高度计入分页判断（正文 + 引用推文一起超安全高度 → 分页）。"""
+    from nonebot_plugin_parser.parsers import Author, Platform, ParseResult
+    from nonebot_plugin_parser.renders.htmlrender import HtmlRenderer
+
+    graphics = ["短句"] * 200  # 200 × 30px = 6000px + 300 开销 ≈ 6300px，单独不超
+    repost = ParseResult(
+        platform=Platform(name="twitter", display_name="推特"),
+        author=Author(name="quoted"),
+        text="引用推文正文" * 1700,  # ≈10200 字符 ≈ 6192px
+    )
+    result = _result(graphics=graphics)
+    result.repost = repost
+
+    assert HtmlRenderer._estimate_page_height(graphics) <= 7000, "正文单独不应超安全高度"
+    assert HtmlRenderer()._needs_paging(result), "正文 + 引用转发超安全高度应分页"
+
+    # 同正文不带 repost 时不分页（确认是 repost 高度触发的分页）
+    assert not HtmlRenderer()._needs_paging(_result(graphics=graphics))
+
+
+@pytest.mark.asyncio
+async def test_repost_rendered_as_separate_last_page(monkeypatch):
+    """分页时 repost 单独成末页，前面页不重复画，引用推文正文不丢。"""
+    from nonebot_plugin_parser.parsers import Author, Platform, ParseResult
+    from nonebot_plugin_parser.renders.htmlrender import HtmlRenderer
+
+    repost = ParseResult(
+        platform=Platform(name="twitter", display_name="推特"),
+        author=Author(name="quoted"),
+        title="被引用的标题",
+        text="被引用的推文正文",
+    )
+    result = _result(graphics=_make_long_graphics(20000))
+    result.repost = repost
+
+    renderer = HtmlRenderer()
+    rendered = []
+
+    async def fake_render_image(chunk_result):
+        rendered.append(chunk_result)
+        return _png_bytes(800, 2000)
+
+    monkeypatch.setattr(renderer, "render_image", fake_render_image)
+    monkeypatch.setattr(type(renderer), "append_url", property(lambda self: False))
+
+    messages = [m async for m in renderer.render_messages(result)]
+
+    assert len(messages) == 1, "分页结果应合并为 1 条转发消息"
+    assert len(rendered) >= 3, f"长文应分多页渲染，实际 {len(rendered)}"
+
+    repost_pages = [r for r in rendered if r.repost is repost]
+    assert len(repost_pages) == 1, f"引用转发应且只应出现在 1 页，实际 {len(repost_pages)}"
+    assert repost_pages[0] is rendered[-1], "引用转发页应是最后一页"
+    assert repost_pages[0].graphics == [], "引用转发独立成页（graphics 为空）"
+    assert all(r.repost is None for r in rendered[:-1]), "前面的页不应重复画 repost"
+    assert "1/" in (rendered[0].title or "") and f"{len(rendered)}/{len(rendered)}" in (rendered[-1].title or "")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

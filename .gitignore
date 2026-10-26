@@ -185,3 +185,8 @@ render_result_combined.md
 success_桌面端_UA_+_Referer.json
 test_opus_1159504791855955984.json
 dynamic_api_response.json
+
+# 本地抓包/探针产物（逆向红果、抖音等临时脚本与响应 dump，体积可达数百 MB，不入库）
+.tmp_*
+test_dynamic_*.json
+dynamic_no_credential.json

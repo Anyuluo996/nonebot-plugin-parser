@@ -23,6 +23,10 @@ MAX_LONG_IMAGE_HEIGHT = 4000
 # 上一片的末尾内容（DPR=2 下约 3 行），避免读者在两图接缝处丢上下文。
 SLICE_OVERLAP_PX = 160
 
+# 切片 JPEG 质量：切片多为照片型渲染内容（B站动态回退截图等），PNG 体积是
+# JPEG(85) 的 3–8 倍，而体积直接决定协议端上传耗时与 WS payload 风险。
+SLICE_JPEG_QUALITY = 85
+
 
 class BaseRenderer(ABC):
     """统一的渲染器，将解析结果转换为消息"""
@@ -122,17 +126,20 @@ class BaseRenderer(ABC):
             yield UniMessage(all_segs)
         elif forwardable_segs and dynamic_segs:
             # 图片 + 视频混合: 合并转发
-            yield UniMessage(UniHelper.construct_forward_message(all_segs))
+            for ref in UniHelper.construct_forward_messages(all_segs):
+                yield UniMessage(ref)
         elif forwardable_segs:
             # 仅图片
             if pconfig.need_forward_contents or len(forwardable_segs) > 4:
-                yield UniMessage(UniHelper.construct_forward_message(forwardable_segs))
+                for ref in UniHelper.construct_forward_messages(forwardable_segs):
+                    yield UniMessage(ref)
             else:
                 yield UniMessage(forwardable_segs)
         elif dynamic_segs:
             # 仅视频/动图
             if pconfig.need_forward_contents or len(dynamic_segs) > 1:
-                yield UniMessage(UniHelper.construct_forward_message(dynamic_segs))
+                for ref in UniHelper.construct_forward_messages(dynamic_segs):
+                    yield UniMessage(ref)
             else:
                 yield UniMessage(dynamic_segs)
 
@@ -175,12 +182,13 @@ class ImageRenderer(BaseRenderer):
                 msg += url_text
             yield msg
         else:
-            # 多图：合并转发，URL 作为末尾文本节点
-            segs = [UniHelper.img_seg(piece) for piece in slices]
+            # 多图：合并转发，URL 作为末尾文本节点；节点超批大小时拆成多张卡片
+            segs = await self._slice_segs(slices)
             nodes: list[Any] = list(segs)
             if url_text:
                 nodes.append(url_text)
-            yield UniMessage(UniHelper.construct_forward_message(nodes))
+            for ref in UniHelper.construct_forward_messages(nodes):
+                yield UniMessage(ref)
 
         # 媒体内容
         async for message in self.render_contents(result):
@@ -189,6 +197,9 @@ class ImageRenderer(BaseRenderer):
     @staticmethod
     async def _split_long_image(raw: bytes) -> list[bytes]:
         """长图按 MAX_LONG_IMAGE_HEIGHT 垂直切片，返回各片 bytes；不超高时原样返回单元素列表。
+
+        切片以 JPEG(SLICE_JPEG_QUALITY) 编码：切片多为照片型渲染内容，同画质下
+        体积远小于 PNG；不超高时不重编码，原样透传。
 
         相邻切片保留 SLICE_OVERLAP_PX 重叠：切片边界恰好切断文字行时,
         上一片的末尾内容会完整出现在下一片开头，阅读不断行。
@@ -232,12 +243,33 @@ class ImageRenderer(BaseRenderer):
             pieces: list[bytes] = []
             for t, b in boundaries:
                 piece = img.crop((0, t, width, b))
+                if piece.mode not in ("RGB", "L"):
+                    piece = piece.convert("RGB")
                 buf = io.BytesIO()
-                piece.save(buf, format="PNG")
+                piece.save(buf, format="JPEG", quality=SLICE_JPEG_QUALITY)
                 pieces.append(buf.getvalue())
             return pieces
 
         return await asyncio.to_thread(_do_split)
+
+    @classmethod
+    async def _slice_segs(cls, slices: list[bytes]) -> list[Any]:
+        """切片转图片段，遵守 use_base64 配置。
+
+        bytes 直塞 img_seg 会走 Image(raw=) 分支无条件转 base64，绕过
+        use_base64=False 的文件路径配置——大切片 base64 后塞进单个 WS 请求，
+        触发 napcat 硬编码的 maxPayload=50MiB 直接断连且该消息丢失
+        （2026-10-28 yun 事故）。use_base64=False 时切片落盘到与协议端共享的
+        缓存目录，以 file:// 路径发送，WS 负载降到 KB 级。
+        """
+        segs: list[Any] = []
+        for piece in slices:
+            if pconfig.use_base64:
+                segs.append(UniHelper.img_seg(piece))
+            else:
+                suffix = ".jpg" if piece[:2] == b"\xff\xd8" else ".png"
+                segs.append(UniHelper.img_seg(await cls.save_img(piece, suffix=suffix)))
+        return segs
 
     async def render_contents(self, result: ParseResult) -> AsyncGenerator[UniMessage[Any], None]:
         """ImageRenderer 系：graphics（文字段落 + 内嵌图）已渲染进卡片图，不再二次发出。
@@ -299,11 +331,11 @@ class ImageRenderer(BaseRenderer):
         return UniHelper.img_seg(result.render_image), image_raw
 
     @classmethod
-    async def save_img(cls, raw: bytes) -> Path:
+    async def save_img(cls, raw: bytes, suffix: str = ".png") -> Path:
         """保存图片"""
         import aiofiles
 
-        file_name = f"{uuid.uuid4().hex}.png"
+        file_name = f"{uuid.uuid4().hex}{suffix}"
         image_path = pconfig.cache_dir / file_name
         async with aiofiles.open(image_path, "wb+") as f:
             await f.write(raw)

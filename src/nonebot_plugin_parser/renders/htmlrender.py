@@ -103,10 +103,11 @@ class HtmlRenderer(ImageRenderer):
             urls = (result.display_url, result.repost_display_url)
             url_text = "\n".join(url for url in urls if url)
 
-        nodes: list[Any] = [UniHelper.img_seg(s) for s in all_slices]
+        nodes: list[Any] = await self._slice_segs(all_slices)
         if url_text:
             nodes.append(url_text)
-        yield UniMessage(UniHelper.construct_forward_message(nodes))
+        for ref in UniHelper.construct_forward_messages(nodes):
+            yield UniMessage(ref)
 
         # 分页分支只渲染了卡片切片, contents(视频/音频等)仍需走视频/音频通道,
         # 否则长文 Article 内嵌视频会被静默丢弃 (ImageRenderer.render_contents

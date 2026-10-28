@@ -24,6 +24,14 @@ from .config import pconfig
 ForwardNodeInner = str | Segment | UniMessage
 """转发消息节点内部允许的类型"""
 
+FORWARD_NODE_BATCH_SIZE = 10
+"""单个合并转发卡片的最大节点数。
+
+单个 WS 请求携带全部节点时，大媒体（渲染长图切片等）的 base64 会撞协议端
+硬上限（napcat 给 WS 硬编码 maxPayload=50MiB，超限直接断连且该消息丢失，
+2026-10-28 yun 事故）；拆批后单请求体积可控，失败重试/降级直发的代价也小。
+"""
+
 EMOJI_MAP = {
     "fail": ("10060", "❌"),
     "resolving": ("424", "👀"),
@@ -53,6 +61,23 @@ class UniHelper:
             nodes.append(node)
 
         return Reference(nodes=nodes)
+
+    @staticmethod
+    def construct_forward_messages(
+        segments: Sequence[ForwardNodeInner],
+        batch_size: int = FORWARD_NODE_BATCH_SIZE,
+        user_id: str | None = None,
+    ) -> list[Reference]:
+        """构造分批合并转发：节点按 batch_size 拆成多张卡片，每张独立发送/重试/降级。
+
+        batch_size <= 0 时不分批，全部节点进单张卡片。
+        """
+        if batch_size <= 0:
+            return [UniHelper.construct_forward_message(segments, user_id=user_id)]
+        return [
+            UniHelper.construct_forward_message(segments[i : i + batch_size], user_id=user_id)
+            for i in range(0, len(segments), batch_size)
+        ]
 
     @staticmethod
     def extract_forward_nodes(message: UniMessage[Any]) -> list[UniMessage[Any]]:

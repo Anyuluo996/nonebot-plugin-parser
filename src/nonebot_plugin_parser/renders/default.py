@@ -34,7 +34,8 @@ class DefaultRenderer(BaseRenderer):
             logger.debug("封面下载/插入失败, 转发消息不含封面", exc_info=True)
 
         if total_len > 300:
-            yield UniMessage(UniHelper.construct_forward_message(segs))
+            for ref in UniHelper.construct_forward_messages(segs):
+                yield UniMessage(ref)
         else:
             yield UniMessage(segs)
 

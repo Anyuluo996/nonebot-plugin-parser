@@ -92,12 +92,13 @@ class Renderer(ImageRenderer):
                 msg += url_text
             yield msg
         else:
-            # 多图：合并转发，URL 作为末尾文本节点
-            segs = [UniHelper.img_seg(piece) for piece in slices]
+            # 多图：合并转发，URL 作为末尾文本节点；节点超批大小时拆成多张卡片
+            segs = await self._slice_segs(slices)
             nodes: list[Any] = list(segs)
             if url_text:
                 nodes.append(url_text)
-            yield UniMessage(UniHelper.construct_forward_message(nodes))
+            for ref in UniHelper.construct_forward_messages(nodes):
+                yield UniMessage(ref)
 
         # 视频（主楼 + 前几楼）在长图之外单独发送
         async for message in self.render_contents(result):

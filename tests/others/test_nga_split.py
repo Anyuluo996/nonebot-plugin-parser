@@ -28,11 +28,15 @@ def _make_long_png(width: int, height: int) -> bytes:
 
 
 def _make_gradient_png(width: int, height: int) -> bytes:
-    """每行像素编码绝对行号 y（R=y//256, G=y%256），用于直接读出各切片的绝对位置"""
+    """按 64px 实色横带编码绝对行号（带号 b=y//64 → R=b），用于直接读出各切片的绝对位置。
+
+    用 64px 实色带而非逐行像素：切片以 JPEG 有损编码，逐行渐变在解压后有
+    ±个位数误差，带内实色则 DC 系数几乎无损，带号解码可精确还原行号。
+    """
     img = Image.new("RGB", (width, height))
     px = img.load()
     for y in range(height):
-        rgb = (y // 256, y % 256, 0)
+        rgb = ((y // 64) % 256, 0, 0)
         for x in range(width):
             px[x, y] = rgb
     buf = io.BytesIO()
@@ -40,13 +44,16 @@ def _make_gradient_png(width: int, height: int) -> bytes:
     return buf.getvalue()
 
 
+_BAND_PX = 64
+
+
 def _slice_tops(slices: list[bytes]) -> list[int]:
-    """由每片首行像素解出其在原图中的绝对 y"""
+    """由每片首行像素解出其在原图中的绝对 y（实色带编码，JPEG 误差 << 半带宽）"""
     tops: list[int] = []
     for s in slices:
         img = Image.open(io.BytesIO(s))
-        r, g, _ = img.getpixel((0, 0))
-        tops.append(r * 256 + g)
+        r, _, _ = img.getpixel((0, 0))
+        tops.append(r * _BAND_PX)
     return tops
 
 
@@ -110,6 +117,38 @@ async def test_split_merges_short_tail():
     heights = [Image.open(io.BytesIO(s)).size[1] for s in slices]
     assert tops == [0, 4000 - SLICE_OVERLAP_PX], f"片起点应为 [0, 3840], 实际 {tops}"
     assert heights == [4000, 8100 - 3840], f"片高应为 [4000, 4260], 实际 {heights}"
+
+
+@pytest.mark.asyncio
+async def test_split_pieces_are_jpeg():
+    """切片以 JPEG 编码（照片型内容体积远小于 PNG）；不超高时原样透传不重编码。"""
+    from nonebot_plugin_parser.renders.base import ImageRenderer
+
+    raw = _make_long_png(720, 9000)
+    slices = await ImageRenderer._split_long_image(raw)
+    assert len(slices) > 1
+    for s in slices:
+        assert s[:2] == b"\xff\xd8", "切片应为 JPEG magic"
+        with Image.open(io.BytesIO(s)) as img:
+            assert img.format == "JPEG"
+
+
+@pytest.mark.asyncio
+async def test_split_pieces_smaller_than_png():
+    """照片型内容切片 JPEG 体积应显著小于同内容 PNG（#3 目标：砍掉大头上传量）。"""
+    import os
+
+    from nonebot_plugin_parser.renders.base import ImageRenderer
+
+    # 逐像素随机噪声：PNG 几乎压不动（实色带/规则纹理 PNG 反而极小，不代表照片）
+    raw_img = Image.frombytes("RGB", (720, 9000), os.urandom(720 * 9000 * 3))
+    buf = io.BytesIO()
+    raw_img.save(buf, format="PNG")
+    raw = buf.getvalue()
+
+    slices = await ImageRenderer._split_long_image(raw)
+    jpeg_total = sum(len(s) for s in slices)
+    assert jpeg_total < len(raw) * 0.5, f"JPEG 切片总量 {jpeg_total} 应 < PNG 的一半 {len(raw)}"
 
 
 if __name__ == "__main__":

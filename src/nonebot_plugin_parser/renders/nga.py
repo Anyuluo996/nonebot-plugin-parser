@@ -82,7 +82,7 @@ class Renderer(ImageRenderer):
 
         urls = (result.display_url, result.repost_display_url) if self.append_url else ()
         url_text = "\n".join(url for url in urls if url)
-        segs = [UniHelper.img_seg(piece) for piece in slices]
+        segs = await self._slice_segs(slices)
 
         if len(segs) == 1:
             # 单图：直接发送（URL 追加为文本）
@@ -91,8 +91,9 @@ class Renderer(ImageRenderer):
                 msg += url_text
             yield msg
         else:
-            # 多图：合并转发，URL 作为末尾文本节点
+            # 多图：合并转发，URL 作为末尾文本节点；节点超批大小时拆成多张卡片
             nodes: list = list(segs)
             if url_text:
                 nodes.append(url_text)
-            yield UniMessage(UniHelper.construct_forward_message(nodes))
+            for ref in UniHelper.construct_forward_messages(nodes):
+                yield UniMessage(ref)

@@ -78,7 +78,7 @@ PARSER_FORCE_PREFIX=jx
 # 1. 检测前缀
 if text.startswith(f"{parse_prefix}+") or text.startswith(f"{parse_prefix} "):
     force_parse = True
-    text = text[len(f"{parse_prefix}+"):].lstrip()
+    text = text[len(f"{parse_prefix}+") :].lstrip()
     state[PSR_FORCE_PARSE_KEY] = True
 
 # 2. 跳过禁用检查

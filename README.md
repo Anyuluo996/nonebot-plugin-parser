@@ -503,6 +503,7 @@ from nonebot import require
 require("nonebot_plugin_parser")
 from nonebot_plugin_parser.parsers import BaseParser, Platform, handle
 
+
 class ExampleParser(BaseParser):
     """示例视频网站解析器"""
 
@@ -555,7 +556,6 @@ class ExampleParser(BaseParser):
             timestamp=timestamp,
             url=f"https://example.com/video/{video_id}",
         )
-
 ```
 
 </details>
@@ -567,8 +567,8 @@ class ExampleParser(BaseParser):
 ```python
 author = self.create_author(
     name="作者名",
-    avatar_url="https://example.com/avatar.jpg",   # 可选，会自动下载
-    description="个性签名"                          # 可选
+    avatar_url="https://example.com/avatar.jpg",  # 可选，会自动下载
+    description="个性签名",  # 可选
 )
 ```
 
@@ -579,36 +579,37 @@ author = self.create_author(
 video = self.create_video_content(
     url_or_task="https://example.com/video.mp4",
     cover_url="https://example.com/cover.jpg",  # 可选
-    duration=120.5                               # 可选，单位：秒
+    duration=120.5,  # 可选，单位：秒
 )
 
 # 方式2：传入已创建的下载任务
 from nonebot_plugin_parser.download import DOWNLOADER
+
 video_task = DOWNLOADER.download_video(url, ext_headers=self.headers)
-video = self.create_video_content(
-    url_or_task=video_task,
-    cover_url=cover_url,
-    duration=duration
-)
+video = self.create_video_content(url_or_task=video_task, cover_url=cover_url, duration=duration)
 ```
 
 > 构建图集内容
 
 ```python
 # 并发下载图集内容
-images = self.create_image_contents([
-    "https://example.com/img1.jpg",
-    "https://example.com/img2.jpg",
-])
+images = self.create_image_contents(
+    [
+        "https://example.com/img1.jpg",
+        "https://example.com/img2.jpg",
+    ]
+)
 ```
 
 > 创建动图内容（GIF)，平台一般只提供视频（后续插件会做自动转为 gif 的处理)
 
 ```python
-dynamics = self.create_dynamic_contents([
-    "https://example.com/dynamic1.mp4",
-    "https://example.com/dynamic2.mp4",
-])
+dynamics = self.create_dynamic_contents(
+    [
+        "https://example.com/dynamic1.mp4",
+        "https://example.com/dynamic2.mp4",
+    ]
+)
 ```
 
 > 重定向 url
@@ -616,7 +617,7 @@ dynamics = self.create_dynamic_contents([
 ```python
 real_url = await self.get_redirect_url(
     url="https://short.url/abc",
-    headers=self.headers  # 可选
+    headers=self.headers,  # 可选
 )
 ```
 

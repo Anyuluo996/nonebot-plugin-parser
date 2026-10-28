@@ -113,7 +113,7 @@ test = [
 telegram = ["nonebot-adapter-telegram>=0.1.0b20"]
 
 [build-system]
-requires = ["uv_build>=0.12.1,<0.13.0"]
+requires = ["uv_build>=0.13.5,<0.14.0"]
 build-backend = "uv_build"
 
 [tool.uv.sources]

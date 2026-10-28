@@ -59,6 +59,7 @@ from rich.progress import (
     DownloadColumn,
 )
 
+
 @contextmanager
 def rich_progress(self, desc: str, total: int | None = None):
     with Progress(
@@ -152,6 +153,7 @@ def suppress_exception(
     func: Callable[P, T],
 ) -> Callable[P, T | None]:
     """装饰器：捕获所有异常并返回 None"""
+
     @wraps(func)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> T | None:
         try:
@@ -159,6 +161,7 @@ def suppress_exception(
         except Exception as e:
             logger.debug(f"函数 {func.__name__} 执行失败: {e}")
             return None
+
     return wrapper
 ```
 
@@ -169,6 +172,7 @@ def get_char_width(self, char: str) -> int:
     """获取字符宽度，使用缓存优化"""
     bbox = self.font.getbbox(char)
     return int(bbox[2] - bbox[0])
+
 
 def get_text_width(self, text: str) -> int:
     """计算文本宽度，使用预计算的字符宽度优化性能"""
@@ -264,8 +268,10 @@ if file_path.exists():
 class SizeLimitException(DownloadLimitException):
     """下载大小超过限制异常"""
 
+
 class DurationLimitException(DownloadLimitException):
     """下载时长超过限制异常"""
+
 
 class ZeroSizeException(DownloadException):
     """下载大小为 0 异常"""

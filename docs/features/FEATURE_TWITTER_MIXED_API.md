@@ -142,8 +142,9 @@ export NO_PROXY="localhost,127.0.0.1,.local"
 
 ```python
 import os
-print(os.environ.get('HTTP_PROXY'))
-print(os.environ.get('HTTPS_PROXY'))
+
+print(os.environ.get("HTTP_PROXY"))
+print(os.environ.get("HTTPS_PROXY"))
 ```
 
 ## 故障排查
@@ -219,14 +220,14 @@ if is_gif:
 
 ```python
 class VxTwitterResponse:
-    user_name: str              # 昵称
-    user_screen_name: str       # @username
-    user_profile_image_url: str # 头像
-    date_epoch: int             # 时间戳
-    likes: int                  # 点赞数
-    text: str                   # 推文内容
-    media_extended: list        # 媒体信息
-    qrt: VxTwitterResponse      # 转发信息
+    user_name: str  # 昵称
+    user_screen_name: str  # @username
+    user_profile_image_url: str  # 头像
+    date_epoch: int  # 时间戳
+    likes: int  # 点赞数
+    text: str  # 推文内容
+    media_extended: list  # 媒体信息
+    qrt: VxTwitterResponse  # 转发信息
 ```
 
 ## 总结

@@ -16,10 +16,11 @@ from typing import ClassVar
 from ..base import Platform, BaseParser, PlatformEnum, ParseException, handle
 from .share import decoder as shareDecoder
 
-_ROUTER_DATA = re.compile(
-    r'<script\s+async=""\s+data-script-src="modern-inline">_ROUTER_DATA\s*=\s*({[\s\S]*?});',
-    flags=re.DOTALL,
-)
+# 只锚定赋值形态, 不锚定 script 标签属性: 抖音 2026-11 在标签上加了
+# nonce="argus-csp-token" 属性, 旧的严格属性序列正则整体失配 —— 子串仍在,
+# 正则必挂, 症状为确定性「未找到结构化数据」(曾被误判为 IP 软风控)。
+# 宽松锚点对标签属性增删/换序免疫 (hongguo 的 _ROUTER_DATA_RE 同思路)。
+_ROUTER_DATA = re.compile(r"_ROUTER_DATA\s*=\s*({[\s\S]*?});", flags=re.DOTALL)
 
 
 class QSMusicParser(BaseParser):

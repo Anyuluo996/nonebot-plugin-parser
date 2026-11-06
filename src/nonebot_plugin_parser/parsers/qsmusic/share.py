@@ -3,8 +3,11 @@ from msgspec.json import Decoder
 
 
 class Word(Struct):
-    startMs: int
-    endMs: int
+    # 页面 JSON 数值形态会漂移: 2026-11-06 线上实测 startMs/endMs 出过浮点
+    # (1234.0)。msgspec 无论 strict 与否都不做 float→int（有精度丢失风险），
+    # 故声明 float（int→float 无损且两端变体通吃），时间换算处再 int() 收口。
+    startMs: float
+    endMs: float
     text: str
 
 
@@ -17,9 +20,10 @@ class Lyrics(Struct):
 
 
 class Stats(Struct):
-    count_collected: int = 0
-    count_comment: int = 0
-    count_shared: int = 0
+    # 数值漂移防护同 Word（下游未消费，仅解码路径需要容忍）
+    count_collected: float = 0.0
+    count_comment: float = 0.0
+    count_shared: float = 0.0
 
 
 class AlbumInfo(Struct):
@@ -60,7 +64,7 @@ class _AudioWithLyrics(Struct):
         """将 KRC 歌词转换为 LRC 格式。"""
         lrc_lines: list[str] = []
         for sentence in self._lyrics.sentences:
-            start_ms = sentence.startMs
+            start_ms = int(sentence.startMs)
             sentence_text = (sentence.text or "").strip()
             if not sentence_text and sentence.words:
                 sentence_text = "".join(w.text for w in sentence.words).strip()
@@ -86,4 +90,5 @@ class RouterData(Struct):
     loaderData: _LoaderData
 
 
-decoder = Decoder(RouterData)
+# strict=False: 容忍 int→float 等数值漂移（字段声明见 Word 注释）。
+decoder = Decoder(RouterData, strict=False)

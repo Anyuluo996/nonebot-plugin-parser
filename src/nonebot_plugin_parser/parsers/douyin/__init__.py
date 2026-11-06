@@ -9,6 +9,7 @@ from . import appapi, websign
 from ..base import (
     Platform,
     BaseParser,
+    ParseResult,
     PlatformEnum,
     ParseException,
     handle,
@@ -19,6 +20,17 @@ from ...exception import TipException
 
 # PC web 详情接口
 _DETAIL_URL = "https://www.douyin.com/aweme/v1/web/aweme/detail/"
+
+# 直播间信息接口 (webcast reflow)。匿名直连可用, 无需签名/cookie/ttwid
+# (2026-11-06 yun 容器同栈实测 200)。room_id 即 reflow 分享链重定向落点
+# https://webcast.amemv.com/douyin/webcast/reflow/<room_id> 路径中的数字。
+# 仅取房间信息与封面, 不取直播流。
+_LIVE_INFO_URL = "https://webcast.amemv.com/webcast/room/reflow/info/"
+_LIVE_INFO_PARAMS: dict[str, str] = {
+    "type_id": "0",
+    "live_id": "1",
+    "app_id": "1128",
+}
 
 # 签名形态用的新版 UA，避免 COMMON_HEADER 里 2016 年的 Chrome/55 UBrowser
 # 直接被抖音风控识别为异常客户端。仅作用于签名请求，不改全局 COMMON_HEADER
@@ -125,6 +137,63 @@ class DouyinParser(BaseParser):
         #     detail API 提供。
         # 链接类型仅用于 URL 匹配, 解析行为不再区分。
         return await self.parse_slides(searched.group("vid"))
+
+    # https://webcast.amemv.com/douyin/webcast/reflow/7704962143841422080?u_code=...
+    #   (v.douyin.com 直播分享短链重定向落点, 2026-11-06 生产日志确认)
+    # https://live.douyin.com/745964462470 (网页端直播间, 仅数字房间号;
+    #   抖音号形态 live.douyin.com/<非数字> 需另解析主播主页, 暂不支持)
+    @handle("webcast.amemv", r"webcast\.amemv\.com/douyin/webcast/reflow/(?P<rid>\d+)")
+    @handle("live.douyin", r"live\.douyin\.com/(?P<rid>\d+)")
+    async def _parse_live(self, searched: re.Match[str]):
+        return await self.parse_live(searched.group("rid"), url=f"https://{searched.group(0)}")
+
+    async def parse_live(self, room_id: str, url: str | None = None) -> ParseResult:
+        """解析直播间: 封面 + 标题 + 主播卡片, 不取直播流。
+
+        判活不可用 stream_url (下播房间也返回分辨率表), 用 finish_time:
+        直播中为 0/缺失, 下播后填流结束时间戳。
+        """
+        params = {**_LIVE_INFO_PARAMS, "room_id": room_id}
+        resp = await self.request(_LIVE_INFO_URL, params=params, headers=self.ios_headers)
+        try:
+            payload = resp.json()
+        except ValueError as e:
+            raise ParseException(f"直播间接口响应非 JSON ({e!r})") from e
+
+        room = ((payload or {}).get("data") or {}).get("room") if isinstance(payload, dict) else None
+        if not isinstance(room, dict):
+            if isinstance(payload, dict) and payload.get("status_code"):
+                # 服务端业务码非 0 (房间不存在/已解散等): 确定性拒绝,
+                # TipException 不进即时重试/L2 队列, 直接给用户提示
+                raise TipException("直播间不存在或已失效")
+            # 其余形态 (空 body 风控/结构变化) 按可重试失败处理
+            raise ParseException("直播间接口未返回房间数据")
+
+        owner = room.get("owner") or {}
+        cover_urls = (room.get("cover") or {}).get("url_list") or []
+        if not cover_urls:
+            raise ParseException("直播间未返回封面")
+
+        title = room.get("title") or "抖音直播间"
+        living = not room.get("finish_time")
+        user_count = room.get("user_count") or 0
+        if living:
+            text = f"直播中 · {user_count} 人观看" if user_count else "直播中"
+        else:
+            text = "已下播"
+
+        avatar_urls = ((owner.get("avatar_thumb") or {}).get("url_list")) or []
+        return self.result(
+            title=title,
+            text=text,
+            url=room.get("share_url") or url,
+            author=self.create_author(
+                owner.get("nickname") or "抖音主播",
+                avatar_urls[0] if avatar_urls else None,
+            ),
+            contents=[self.create_image_content(cover_urls[0])],
+            extra={"content_type": "直播"},
+        )
 
     async def _request_detail(self, video_id: str, forms: tuple[str, ...] | None = None):
         """依次以五种形态请求 detail 接口: open-api -> app-api -> 签名 -> websign -> Bytespider。

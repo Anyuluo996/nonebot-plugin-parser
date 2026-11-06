@@ -144,83 +144,11 @@
 3. Diagnostics 检查
    - 相关源码与测试文件应无 IDE 报错
 
-**推送前硬性检查**：跑容器快速测试并全绿后再推送——
+**推送前验证**：完成与远端 CI 等价的检查（Prek / Typos / BasedPyright /
+单元测试）并确认全绿后再推送。**未全绿不推送**；检查入口与工具链见本地脚本
+（不入库）。
 
-```bash
-scripts/检查脚本 --fast    # ≈25s: uv sync + Prek + Typos + BasedPyright + test-other
-```
-
-该命令复刻远端 CI 的全部静态检查 job 和单元测试 job（不含真实网络的
-parsers/renders，见 §6.2b）。**不绿不推送**。无 Docker 或镜像未构建时，用等价的
-`scripts/检查脚本 --fast` 兜底；两者都不可用时至少跑 `prek run --all-files`
-+ `basedpyright` + 相关 pytest。
-
-### 6. 本地 CI 流程
-
-CI（`.github/workflows/ci.yml`）共 6 个 job，其中 3 个（Prek / Typos / BasedPyright）是历史 CI 红的高频原因。推送前的本地复刻是硬性要求（见 §5 的检查），默认路径是容器方式的 `scripts/检查脚本 --fast`（§6.2b，≈25s，免装本地工具链）；以下手工流程是其兜底与展开。
-
-#### 6.1 一次性环境准备
-
-```bash
-# uv 已是项目入口（pyproject.toml 声明），prek / poe 随 .venv 装入
-uv sync
-
-# prek —— pre-commit 的快速实现，跑 ruff-check/ruff-format/uv-lock/uv-sync
-uv tool install prek
-
-# typos —— 拼写检查，预编译二进制（Windows 放 scoop shims，或走 cargo/scoop）
-#   二进制方式（推荐，免编译）:
-curl -sL -o /tmp/typos.zip "https://github.com/crate-ci/typos/releases/latest/download/typos-v1.49.0-x86_64-pc-windows-msvc.zip"
-pwsh -c "Expand-Archive /tmp/typos.zip ~/scoop/shims -Force"
-#   或: scoop install typos / cargo install typos-cli
-
-# basedpyright —— 类型检查，走 npm（CI 同样用 npm 装）
-npm install -g basedpyright
-```
-
-> prek 装在 `~/.local/bin`，typos 装在 `~/scoop/shims`，二者可能不在默认 PATH（bash）。下方脚本已做动态定位，pwsh profile 通常已加这两个路径。
-
-#### 6.2 一键脚本
-
-仓库自带 `scripts/检查脚本`（不入库，`scripts/` 已 gitignore），动态定位工具并复刻 CI 检查：
-
-```bash
-scripts/检查脚本            # 全量: Prek + Typos + BasedPyright + test-other (+parsers/renders)
-scripts/检查脚本 --lint     # 仅静态检查: Prek + Typos + BasedPyright（最快，日常推荐）
-scripts/检查脚本 --fast     # Prek + BasedPyright + test-other（跳过 parsers/renders）
-```
-
-#### 6.2b 容器化 CI（免装本地工具链）
-
-`scripts/检查脚本`（不入库）在 Docker 容器里跑同样的检查，工具链全部在镜像里
-（`镜像定义/Dockerfile`），venv/uv/prek 缓存落在 named volume，重复运行端到端约 25s
-（fast 档，含 test-other 171 用例）。本机 Docker Desktop 是 Libkrun 引擎、Windows 盘
-bind mount 不可用，脚本走快照模式：宿主打包 git 跟踪文件注入容器，检查完把被
-ruff --fix/format 改动的文件拷回，宿主 `.venv` 不受影响。
-
-```bash
-scripts/检查脚本           # = --lint: uv sync + Prek + Typos + BasedPyright（首次自动构建镜像）
-scripts/检查脚本 --fast    # + test-other
-scripts/检查脚本 --full    # + test-parser（先 --build-full 构建 ffmpeg+deno 变体）
-scripts/检查脚本 -- "uv run pytest tests/others/test_foo.py -x"   # 容器内任意命令
-PROXY=0 scripts/检查脚本 --fast   # 运行期不走宿主代理(xxxxx)
-```
-
-工具版本：typos 固定在 Dockerfile 的 `TYPOS_VERSION`，basedpyright/prek 取构建时最新；
-升级工具改 Dockerfile 后 `scripts/检查脚本 --build` 重建。
-
-脚本对应关系（CI job → 本地命令）：
-
-| CI Job | 本地命令 | 覆盖度 |
-|---|---|---|
-| Prek | `prek run --all-files` | ✅ 完整（ruff-check/format/uv-lock/uv-sync） |
-| Typos | `typos` | ✅ 完整 |
-| BasedPyright | `npx basedpyright` | ✅ 完整 |
-| Test | `uv run poe test-other` | ✅ 完整 |
-| Test Parsers | `uv run poe test-parser` | ⚠️ 需 ffmpeg + deno（deno 缺则个别跳过） |
-| Test Render | `uv run poe test-render` | ⚠️ 需 playwright chromium（首次 `uv run playwright install chromium-headless-shell`） |
-
-#### 6.3 CI 对齐要求
+### 6. CI 对齐要求
 
 1. 本地验证应尽量与 CI 保持一致，不引入"本地能过、CI 必挂"的改动。
 2. 已知 CI 关注项包括：
@@ -287,7 +215,7 @@ PROXY=0 scripts/检查脚本 --fast   # 运行期不走宿主代理(xxxxx)
 3. 渲染与外部平台解析常受环境影响，测试时优先选择最小、最稳定的验证方式。
 4. `.env.test` 含本地凭据占位符，已被 `.gitignore` 忽略，严禁提交真实凭据或重新跟踪该文件。
 
-## 公开发布内容规范（内容规范）
+## 公开发布内容规范
 
 本仓库公开发布。凡会公开的内容 —— 代码、注释、docstring、测试夹具、提交信息、PR 标题/描述、issue、release notes —— 一律禁止携带：
 
@@ -302,5 +230,3 @@ PROXY=0 scripts/检查脚本 --fast   # 运行期不走宿主代理(xxxxx)
 - 测试夹具可用公开内容 ID（视频/笔记/房间号），涉及用户侧标识一律用占位符。
 - 公开内容不写运维进度；部署与验证结果只在私有渠道沟通。
 - 提交身份使用 GitHub noreply 邮箱，不暴露个人邮箱。
-- 推送前自检 `git diff` 与 PR 描述中的上述类别；发现已推送的敏感内容，立即修 PR/issue 描述（可编辑），代码内容走历史重写（`git-filter-repo` + 强推）。
-- 历史残留的二进制产物（截图/音视频）不做字节级清洗，删除文件即可。

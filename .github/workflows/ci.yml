@@ -105,9 +105,8 @@ jobs:
           use_oidc: true
 
   # 解析层测试(tests/parsers, poe test-parser)不在 GitHub CI 运行: runner
-  # 数据中心 IP 普遍在各平台风控名单内(B站 412/-352、抖音 403 等), 重跑吸收
-  # 不了名单级拦截, 频繁假红。该层由容器检查(scripts/检查脚本, 全量
-  # poe test-parser)承担; GitHub CI 只保留单元层(test-other)与渲染层。
+  # 数据中心 IP 普遍在各平台风控名单内(B站 412/-352、抖音 403 等), 名单级
+  # 拦截靠重跑吸收不了, 频繁假红。该层回归在推送前于本地完成。
 
   test-render:
     name: Test Render

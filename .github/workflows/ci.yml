@@ -104,59 +104,10 @@ jobs:
           env_vars: PYTHON
           use_oidc: true
 
-  test-parsers:
-    name: Test Parsers
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-    concurrency:
-      group: test-parsers-${{ github.ref }}
-      cancel-in-progress: true
-
-    env:
-      DENO: v2.x
-      PYTHON: 3.14
-      UV_NO_SYNC: 1
-      TEST: "test-parser"
-
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Setup FFmpeg
-        uses: AnimMouse/setup-ffmpeg@v1
-
-      - name: Setup Deno
-        uses: denoland/setup-deno@v2
-        with:
-          deno-version: ${{ env.DENO }}
-
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          enable-cache: true
-          python-version: ${{ env.PYTHON }}
-          version: "latest"
-
-      - name: Install Dependencies
-        run: uv sync --locked
-
-      - name: Run Pytest Parsers
-        run: uv run poe ${{ env.TEST }}
-
-      - name: Upload test results to Codecov
-        if: ${{ !cancelled() }}
-        uses: codecov/codecov-action@v7
-        with:
-          env_vars: PYTHON
-          use_oidc: true
-          report_type: "test_results"
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v7
-        with:
-          env_vars: PYTHON
-          use_oidc: true
+  # 解析层测试(tests/parsers, poe test-parser)不在 GitHub CI 运行: runner
+  # 数据中心 IP 普遍在各平台风控名单内(B站 412/-352、抖音 403 等), 重跑吸收
+  # 不了名单级拦截, 频繁假红。该层由容器检查(scripts/检查脚本, 全量
+  # poe test-parser)承担; GitHub CI 只保留单元层(test-other)与渲染层。
 
   test-render:
     name: Test Render

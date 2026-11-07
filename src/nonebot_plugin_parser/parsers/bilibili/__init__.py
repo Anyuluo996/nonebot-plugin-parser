@@ -242,12 +242,19 @@ class BilibiliParser(BaseParser):
         # 处理分 p
         page_info = video_info.extract_info_with_page(page_num)
 
-        # 获取 AI 总结
+        # 获取 AI 总结（登录态增强功能，失败绝不阻塞解析）
         if credential:
-            cid = await video.get_cid(page_info.index)
-            ai_conclusion = await video.get_ai_conclusion(cid)
-            ai_conclusion = safe_convert(ai_conclusion, AIConclusion, context="AI总结")
-            ai_summary = ai_conclusion.summary
+            try:
+                cid = await video.get_cid(page_info.index)
+                ai_conclusion = await video.get_ai_conclusion(cid)
+                ai_conclusion = safe_convert(ai_conclusion, AIConclusion, context="AI总结")
+                ai_summary = ai_conclusion.summary
+            except Exception as e:
+                # 凭据可能在校验后随时被服务端踢掉（check_valid 与实际调用之间
+                # 存在窗口），会话失效以「账号未登录」等异常冒出 —— AI 总结降级
+                # 为提示文案，2026-11-08 线上：死凭据让整条视频解析失败
+                logger.warning(f"AI 总结获取失败, 降级跳过: {type(e).__name__}: {e}")
+                ai_summary = "哔哩哔哩 cookie 未配置或失效, 无法使用 AI 总结"
         else:
             ai_summary: str = "哔哩哔哩 cookie 未配置或失效, 无法使用 AI 总结"
 

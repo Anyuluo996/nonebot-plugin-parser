@@ -86,19 +86,29 @@ class BilibiliCredentialManager:
             yield "二维码登录超时, 请重新生成"
 
     async def _init(self) -> None:
-        """初始化哔哩哔哩登录凭证"""
-        if pconfig.bili_ck is None:
-            self._load()
-            return
+        """初始化哔哩哔哩登录凭证。
 
-        credential = Credential.from_cookies(ck2dict(pconfig.bili_ck))
-        if await credential.check_valid():
-            logger.info(f"`parser_bili_ck` 有效, 保存到 {self._cookies_file}")
-            self._credential = credential
-            self._save()
-        else:
+        环境配置 ck 与回退 cookies 文件都要过 ``check_valid``：**校验不过宁可匿名**
+        （凭据置 None）。带病凭据一旦被使用，登录态增强调用（AI 总结等）会以
+        「账号未登录」炸掉整条解析 —— 凭据失效绝不允许阻塞解析主流程。
+        （2026-11-08 线上事故：env ck 死 → 盲载死回退文件 → AI 总结 -101）
+        """
+        if pconfig.bili_ck is not None:
+            credential = Credential.from_cookies(ck2dict(pconfig.bili_ck))
+            if await credential.check_valid():
+                logger.info(f"`parser_bili_ck` 有效, 保存到 {self._cookies_file}")
+                self._credential = credential
+                self._save()
+                self._last_verified = time.monotonic()
+                return
             logger.info(f"`parser_bili_ck` 已过期, 尝试从 {self._cookies_file} 加载")
-            self._load()
+
+        self._load()
+        if self._credential is not None and not await self._credential.check_valid():
+            logger.warning("回退 cookies 文件中的凭据已失效, 丢弃并按匿名解析")
+            self._credential = None
+        if self._credential is not None:
+            self._last_verified = time.monotonic()
 
     async def get(self) -> Credential | None:
         """获取当前有效凭据；无效时按需初始化 / 刷新（原 parser.credential 逻辑）。

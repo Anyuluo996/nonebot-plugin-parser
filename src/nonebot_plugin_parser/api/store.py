@@ -45,43 +45,70 @@ def _normalize_row(row: dict[str, Any]) -> dict[str, Any]:
 def _connect() -> "sqlite3.Connection":
     conn = sqlite3.connect(str(_DB_PATH), timeout=5)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    # busy_timeout 必须先于 journal_mode：WAL 模式切换需要独占锁，未装 busy handler
+    # 时并发初始化会立即抛 "database is locked"（CI xdist 多 worker 冷启动实测）
     conn.execute("PRAGMA busy_timeout=5000")
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.OperationalError:
+        # 并发下另一连接正持锁/已切好 WAL（journal_mode 是文件的持久属性，无需重试）
+        pass
     conn.execute("PRAGMA synchronous=NORMAL")
     return conn
 
 
 def _init_db() -> None:
+    """初始化/迁移。对并发初始化健壮：xdist 多 worker 共享同一 DB 文件，会话
+    lifespan 同时冷启动（2026-11-08 CI 实测翻车：locked/duplicate column 让
+    startup 注册链失败 → API 静默降级 → 冒烟测试抓出）。所有语句幂等，锁竞争
+    整体重试。"""
     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with _connect() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS tasks (
-                task_id      TEXT PRIMARY KEY,
-                url          TEXT NOT NULL,
-                url_norm     TEXT NOT NULL,
-                platform     TEXT,
-                status       TEXT NOT NULL,
-                error_kind   TEXT,
-                error        TEXT,
-                result_json  TEXT,
-                staged_files TEXT NOT NULL DEFAULT '[]',
-                staged_bytes INTEGER NOT NULL DEFAULT 0,
-                created_at   INTEGER NOT NULL,
-                started_at   INTEGER,
-                finished_at  INTEGER
-            )
-            """
-        )
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_url_norm ON tasks(url_norm, status)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_cleanup ON tasks(created_at)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_finished ON tasks(finished_at)")
-        conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-        # 迁移：v2.7.21 及之前的库没有 source 列（聊天来源记录是 v2.7.22 新增），
-        # 旧库带 default 'api' 平滑补列，已有行不受影响
-        columns = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
-        if "source" not in columns:
-            conn.execute("ALTER TABLE tasks ADD COLUMN source TEXT NOT NULL DEFAULT 'api'")
+    last_err: sqlite3.OperationalError | None = None
+    for attempt in range(4):
+        try:
+            with _connect() as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS tasks (
+                        task_id      TEXT PRIMARY KEY,
+                        url          TEXT NOT NULL,
+                        url_norm     TEXT NOT NULL,
+                        platform     TEXT,
+                        status       TEXT NOT NULL,
+                        error_kind   TEXT,
+                        error        TEXT,
+                        result_json  TEXT,
+                        staged_files TEXT NOT NULL DEFAULT '[]',
+                        staged_bytes INTEGER NOT NULL DEFAULT 0,
+                        created_at   INTEGER NOT NULL,
+                        started_at   INTEGER,
+                        finished_at  INTEGER
+                    )
+                    """
+                )
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_url_norm ON tasks(url_norm, status)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_cleanup ON tasks(created_at)")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_finished ON tasks(finished_at)")
+                conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+                # 迁移：v2.7.21 及之前的库没有 source 列（聊天来源记录是 v2.7.22 新增），
+                # 旧库带 default 'api' 平滑补列，已有行不受影响
+                columns = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
+                if "source" not in columns:
+                    try:
+                        conn.execute("ALTER TABLE tasks ADD COLUMN source TEXT NOT NULL DEFAULT 'api'")
+                    except sqlite3.OperationalError as e:
+                        # 竞态下另一进程已补列，属预期结果
+                        if "duplicate column" not in str(e):
+                            raise
+            return
+        except sqlite3.OperationalError as e:
+            # 锁竞争（database is locked / busy）整体重试；其余 OperationalError 上抛
+            if "locked" not in str(e) and "busy" not in str(e):
+                raise
+            last_err = e
+            time.sleep(0.25 * (attempt + 1))
+    if last_err is not None:
+        raise last_err
 
 
 # ── 同步核心（在 to_thread 里执行，每处新建连接） ────────────────────

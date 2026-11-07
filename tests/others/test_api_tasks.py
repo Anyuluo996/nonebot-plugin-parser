@@ -840,3 +840,33 @@ async def test_schema_migration_adds_source(tmp_path, monkeypatch):
     # 迁移后新写入不受影响
     await store.create_task("n" * 22, "https://stub.example/new", "https://stub.example/new", source="chat")
     assert (await store.get_task("n" * 22))["source"] == "chat"
+
+
+def test_init_db_concurrent_workers(tmp_path, monkeypatch):
+    """并发初始化同一 DB（CI xdist 多 worker 冷启动实测翻车场景）。
+
+    4 线程 barrier 对齐后同时 _init_db：locked（journal_mode 切换需独占锁）与
+    duplicate column（迁移竞态）都必须被吸收，任何线程不得抛出 —— 否则 startup
+    注册链失败 → API 静默降级（冒烟测试只能事后抓到，这里直接锁死机制）。
+    """
+    import threading
+
+    from nonebot_plugin_parser.api import store
+
+    monkeypatch.setattr(store, "_DB_PATH", tmp_path / "race.db")
+    barrier = threading.Barrier(4)
+    errors: list[str] = []
+
+    def _target() -> None:
+        barrier.wait(timeout=5)
+        try:
+            store._init_db()
+        except Exception as e:  # noqa: BLE001 — 收集全部线程失败用于断言
+            errors.append(repr(e))
+
+    threads = [threading.Thread(target=_target) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+    assert errors == []

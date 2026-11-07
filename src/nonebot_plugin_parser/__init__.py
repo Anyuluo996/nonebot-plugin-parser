@@ -1,3 +1,4 @@
+import time
 import asyncio
 
 from nonebot import logger, require, get_driver
@@ -76,16 +77,28 @@ async def close_downloader():
 @scheduler.scheduled_job("cron", hour=1, minute=0, id="parser-clean-local-cache")
 async def clean_plugin_cache():
     try:
-        files = [f for f in pconfig.cache_dir.iterdir() if f.is_file()]
+        # mtime 宽限：跳过最近 10 分钟内修改的文件 —— 可能是正在写入的 .part
+        # 临时文件或正在发送的缓存，误删会让进行中的下载/发送拿到 ENOENT；
+        # 这类文件留给下一轮（job 每小时跑）即可
+        grace_seconds = 600
+        now = time.time()
+        files = []
+        for f in pconfig.cache_dir.iterdir():
+            try:
+                if f.is_file() and now - f.stat().st_mtime >= grace_seconds:
+                    files.append(f)
+            except OSError:
+                continue  # 文件在列举与 stat 之间被删/被锁，跳过即可
         if not files:
             logger.info("No cache files to clean")
             return
 
-        # 并发删除文件
-        tasks = [safe_unlink(file) for file in files]
-        await asyncio.gather(*tasks)
-
-        logger.success(f"Successfully cleaned {len(files)} cache files")
+        # 并发删除文件；单个失败（Windows 文件锁等）不中止整轮清理
+        results = await asyncio.gather(*(safe_unlink(file) for file in files), return_exceptions=True)
+        failed = [f for f, r in zip(files, results) if isinstance(r, BaseException)]
+        if failed:
+            logger.warning(f"{len(failed)} cache files failed to clean (skip): {[f.name for f in failed]}")
+        logger.success(f"Successfully cleaned {len(files) - len(failed)} cache files")
     except Exception:
         logger.exception("Error while cleaning cache files")
 

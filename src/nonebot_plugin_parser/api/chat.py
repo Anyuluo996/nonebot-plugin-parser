@@ -15,10 +15,17 @@ from nonebot import logger
 
 from . import store
 from .runner import normalize_url
+from ..config import pconfig
 
 
 async def record_chat_start(url: str, platform: str) -> str | None:
-    """聊天解析开始：写入 running 行，返回 task_id（失败返回 None，绝不抛出）。"""
+    """聊天解析开始：写入 running 行，返回 task_id（失败返回 None，绝不抛出）。
+
+    跟随 ``parser_api_enabled``：API 关闭时不入库 —— 任务表的清理 job 与查询面
+    都随 API 注册，关闭时写行只会无限堆积。
+    """
+    if not pconfig.api_enabled:
+        return None
     try:
         task_id = secrets.token_urlsafe(16)
         await store.create_task(
@@ -41,7 +48,7 @@ async def record_chat_result(
     ``error`` 为给维护者看的失败原因（如 ``ParseException: xxx`` / 发送段异常），
     区别于 API 调用方拿到的脱敏文案。
     """
-    if not task_id:
+    if not task_id or not pconfig.api_enabled:
         return
     try:
         if ok:

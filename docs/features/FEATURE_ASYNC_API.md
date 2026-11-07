@@ -51,7 +51,7 @@ curl -H "Authorization: Bearer <token>" https://bot.example.com/parser/api/tasks
 ```json
 {
   "task_id": "...", "status": "succeeded", "url": "https://v.douyin.com/xxx",
-  "platform": "douyin", "error_kind": null, "error": null,
+  "platform": "douyin", "source": "api", "error_kind": null, "error": null,
   "created_at": 1762400000, "started_at": 1762400001, "finished_at": 1762400012,
   "result": {
     "metadata": {
@@ -69,7 +69,7 @@ curl -H "Authorization: Bearer <token>" https://bot.example.com/parser/api/tasks
 }
 ```
 
-失败时 `error_kind` 为归一化文案：`timeout`（解析超时）/ `quota`（媒体转存配额超限）/ `cancelled`（已取消）/ `interrupted`（服务重启中断）/ `tip`（语义性提示原文，如"该作品已下架"）/ `parse_error`（固定"解析失败"）。**详细异常只进服务端日志**，不回显给调用方。
+失败时 `error_kind` 为归一化文案：`timeout`（解析超时）/ `quota`（媒体转存配额超限）/ `cancelled`（已取消）/ `interrupted`（服务重启中断）/ `tip`（语义性提示原文，如"该作品已下架"）/ `send_error`（发送段失败，仅聊天来源，如协议端 ActionFailed）/ `parse_error`（解析失败）。API 调用方拿到的 `error` 是**脱敏后的固定文案**，详细异常只进服务端日志；聊天来源（见下节）的 `error` 保留异常详情供维护者按链接排查。
 
 ### 其他端点
 
@@ -94,12 +94,13 @@ curl -H "Authorization: Bearer <token>" https://bot.example.com/parser/api/tasks
 
 | 模块 | 职责 |
 |---|---|
-| `store.py` | SQLite 任务存储（stdlib `sqlite3`，WAL，**每操作新建连接** + `asyncio.to_thread`）。`result_json` 存的是**占位符载荷**：零 URL、零签名、零宿主路径 |
+| `store.py` | SQLite 任务存储（stdlib `sqlite3`，WAL，**每操作新建连接** + `asyncio.to_thread`；`busy_timeout` 先于 `journal_mode` 设置、迁移容忍 duplicate column、锁竞争整体重试——并发初始化健壮性见测试）。`result_json` 存的是**占位符载荷**：零 URL、零签名、零宿主路径 |
 | `media.py` | 媒体转存（硬链接优先/复制回退）+ 进程内配额计数器（预留-提交-回滚，重启从磁盘重建） |
 | `serialize.py` | `ParseResult` → 载荷：metadata 遍历 + `render_messages` → `UniMessage.export(adapter=onebot11)` → 段 JSON 化；`file://` 转存、`base64://` 先预留配额再解码落盘（魔数推断扩展名）、`http(s)://` 原样保留；合并转发 `node.data.content` 嵌套段递归改写 |
 | `runner.py` | 任务执行引擎：复用 `matchers.find_parser_for_url`（共享运行态 parser 凭据/连接池）+ `parse_with_retry`（顶层超时+指数退避）。提交判定顺序：**去重（规范化 URL）→ 零抓取校验（scheme 白名单 + parser 匹配，SSRF 边界）→ 队列上限 429** |
+| `chat.py` | 聊天来源任务记录助手（v2.7.22）：`record_chat_start` / `record_chat_result`，整体吞异常，永不影响聊天链路 |
 | `routes.py` | FastAPI 路由（懒导入，未装 extras 零影响）：Bearer 常量时间比较 + 鉴权失败按 IP 滑窗限流（**先查桶再比对**）；GET 时把占位符现签成完整 URL（改 `base_url` 不失效存量任务，签名每次刷新）；三层穿越防护（task_id 正则 → filename 白名单正则 → DB staged 清单反查 + resolve 包含性兜底） |
-| `__init__.py` | startup 固定顺序：DB 初始化 → **stale 标记先于清理 job 首跑**（interrupted 行先拿到 finished_at，不会被清理误删成 404）→ 配额计数器磁盘重建 → 单进程软检测（meta 表 pid，不一致仅 warning）→ 配置校验 → `include_router`。清理 job（10 分钟）：TTL 过期行（queued/running 超时行同步 cancel）+ 无主媒体目录（mtime 10 分钟宽限）+ 限流桶瘦身 |
+| `__init__.py` | startup 固定顺序：配置校验 → DB 初始化 → **stale 标记先于清理 job 首跑**（interrupted 行先拿到 finished_at，不会被清理误删成 404）→ 配额计数器磁盘重建 → 单进程软检测（meta 表 pid，不一致仅 warning）→ `include_router`（注册链整体 try/except 故障隔离：可选功能失败只降级 API 自身，绝不炸 bot 启动）。清理 job（10 分钟）：TTL 过期行（queued/running 超时行同步 cancel）+ 无主媒体目录（mtime 10 分钟宽限）+ 限流桶瘦身 |
 
 配置项（`config.py`，字段+property 双写）：`parser_api_enabled` / `parser_api_token` / `parser_api_base_url` / `parser_api_max_concurrent`(3) / `parser_api_task_ttl`(3600s) / `parser_api_media_quota_mb`(2048) / `parser_api_media_sig_ttl`(3600s)。
 
@@ -107,10 +108,15 @@ curl -H "Authorization: Bearer <token>" https://bot.example.com/parser/api/tasks
 
 ## 测试
 
-`tests/others/test_api_tasks.py`（29 用例，纯单元）：鉴权 401/403/限流（被限 IP 不消耗 token 比对）、422 双路径、判定顺序（队列满时同 URL 仍拿回既有 id）、URL 去重规范化、202 信封 + Location/Retry-After、成功信封字段全集快照、**落库无泄露断言**（无 base_url/sig=/file:///宿主路径）、重复 GET 现签刷新、四类段导出形态 + base64 魔数落盘、metadata 媒体改写、路径穿越全组、签名 有效/过期 410/篡改 403、扩展名白名单 `.bin` 兜底、nosniff + Range 206、DELETE running 取消语义 + DELETE→POST 不交错、配额全生命周期（预留回滚/删除释放/磁盘重建）、TTL 清理 + stale 先于清理、shutdown 取消、store 并发写、set_result 条件写（DELETE 端竞态）、错误脱敏。
+`tests/others/test_api_tasks.py`（37 用例，纯单元）：鉴权 401/403/限流（被限 IP 不消耗 token 比对；非 ASCII token bytes 比较不 500 不绕限流）、422 双路径、判定顺序（队列满时同 URL 仍拿回既有 id）、URL 去重规范化、202 信封 + Location/Retry-After、成功信封字段全集快照、**落库无泄露断言**（无 base_url/sig=/file:///宿主路径）、重复 GET 现签刷新、四类段导出形态 + base64 魔数落盘、metadata 媒体改写、路径穿越全组、签名 有效/过期 410/篡改 403、扩展名白名单 `.bin` 兜底、nosniff + Range 206、DELETE running 取消语义 + DELETE→POST 不交错、配额全生命周期（预留回滚/删除释放/磁盘重建）、TTL 清理 + stale 先于清理、shutdown 取消、store 并发写、set_result 条件写（DELETE 端竞态）、错误脱敏、聊天任务生命周期与失败原因、记录入口永不抛出、`?url=` 过滤、跨源去重隔离、v2.7.21 旧库迁移、**4 线程并发 `_init_db`**（xdist 多 worker 冷启动场景：locked/duplicate column 均须被吸收）。
+
+另有两个跨切面防线：
+
+- `tests/others/test_startup_smoke.py` —— **启动生命周期冒烟测试**：conftest 以环境变量让 API 全开，nonebug 会话级 lifespan 在每个测试会话 setup 阶段跑真实 startup→shutdown；本文件断言注册链的功能性结果（cleanup job 已注册、路由 401/200、KEYWORD_PARSER_MAP 非空）——startup hook 内部 fail-safe 吞异常降级也能被测出（v2.7.21 部署翻车的直接对策）。
+- `tests/others/test_send_phase.py` —— parser_handler → api.chat 的**接入断言**：真实解析写 source=chat 行并置 succeeded / 发送段失败置 failed（error_kind=send_error + 详情）/ API 关闭时不写行（防止无清理面下的无限堆积）。
 
 ```bash
-uv run pytest tests/others/test_api_tasks.py -q
+uv run pytest tests/others/test_api_tasks.py tests/others/test_startup_smoke.py -q
 ```
 
 ## 注意事项

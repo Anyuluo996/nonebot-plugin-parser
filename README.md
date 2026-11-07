@@ -381,6 +381,26 @@ parser_screenshot=True
 
 # [可选] 截图是否整页（默认仅首屏）
 parser_screenshot_full_page=False
+
+# [可选] 异步解析 API（HTTP 提交链接返回任务 ID，轮询取结果；聊天解析也会入库供按链接查询）
+# 详见 docs/features/FEATURE_ASYNC_API.md。需安装 extras: uv add "nonebot-plugin-parser[api]"
+# 四项齐备才注册路由（enabled + token + base_url + fastapi driver），缺任一仅 log 不报错
+parser_api_enabled=false
+# Bearer Token（建议 openssl rand -hex 32 生成），同时派生媒体 URL 签名密钥
+# 轮换 token 会使已发出的媒体 URL 立即失效
+parser_api_token=""
+# 对外可达的基础地址（末尾 / 自动去除），必须是 QQ 协议端所在网络可达的地址；
+# 媒体 URL 由它在响应时拼接（改配置不影响存量任务）
+parser_api_base_url=""
+# 同时解析的任务数上限
+parser_api_max_concurrent=3
+# 任务记录保留时长（秒）；queued/running 按创建时间、终态按结束时间过期，
+# 过期任务连同媒体转存文件一并清理
+parser_api_task_ttl=3600
+# 媒体转存目录总配额（MB），预留-提交-回滚计数，超限任务置失败并清理部分转存
+parser_api_media_quota_mb=2048
+# 媒体 URL 签名有效期（秒）；签名每次 GET 任务时现签，晚取晚发不过期
+parser_api_media_sig_ttl=3600
 ```
 
 </details>

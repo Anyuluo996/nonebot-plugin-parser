@@ -197,3 +197,136 @@ async def test_parser_handler_send_failure_recorded_as_send_phase(monkeypatch):
 
     assert recorded.get("platform") == "bilibili"
     assert recorded.get("error", "").startswith("发送段"), f"应以「发送段」标记, 实际 {recorded.get('error')!r}"
+
+
+# ── 聊天任务入库接入(parser_handler → api.chat) ──────────────────────
+
+
+class _MockScene:
+    is_private = False
+
+
+class _MockUser:
+    id = "88888"
+
+
+class _MockSession:
+    scene = _MockScene()
+    scope = "qq"
+    scene_path = "chat-record-test-group"
+    user = _MockUser()
+
+
+class _FakeParser:
+    """函数内构造(见 _run_handler): 模块级 import 会在插件加载前执行, 收集期炸。"""
+
+
+async def _make_handler_env(monkeypatch, tmp_path, *, api_enabled: bool = True):
+    """parser_handler 端到端环境的聊天记录变体：DB 隔离进 tmp + API 开关门控。"""
+    from nonebot_plugin_parser.api import store
+    from nonebot_plugin_parser.config import pconfig
+
+    monkeypatch.setattr(store, "_DB_PATH", tmp_path / "chat_tasks.db")
+    monkeypatch.setattr(pconfig, "parser_api_enabled", api_enabled)
+    await store.init_db()
+    return store
+
+
+async def _run_handler(monkeypatch, matchers_mod, *, send=None):
+    """以缓存的 SR 跑一次 parser_handler（缓存未命中路径，触发聊天入库）。"""
+    import re
+
+    from nonebot.matcher import current_event
+
+    from nonebot_plugin_parser.matchers import parser_handler
+    from nonebot_plugin_parser.matchers.rule import SearchResult
+    from nonebot_plugin_parser.parsers import Platform
+
+    class FakeParser:
+        platform = Platform(name="bilibili", display_name="哔哩哔哩")
+
+    async def fake_reaction(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(matchers_mod, "get_parser", lambda keyword: FakeParser())
+    monkeypatch.setattr("nonebot_plugin_parser.helper.UniHelper.message_reaction", fake_reaction)
+    if send is not None:
+        monkeypatch.setattr(matchers_mod, "_send_parse_result", send)
+
+    text = "https://www.bilibili.com/video/BV1xx411c7mD"
+    sr = SearchResult(
+        text=text,
+        keyword="bilibili",
+        searched=re.search(r"bilibili\.com/video/(BV[ A-Za-z0-9]+)", text),
+    )
+    token = current_event.set(object())
+    try:
+        await parser_handler(sr, _MockSession(), {})
+    finally:
+        current_event.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_parser_handler_records_chat_task_success(monkeypatch, tmp_path):
+    """缓存未命中的真实解析: parser_handler 写 source=chat 行并置 succeeded。"""
+    from nonebot_plugin_parser.api import store
+
+    matchers_mod = _stub_matchers(monkeypatch, [_FlakyMessage()])
+
+    async def fake_parse(_parser, _keyword, _searched):
+        return _fake_result()
+
+    monkeypatch.setattr(matchers_mod, "parse_with_retry", fake_parse)
+    await _make_handler_env(monkeypatch, tmp_path)
+    await _run_handler(monkeypatch, matchers_mod)
+
+    total, rows = await store.list_tasks(10, 0)
+    assert total == 1, f"应恰好 1 条任务, 实际 {total}"
+    row = rows[0]
+    assert row["source"] == "chat"
+    assert row["status"] == "succeeded"
+
+
+@pytest.mark.asyncio
+async def test_parser_handler_records_chat_task_failure_reason(monkeypatch, tmp_path):
+    """发送段失败: chat 行置 failed, error_kind=send_error, error 保留「发送段」详情。"""
+    from nonebot_plugin_parser.api import store
+
+    matchers_mod = _stub_matchers(monkeypatch, [])
+
+    async def fake_parse(_parser, _keyword, _searched):
+        return _fake_result()
+
+    async def fake_send(_result):
+        raise _napcat_1200()
+
+    monkeypatch.setattr(matchers_mod, "parse_with_retry", fake_parse)
+    monkeypatch.setattr(matchers_mod, "record_failure", lambda *a, **k: None)
+    await _make_handler_env(monkeypatch, tmp_path)
+    await _run_handler(monkeypatch, matchers_mod, send=fake_send)
+
+    total, rows = await store.list_tasks(10, 0)
+    assert total == 1
+    row = rows[0]
+    assert row["source"] == "chat"
+    assert row["status"] == "failed"
+    assert row["error_kind"] == "send_error"
+    assert row["error"] is not None and "发送段" in row["error"]
+
+
+@pytest.mark.asyncio
+async def test_chat_recording_skipped_when_api_disabled(monkeypatch, tmp_path):
+    """API 关闭: 聊天解析不写任务行(清理 job 与查询面都随 API 注册, 否则无限堆积)。"""
+    from nonebot_plugin_parser.api import store
+
+    matchers_mod = _stub_matchers(monkeypatch, [_FlakyMessage()])
+
+    async def fake_parse(_parser, _keyword, _searched):
+        return _fake_result()
+
+    monkeypatch.setattr(matchers_mod, "parse_with_retry", fake_parse)
+    await _make_handler_env(monkeypatch, tmp_path, api_enabled=False)
+    await _run_handler(monkeypatch, matchers_mod)
+
+    total, _rows = await store.list_tasks(10, 0)
+    assert total == 0

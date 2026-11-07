@@ -405,9 +405,14 @@ def _cleanup_old():
     _run_retention_cleanup()
 
 
+# 持引用防 GC：asyncio 只保留 create_task 返回值的弱引用，悬空任务可能被中途回收
+_maintenance_task: "asyncio.Task[None] | None" = None
+
+
 @app.on_event("startup")
 async def _start_maintenance_loop():
     """每小时执行一次保留清理 + 限流桶瘦身（公开端点常驻，不靠重启兜底）。"""
+    global _maintenance_task
 
     async def _loop():
         while True:
@@ -418,4 +423,4 @@ async def _start_maintenance_loop():
             except Exception:
                 log.exception("[maintenance] periodic cleanup failed")
 
-    asyncio.create_task(_loop())
+    _maintenance_task = asyncio.create_task(_loop())

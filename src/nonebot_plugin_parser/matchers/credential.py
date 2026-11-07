@@ -95,13 +95,14 @@ async def _qqmusic_login(matcher: Matcher):
                 timeout_seconds=180.0,
             )
             qr = await session.get_qrcode()
-            await UniMessage(UniHelper.img_seg(qr.data)).send()
+            await UniMessage(await UniHelper.img_seg(qr.data)).send()
             await UniMessage("请用手机 QQ 扫描上图授权登录（请尽快扫，二维码 180 秒内有效）").send()
             cred = await session.wait_qrcode_login()
             qq_cred.save_credential(cred)
     except Exception as e:
         logger.exception("QQ音乐登录异常")
-        await matcher.finish(f"登录未完成: {e}")
+        # 异常文本可能含库内部细节/二维码会话信息，不进群聊；详情看日志
+        await matcher.finish(f"登录未完成: {type(e).__name__}（详情见日志）")
         return
     # 登录态变了，协议层共享客户端要重建才能带上新 musickey
     qqmusic_api.reset_client()
@@ -166,6 +167,14 @@ def _register_music_login_commands() -> None:
 _register_music_login_commands()
 
 
+def _mask_secret(value: str | None, visible: int = 40) -> str | None:
+    """凭据回显脱敏：只显示前 ``visible`` 字符。登录态凭据完整回显进群聊
+    一旦泄露即等于交出账号（截图/转发都不可控），所有「查看」命令统一走本口径。"""
+    if value is None:
+        return None
+    return value[:visible] + "..." if len(value) > visible else value
+
+
 # ==================== 抖音 ttwid 凭据管理 ====================
 # 抖音图文/实况照片需登录态 ttwid + a_bogus 签名配套才放行。
 # 除 .env 兜底外，SUPERUSER 可通过指令热更新 ttwid，无需重启。
@@ -193,11 +202,11 @@ async def _douyin_show_ttwid(matcher: Matcher):
     persisted = dy_ttwid.load_ttwid()
     effective = dy_ttwid.get_effective_ttwid()
     if persisted is not None:
-        # 指令持久化生效，显示实际值以便核对
-        await matcher.finish(f"当前生效抖音 ttwid（来源: 指令持久化）:\n{effective}")
+        # 指令持久化生效，回显前 40 字符供核对（完整值含登录态，不进群聊）
+        await matcher.finish(f"当前生效抖音 ttwid（来源: 指令持久化）:\n{_mask_secret(effective)}")
     if effective is not None:
         # 无持久化，回落到 .env
-        await matcher.finish(f"当前生效抖音 ttwid（来源: .env parser_douyin_ttwid）:\n{effective}")
+        await matcher.finish(f"当前生效抖音 ttwid（来源: .env parser_douyin_ttwid）:\n{_mask_secret(effective)}")
     await matcher.finish("当前未配置抖音 ttwid（指令和 .env 均为空）")
 
 
@@ -231,18 +240,20 @@ async def _douyin_show_cookie(matcher: Matcher):
     cookie_effective = dy_ttwid.get_effective_cookie()
     if cookie_persisted is not None:
         # 脱敏：只显示前 40 字符，完整 cookie 太长且含敏感登录态
-        preview = cookie_effective[:40] + "..." if cookie_effective and len(cookie_effective) > 40 else cookie_effective
-        await matcher.finish(f"当前生效抖音 Cookie（来源: 指令持久化）:\n{preview}")
+        await matcher.finish(f"当前生效抖音 Cookie（来源: 指令持久化）:\n{_mask_secret(cookie_effective)}")
     if cookie_effective is not None:
-        preview = cookie_effective[:40] + "..." if len(cookie_effective) > 40 else cookie_effective
-        await matcher.finish(f"当前生效抖音 Cookie（来源: .env parser_douyin_cookie）:\n{preview}")
+        await matcher.finish(
+            f"当前生效抖音 Cookie（来源: .env parser_douyin_cookie）:\n{_mask_secret(cookie_effective)}"
+        )
 
     # 无 cookie，回退显示 ttwid 状态
     ttwid_effective = dy_ttwid.get_effective_ttwid()
     if ttwid_effective is not None:
         ttwid_persisted = dy_ttwid.load_ttwid()
         source = "指令持久化" if ttwid_persisted is not None else ".env parser_douyin_ttwid"
-        await matcher.finish(f"未配置完整 Cookie，当前回退使用 ttwid（来源: {source}）:\n{ttwid_effective}")
+        await matcher.finish(
+            f"未配置完整 Cookie，当前回退使用 ttwid（来源: {source}）:\n{_mask_secret(ttwid_effective)}"
+        )
     await matcher.finish("当前未配置抖音凭据（cookie/ttwid 指令和 .env 均为空）")
 
 
@@ -274,10 +285,10 @@ async def _douyin_show_uifid(matcher: Matcher):
     persisted = dy_ttwid.load_uifid()
     effective = dy_ttwid.get_effective_uifid()
     if persisted is not None:
-        await matcher.finish(f"当前生效抖音 uifid（来源: 指令持久化）:\n{effective}")
+        await matcher.finish(f"当前生效抖音 uifid（来源: 指令持久化）:\n{_mask_secret(effective)}")
     if effective is not None:
         from ..config import pconfig
 
         source = ".env parser_douyin_uifid" if pconfig.douyin_uifid is not None else "完整 cookie 内 UIFID 字段自动提取"
-        await matcher.finish(f"当前生效抖音 uifid（来源: {source}）:\n{effective}")
+        await matcher.finish(f"当前生效抖音 uifid（来源: {source}）:\n{_mask_secret(effective)}")
     await matcher.finish("当前未配置抖音 uifid（指令/.env 均为空, cookie 内亦无 UIFID 字段）")

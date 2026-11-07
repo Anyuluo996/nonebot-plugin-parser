@@ -608,7 +608,12 @@ async def merge_av(
     tmp_path = output_path.with_name(f"{output_path.stem}_{tag}_tmp.mp4")
     cmd.append(str(tmp_path))
 
-    await exec_ffmpeg_cmd(cmd)
+    try:
+        await exec_ffmpeg_cmd(cmd)
+    except BaseException:
+        # ffmpeg 失败/被取消也要清掉临时产物，否则每次失败泄漏一个 _tmp.mp4
+        await safe_unlink(tmp_path)
+        raise
     await asyncio.to_thread(tmp_path.replace, output_path)
     if cleanup_inputs:
         await asyncio.gather(safe_unlink(v_path), safe_unlink(a_path))

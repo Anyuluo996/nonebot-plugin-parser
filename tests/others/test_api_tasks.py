@@ -113,14 +113,14 @@ def _install_stub(monkeypatch, tmp_path, *, behavior: str = "ok", hang_event=Non
             # video → file:// 形态; 内嵌一段 bytes 渲染切片 → base64 形态
             for cont in result.contents:
                 if isinstance(cont, VideoContent):
-                    yield UniMessage(UniHelper.video_seg(await cont.get_path()))
-                    yield UniMessage(UniHelper.img_seg(_PNG))  # base64:// 形态
+                    yield UniMessage(await UniHelper.video_seg(await cont.get_path()))
+                    yield UniMessage(await UniHelper.img_seg(_PNG))  # base64:// 形态
                 elif isinstance(cont, ImageContent):
-                    yield UniMessage(UniHelper.img_seg(await cont.get_path()))
-            yield UniMessage(UniHelper.record_seg(snd))  # record → file:// 形态
+                    yield UniMessage(await UniHelper.img_seg(await cont.get_path()))
+            yield UniMessage(await UniHelper.record_seg(snd))  # record → file:// 形态
             # 合并转发 Reference 节点（嵌套段，走递归改写）
             yield UniMessage(
-                UniHelper.construct_forward_message([UniHelper.img_seg(img), "节点文本"], user_id="10000")
+                UniHelper.construct_forward_message([await UniHelper.img_seg(img), "节点文本"], user_id="10000")
             )
 
     monkeypatch.setattr(renders, "_RENDERER_CACHE", {"douyin": StubRenderer()})
@@ -516,6 +516,40 @@ async def test_delete_terminal_task_removes_row_and_dir(client, monkeypatch, tmp
 
     r = await client.delete(f"/parser/api/tasks/{task_id}", headers=AUTH)
     assert r.status_code == 204
+    assert (await client.get(f"/parser/api/tasks/{task_id}", headers=AUTH)).status_code == 404
+    assert not (media.MEDIA_ROOT / task_id).exists()
+
+
+async def test_delete_race_task_completes_during_cancel(client, monkeypatch, tmp_path):
+    """DELETE 与任务自行完成的竞态：cancel 等待期间任务写 succeeded，
+    DELETE 后不得留下「行 succeeded + 媒体目录已删」的错配（轮询方拿到 200
+    状态但媒体全 404）——重读行后按终态清理分支删行删目录，两边一致。"""
+    hang = asyncio.Event()
+    _install_stub(monkeypatch, tmp_path, behavior="hang", hang_event=hang)
+    from nonebot_plugin_parser.api import media, runner
+
+    task_id = (await _submit(client)).json()["task_id"]
+    await asyncio.sleep(0.2)  # 等 runner 进入 hang
+    assert task_id in runner.registry
+
+    real_cancel = runner.cancel_task
+
+    async def _cancel_completing(tid: str) -> None:
+        # 模拟竞态窗口：cancel 尚未生效，任务先自行跑完写 succeeded
+        hang.set()
+        atask = runner.registry.get(tid)
+        if atask is not None:
+            try:
+                await atask
+            except asyncio.CancelledError:
+                pass
+        await real_cancel(tid)
+
+    monkeypatch.setattr(runner, "cancel_task", _cancel_completing)
+
+    r = await client.delete(f"/parser/api/tasks/{task_id}", headers=AUTH)
+    assert r.status_code == 204
+    # 行与媒体一致：终态清理分支删行 + 删目录（旧行为是行留 succeeded、媒体被删）
     assert (await client.get(f"/parser/api/tasks/{task_id}", headers=AUTH)).status_code == 404
     assert not (media.MEDIA_ROOT / task_id).exists()
 

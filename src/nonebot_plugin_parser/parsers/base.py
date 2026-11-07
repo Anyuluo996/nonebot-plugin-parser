@@ -476,18 +476,16 @@ class BaseParser:
     def _download_img_tasks(self, image_urls: list[str]) -> list[Task[Path]]:
         """并发受限的图片下载任务列表（发图 / 幻灯片合成共用）。
 
-        单次解析内并发下载受 ``download._DOWNLOAD_SEM`` 限制（默认 8），
-        避免长帖几十张图瞬间打爆目标域名。
+        并发闸门已收口在 ``DOWNLOADER.download_file`` 内核（``_DOWNLOAD_SEM``，
+        默认 8），此处直接建任务即可 —— 不再在包装层占闸门：嵌套双重占坑时
+        8 个包装任务即可占满全部坑位并互相等第 9 个，直接死锁。
         """
         import asyncio
 
-        from ..download import _DOWNLOAD_SEM
+        async def _download(url: str):
+            return await DOWNLOADER.download_img(url, ext_headers=self.headers)
 
-        async def _download_with_sem(url: str):
-            async with _DOWNLOAD_SEM:
-                return await DOWNLOADER.download_img(url, ext_headers=self.headers)
-
-        return [asyncio.create_task(_download_with_sem(url)) for url in image_urls]
+        return [asyncio.create_task(_download(url)) for url in image_urls]
 
     def create_image_contents(
         self,
@@ -683,15 +681,13 @@ class BaseParser:
         if not media_items:
             raise ValueError("media_items 为空")
 
-        from ..download import _DOWNLOAD_SEM
-
         async def _download(kind: str, url: str) -> Path:
-            # 与逐张发图共用下载并发闸; download_* 带 @auto_task, await 其
+            # 并发闸门已在 DOWNLOADER.download_file 内核统一收口（勿在此再包一层:
+            # 嵌套双重占坑 8 个任务即死锁）; download_* 带 @auto_task, await 其
             # 返回的 Task 即最终文件
-            async with _DOWNLOAD_SEM:
-                if kind == "video":
-                    return await DOWNLOADER.download_video(url, ext_headers=self.headers)
-                return await DOWNLOADER.download_img(url, ext_headers=self.headers)
+            if kind == "video":
+                return await DOWNLOADER.download_video(url, ext_headers=self.headers)
+            return await DOWNLOADER.download_img(url, ext_headers=self.headers)
 
         tasks = [asyncio.create_task(_download(kind, url)) for kind, url in media_items]
         audio_task = DOWNLOADER.download_audio(bgm_url, ext_headers=self.headers)

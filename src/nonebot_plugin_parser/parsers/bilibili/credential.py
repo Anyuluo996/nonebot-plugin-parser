@@ -4,6 +4,7 @@
 :class:`BilibiliCredentialManager`，将登录/凭据职责从解析逻辑中分离。
 """
 
+import time
 import asyncio
 from pathlib import Path
 from collections.abc import AsyncGenerator
@@ -16,18 +17,27 @@ from ..cookie import ck2dict
 from ...config import pconfig
 from ...persist import load_json_or, atomic_write_json
 
+_VALIDITY_CACHE_TTL = 600.0
+"""凭据校验结果缓存秒数。check_valid / check_refresh 各是一次网络往返,
+每次解析都查只是给 B 站平白加两次 RTT; 缓存窗口内直接复用上次结论。
+窗口内凭据真被服务端踢下线时, 解析请求自身会拿到 -352/未登录形态,
+由既有风控分支兜底, 下一窗口校验再走刷新。"""
+
 
 class BilibiliCredentialManager:
     """B站登录凭据的加载/保存/刷新与二维码登录流程。
 
     凭据来源优先级：``parser_bili_ck`` 配置 → 本地 cookies 文件。
-    ``get()`` 每次调用都会校验有效性并按需刷新。
+    ``get()`` 校验有效性并按需刷新，校验结论缓存 ``_VALIDITY_CACHE_TTL``
+    （避免每次解析重复两次凭据往返）。
     """
 
     def __init__(self, cookies_file: Path):
         self._cookies_file = cookies_file
         self._credential: Credential | None = None
         self._qr_login: QrCodeLogin | None = None
+        self._last_verified: float = 0.0
+        """上次校验通过的 monotonic 时刻（0 = 需重新校验）"""
 
     def _save(self) -> None:
         """存储哔哩哔哩登录凭证（原子写）"""
@@ -62,6 +72,7 @@ class BilibiliCredentialManager:
                     yield "登录成功"
                     self._credential = self._qr_login.get_credential()
                     self._save()
+                    self._last_verified = time.monotonic()
                     break
                 case QrCodeLoginEvents.CONF:
                     if scan_tip_pending:
@@ -90,13 +101,24 @@ class BilibiliCredentialManager:
             self._load()
 
     async def get(self) -> Credential | None:
-        """获取当前有效凭据；无效时按需初始化 / 刷新（原 parser.credential 逻辑）"""
+        """获取当前有效凭据；无效时按需初始化 / 刷新（原 parser.credential 逻辑）。
+
+        校验结论在 ``_VALIDITY_CACHE_TTL`` 内复用：高频解析不再每次都做
+        check_valid / check_refresh 两次网络往返。
+        """
+        now = time.monotonic()
         if self._credential is None:
             await self._init()
+            if self._credential is not None:
+                self._last_verified = now
+            return self._credential
+
+        if now - self._last_verified < _VALIDITY_CACHE_TTL:
             return self._credential
 
         if not await self._credential.check_valid():
             logger.warning("哔哩哔哩凭证已过期, 请重新配置")
+            self._last_verified = 0.0
             return None
 
         if await self._credential.check_refresh():
@@ -108,4 +130,5 @@ class BilibiliCredentialManager:
             else:
                 logger.warning("哔哩哔哩凭证刷新需要包含 `SESSDATA`, `ac_time_value` 项")
 
+        self._last_verified = now
         return self._credential

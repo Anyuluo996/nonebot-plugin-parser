@@ -2,6 +2,7 @@ import time
 import asyncio
 from re import Match
 from typing import ClassVar
+from urllib.parse import urlparse
 from collections.abc import AsyncGenerator
 
 import bilibili_api.utils.network as _bili_network
@@ -70,6 +71,22 @@ _bili_network.get_bili_ticket = _safe_get_bili_ticket
 request_settings.set_enable_bili_ticket(True)
 
 
+# 截图兜底的跳转目标白名单：重定向结果来自 B 站服务端，理论上只落在自家域名,
+# 但浏览器实例可达内网 —— 站外目标（开放重定向被利用）一律拒绝截图（二阶 SSRF 硬化）
+_SCREENSHOT_TARGET_DOMAINS: frozenset[str] = frozenset({"bilibili.com", "b23.tv", "bili2233.cn", "biligame.com"})
+
+
+def _is_allowed_screenshot_target(url: str) -> bool:
+    try:
+        parts = urlparse(url)
+    except ValueError:
+        return False
+    host = (parts.hostname or "").lower()
+    if parts.scheme.lower() not in ("http", "https") or not host:
+        return False
+    return any(host == d or host.endswith("." + d) for d in _SCREENSHOT_TARGET_DOMAINS)
+
+
 class BilibiliParser(BaseParser):
     platform: ClassVar[Platform] = Platform(name=PlatformEnum.BILIBILI, display_name="哔哩哔哩")
 
@@ -119,6 +136,10 @@ class BilibiliParser(BaseParser):
         from ...browser import screenshot_url, is_browser_available
         from ...exception import TipException
 
+        if not _is_allowed_screenshot_target(target_url):
+            # 重定向目标是平台可控数据，浏览器可达内网：站外目标不导航
+            logger.warning(f"B站短链重定向到站外目标, 拒绝截图兜底: {target_url[:100]}")
+            raise TipException("B站短链指向站外页面，不支持解析")
         if not pconfig.screenshot:
             # 关闭截图兜底则保留原"无法匹配"行为
             raise ParseException(f"无法匹配 {target_url}")

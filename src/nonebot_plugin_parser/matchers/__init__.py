@@ -387,10 +387,10 @@ async def _(message: Message = CommandArg()):
         ext_headers=parser.headers,
         backup_urls=audio_backups,
     )
-    await UniMessage(UniHelper.record_seg(audio_path)).send()
+    await UniMessage(await UniHelper.record_seg(audio_path)).send()
 
     if pconfig.need_upload:
-        await UniMessage(UniHelper.file_seg(audio_path)).send()
+        await UniMessage(await UniHelper.file_seg(audio_path)).send()
 
 
 from ..download import YTDLP_DOWNLOADER
@@ -403,24 +403,29 @@ if YTDLP_DOWNLOADER is not None:
     async def _(message: Message = CommandArg()):
         text = message.extract_plain_text()
         parser = get_parser_by_type(YouTubeParser)
-        _, matched = parser.search_url(text)
-        if not matched:
+        # search_url 不匹配时是抛 ParseException 而非返回 None（原 if not matched
+        # 是死分支，垃圾输入直接以未捕获异常冒出，用户无提示）
+        from ..parsers.base import ParseException
+
+        try:
+            _, matched = parser.search_url(text)
+        except ParseException:
             await UniMessage("请发送正确的油管链接").finish()
 
         url = matched.group(0)
 
         audio_path = await YTDLP_DOWNLOADER.download_audio(url)
-        await UniMessage(UniHelper.record_seg(audio_path)).send()
+        await UniMessage(await UniHelper.record_seg(audio_path)).send()
 
         if pconfig.need_upload:
-            await UniMessage(UniHelper.file_seg(audio_path)).send()
+            await UniMessage(await UniHelper.file_seg(audio_path)).send()
 
 
 @on_command("blogin", block=True, permission=auth.private_authorized(auth.BILI_LOGIN)).handle()
 async def _():
     parser = get_parser_by_type(BilibiliParser)
     qrcode = await parser.login_with_qrcode()
-    await UniMessage(UniHelper.img_seg(qrcode)).send()
+    await UniMessage(await UniHelper.img_seg(qrcode)).send()
     async for msg in parser.check_qr_state():
         await UniMessage(msg).send()
 

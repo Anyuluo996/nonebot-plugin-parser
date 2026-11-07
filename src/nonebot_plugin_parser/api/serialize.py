@@ -1,11 +1,11 @@
 """异步解析 API 的结果序列化：``ParseResult`` → 可存库载荷。
 
-存库内容**零 URL、零签名、零宿主路径**：
+存库内容**零签名、零 base_url、零宿主路径**：
 - 媒体（下载产物 / 渲染图 / 头像 / 封面）统一转存到 ``api_media/{task_id}/``，
   载荷中以 ``media://{filename}`` 占位符出现；
 - base64 形态的段（渲染图切片走 ``Image(raw=bytes)`` 时）先按编码长度**预留配额**
   再解码落盘，避免大 payload 先吃内存；
-- ``http(s)://`` 形态保留原样（本身已是 URL，无需转存）；
+- ``http(s)://`` 形态保留原样（本身已是公开 URL，无需转存）；
 - base_url 拼接与 HMAC 现签在 routes 层响应时做（见 routes._resolve_media_urls），
   改 base_url / 轮换签名密钥都不会让存量任务失效。
 
@@ -138,11 +138,12 @@ async def _convert_segments(obj: Any, stager: _Stager) -> Any:
         return [await _convert_segments(item, stager) for item in obj]
     if isinstance(obj, (str, int, float, bool)) or obj is None:
         return obj
-    # MessageSegment 等段对象：带 type/data 属性则按段展开，否则字符串化兜底
+    # MessageSegment 等段对象：带 type/data 属性则按段展开，否则以不透明标记兜底
+    # （不 str(obj)：其 repr 可能携带宿主路径等环境信息）
     seg_type, seg_data = getattr(obj, "type", None), getattr(obj, "data", None)
     if isinstance(seg_type, str) and isinstance(seg_data, dict):
         return await _convert_segments({"type": seg_type, "data": seg_data}, stager)
-    return str(obj)
+    return f"<opaque:{type(obj).__name__}>"
 
 
 async def _message_to_segments(message: UniMessage[Any], stager: _Stager) -> list[dict[str, Any]]:

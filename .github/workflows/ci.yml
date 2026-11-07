@@ -12,6 +12,11 @@ on:
       - "uv.lock"
       - "pyproject.toml"
 
+# 最小权限默认值：未显式声明 permissions 的 job 只读仓库内容
+# （test / test-render 各自声明的更大权限会覆盖本默认值）
+permissions:
+  contents: read
+
 jobs:
   prek:
     name: Prek

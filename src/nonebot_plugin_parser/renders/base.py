@@ -75,19 +75,19 @@ class BaseRenderer(ABC):
                             logger.info("视频产出失败, 降级直发原始媒体")
                             pending.extendleft(reversed(fallback_items))
                             continue
-                        yield UniMessage(UniHelper.video_seg(path))
+                        yield UniMessage(await UniHelper.video_seg(path))
                     case AudioContent():
                         path = await cont.get_path()
-                        yield UniMessage(UniHelper.record_seg(path))
+                        yield UniMessage(await UniHelper.record_seg(path))
                     case ImageContent():
                         path = await cont.get_path()
-                        forwardable_segs.append(UniHelper.img_seg(path))
+                        forwardable_segs.append(await UniHelper.img_seg(path))
                     case DynamicContent():
                         dynamic_path = await cont.get_gif_path() or await cont.get_path()
                         if dynamic_path.suffix.lower() == ".gif":
-                            dynamic_segs.append(UniHelper.img_seg(dynamic_path))
+                            dynamic_segs.append(await UniHelper.img_seg(dynamic_path))
                         else:
-                            dynamic_segs.append(UniHelper.video_seg(dynamic_path))
+                            dynamic_segs.append(await UniHelper.video_seg(dynamic_path))
             except IgnoreException:
                 continue
             except DownloadException:
@@ -109,10 +109,10 @@ class BaseRenderer(ABC):
 
             if isinstance(cont, VideoContent):
                 # 图文插槽里的视频(X Article/小黑盒内嵌)按视频段发出, 不能当图片段
-                forwardable_segs.append(UniHelper.video_seg(path))
+                forwardable_segs.append(await UniHelper.video_seg(path))
                 continue
 
-            img_seg = UniHelper.img_seg(path)
+            img_seg = await UniHelper.img_seg(path)
             if cont.alt:
                 img_seg += cont.alt
             forwardable_segs.append(img_seg)
@@ -265,10 +265,10 @@ class ImageRenderer(BaseRenderer):
         segs: list[Any] = []
         for piece in slices:
             if pconfig.use_base64:
-                segs.append(UniHelper.img_seg(piece))
+                segs.append(await UniHelper.img_seg(piece))
             else:
                 suffix = ".jpg" if piece[:2] == b"\xff\xd8" else ".png"
-                segs.append(UniHelper.img_seg(await cls.save_img(piece, suffix=suffix)))
+                segs.append(await UniHelper.img_seg(await cls.save_img(piece, suffix=suffix)))
         return segs
 
     async def render_contents(self, result: ParseResult) -> AsyncGenerator[UniMessage[Any], None]:
@@ -318,8 +318,8 @@ class ImageRenderer(BaseRenderer):
             image_path = await self.save_img(image_raw)
             result.render_image = image_path
             if pconfig.use_base64:
-                return UniHelper.img_seg(image_raw), image_raw
-            return UniHelper.img_seg(image_path), image_raw
+                return await UniHelper.img_seg(image_raw), image_raw
+            return await UniHelper.img_seg(image_path), image_raw
 
         # 走缓存路径：从已落盘文件读回 bytes 供切片，图片段仍按 use_base64 决定
         # read_bytes 是同步 IO（长图可达数十 MB），丢线程池避免阻塞事件循环
@@ -327,8 +327,8 @@ class ImageRenderer(BaseRenderer):
 
         image_raw = await asyncio.to_thread(result.render_image.read_bytes)
         if pconfig.use_base64:
-            return UniHelper.img_seg(image_raw), image_raw
-        return UniHelper.img_seg(result.render_image), image_raw
+            return await UniHelper.img_seg(image_raw), image_raw
+        return await UniHelper.img_seg(result.render_image), image_raw
 
     @classmethod
     async def save_img(cls, raw: bytes, suffix: str = ".png") -> Path:

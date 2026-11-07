@@ -32,9 +32,10 @@ _REFERRER_MAP: dict[str, str] = {
     "img.nga.cn": "https://nga.178.com/",
 }
 
-# 单次解析内并发下载上限。贴吧/NGA 长帖可能一次解析几十张内嵌图,
-# 无限流会瞬间对同一域名打几十个并发 HTTP, 触发平台限流(567)并占满 fd。
-# 单线程 asyncio 下 Semaphore 不需要锁; auto_task 创建的下载协程都会经过它。
+# 并发下载上限（闸门收口在 download_file 唯一下载内核处）。图片/视频/音频/
+# av_and_merge 全部经它——贴吧/NGA 长帖几十张内嵌图、抖音多图笔记的几十路
+# 实况视频同样受限; 无限流会瞬间对同一域名打几十个并发 HTTP, 触发平台限流
+# (567)并占满 fd。单线程 asyncio 下 Semaphore 不需要锁。
 _DOWNLOAD_SEM = asyncio.Semaphore(8)
 
 
@@ -356,6 +357,9 @@ class StreamDownloader:
         backup_urls: 备用 CDN 链接列表。重试时轮换不同链接,
         避免反复命中同一个坏节点(如 B 站 mcdn P2P 节点)。为空则重试同一个 url。
 
+        并发闸门 ``_DOWNLOAD_SEM`` 收口在此（图片/视频/音频/av_and_merge 的共同
+        内核）, 见模块顶部注释。
+
         注意: _use_curl / _bypass_proxy 按 ``url`` (主链) 判定 client 和代理配置,
         backup_urls 应与主链属于同一 curl/代理类别(同平台 CDN 总是如此)。
         若 backup 跨类别(如主链 bilivideo、备选 snssdk), 会在重试时用错 client。
@@ -376,6 +380,24 @@ class StreamDownloader:
         if "Referer" not in headers:
             if auto_ref := _auto_referer(url):
                 headers["Referer"] = auto_ref
+
+        # 缓存命中在闸门外（不占并发额度）; 真正的网络下载一律过闸门
+        async with _DOWNLOAD_SEM:
+            return await self._download_file_core(
+                url, file_path, headers, chunk_size=chunk_size, max_retries=max_retries, backup_urls=backup_urls
+            )
+
+    async def _download_file_core(
+        self,
+        url: str,
+        file_path: Path,
+        headers: dict[str, str],
+        *,
+        chunk_size: int = 64 * 1024,
+        max_retries: int = 3,
+        backup_urls: list[str] | None = None,
+    ) -> Path:
+        """download_file 的下载内核（闸门由调用方持有, 勿单独调用）。"""
 
         # 写临时文件再原子发布: 同一 URL 被两处并发解析时(结果缓存要等发送完才写),
         # 两个协程各写各的临时文件, 不会以 "wb" 交替截断同一路径; 亦不会出现
@@ -436,6 +458,13 @@ class StreamDownloader:
                                 # 排空错误响应体, 避免连接池复用未读完的 keepalive 连接,
                                 # 在下一个并发下载时触发 ResponseNotRead。
                                 await response.aread()
+                                # 确定性客户端错误(400/401/404/...)不重试——重试不会
+                                # 变好, 与 curl 路径的 _PERMANENT_HTTP_STATUSES 同口径;
+                                # 其余(403/5xx 等瞬时问题)走 raise_for_status → 重试预算
+                                if status in _PERMANENT_HTTP_STATUSES:
+                                    await safe_unlink(tmp_path)
+                                    logger.error("下载失败 HTTP {} | url: {}", status, current_url)
+                                    raise DownloadException("媒体下载失败")
                                 response.raise_for_status()
 
                             content_length_header = response.headers.get("Content-Length")
@@ -466,7 +495,7 @@ class StreamDownloader:
                             downloaded_size = 0
                             exceed_size_limit = False
                             with self.rich_progress(
-                                file_name,
+                                file_path.name,
                                 content_length,
                             ) as update_progress:
                                 async with aiofiles.open(tmp_path, "wb") as file:
@@ -632,15 +661,12 @@ class StreamDownloader:
     ) -> list[Path]:
         """download image files by urls with stream, ignore errors
 
-        并发受 ``_DOWNLOAD_SEM`` 限制（默认 8），避免一次解析几十张图时
-        瞬间打爆目标域名 / 占满文件描述符。
+        并发闸门在 ``download_file`` 内核处统一收口（``_DOWNLOAD_SEM``, 默认 8），
+        避免一次解析几十张图时瞬间打爆目标域名 / 占满文件描述符。
         """
-
-        async def _one(url: str) -> Path:
-            async with _DOWNLOAD_SEM:
-                return await self.download_img(url, ext_headers=ext_headers)
-
-        paths_or_errs = await asyncio.gather(*[_one(url) for url in urls], return_exceptions=True)
+        paths_or_errs = await asyncio.gather(
+            *[self.download_img(url, ext_headers=ext_headers) for url in urls], return_exceptions=True
+        )
         paths: list[Path] = []
         for url, item in zip(urls, paths_or_errs):
             if isinstance(item, Path):

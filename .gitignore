@@ -192,3 +192,7 @@ test_dynamic_*.json
 dynamic_no_credential.json
 .pytest-tmp/
 .pytest_tmp/
+
+# 本地工具配置(含本地路径与个人环境, 不入库)
+.claude/settings.local.json
+.pytest-tmp*/

@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, Literal
 from pathlib import Path
 from functools import wraps
@@ -103,28 +104,33 @@ class UniHelper:
         return flattened
 
     @staticmethod
-    def img_seg(
+    async def img_seg(
         file: Path | bytes,
     ) -> Image:
-        """图片 Seg"""
+        """图片 Seg
+
+        base64 形态的磁盘读走 ``asyncio.to_thread``：文件最大可达
+        ``parser_max_size``（默认 90MB），同步 read_bytes 会把事件循环
+        （所有适配器/定时任务/并发解析）阻塞数秒（同 renders/base.py 的口径）。
+        """
         if isinstance(file, bytes):
             return Image(raw=file)
 
         if pconfig.use_base64:
-            return Image(raw=file.read_bytes())
+            return Image(raw=await asyncio.to_thread(file.read_bytes))
         else:
             return Image(path=file)
 
     @staticmethod
-    def record_seg(audio_path: Path) -> Voice:
-        """语音 Seg"""
+    async def record_seg(audio_path: Path) -> Voice:
+        """语音 Seg（base64 读盘同 img_seg 走 to_thread）"""
         if pconfig.use_base64:
-            return Voice(raw=audio_path.read_bytes())
+            return Voice(raw=await asyncio.to_thread(audio_path.read_bytes))
         else:
             return Voice(path=audio_path)
 
     @classmethod
-    def video_seg(cls, video_path: Path) -> Video | File | Text:
+    async def video_seg(cls, video_path: Path) -> Video | File | Text:
         """视频 Seg"""
         # 检测文件大小
         file_size_byte_count = int(video_path.stat().st_size)
@@ -136,24 +142,24 @@ class UniHelper:
             return Text("视频为空文件")
         elif file_size_byte_count > max_size_bytes:
             # 转为文件 Seg
-            return cls.file_seg(video_path, display_name=video_path.name)
+            return await cls.file_seg(video_path, display_name=video_path.name)
         else:
             if pconfig.use_base64:
-                return Video(raw=video_path.read_bytes())
+                return Video(raw=await asyncio.to_thread(video_path.read_bytes))
             else:
                 return Video(path=video_path)
 
     @staticmethod
-    def file_seg(
+    async def file_seg(
         file: Path,
         display_name: str | None = None,
     ) -> File:
-        """文件 Seg"""
+        """文件 Seg（base64 读盘同 img_seg 走 to_thread）"""
         if not display_name:
             display_name = file.name
 
         if pconfig.use_base64:
-            return File(raw=file.read_bytes(), name=display_name)
+            return File(raw=await asyncio.to_thread(file.read_bytes), name=display_name)
         else:
             return File(path=file, name=display_name)
 

@@ -48,11 +48,13 @@ dependencies = [
   "apilmoji[rich]>=0.3.1,<1.0.0",
   "beautifulsoup4>=4.12.0,<5.0.0",
   "curl_cffi>=0.13.0,<1.0.0,!=0.14.0",
-  "protobuf>=7.36.0,<7.37.0",
+  # protobuf: 生成代码在主版本内兼容; 不钉单 minor —— 安全修复版需要能进来
+  "protobuf>=7.36.0,<8.0.0",
   # gmssl: 抖音 a_bogus 签名算法内部的国密 SM3 哈希
   "gmssl>=3.2.2,<4.0.0",
-  # cryptography: 红果设备注册请求体的 ttEncrypt AES-128-CBC 加密
-  "cryptography>=50.0.2,<50.1.0",
+  # cryptography: 红果设备注册请求体的 ttEncrypt AES-128-CBC 加密。
+  # 上界放到下一主版本: 钉单 minor 会让 CVE 修复版（同 minor 不发补丁）进不来
+  "cryptography>=50.0.2,<51.0.0",
   "bilibili-api-python>=17.4.2,<18.0.0",
   # qqmusic-api-python: `parqq登录` 扫码登录（MQTT over WebSocket）+ QQ 音乐解析内置实现。
   # 可选的 App 协议增强引擎不在此声明，缺失时自动回退内置实现。

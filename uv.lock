@@ -2019,7 +2019,7 @@ wheels = [
 
 [[package]]
 name = "nonebot-plugin-parser"
-version = "2.7.21"
+version = "2.7.22"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },

@@ -88,15 +88,21 @@ _PC_WEB_COMMON_PARAMS: dict[str, str] = {
 async def _request_story_service(service: str, params: dict[str, str]) -> dict | None:
     """请求故事采集服务 (MuMu 模拟器 + frida 常驻管线), 任何失败返回 None。
 
-    服务侧单次采集含模拟器驱动最长 ~90s, 客户端超时 95s; 部署时需保证
-    ``parser_parse_timeout`` 大于该值, 否则解析层先超时。
+    服务侧单次采集含模拟器驱动最长 ~90s, 客户端超时上限 95s —— 但会先用
+    ``parser_parse_timeout`` 预算钳制（留 5s 给包装层）：默认 90s 的解析层
+    先超时的话, 95s 的客户端请求只是白占并发窗口。
     服务走 easytier 内网, trust_env=False 绕开容器全局 http_proxy 环境变量
     (与 base.request / downloader 的项目约定一致)。
     """
     import httpx
 
+    from ...config import pconfig
+
+    budget = pconfig.parse_timeout
+    timeout = 95.0 if budget <= 0 else max(5.0, min(95.0, budget - 5.0))
+
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(95.0), trust_env=False) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout), trust_env=False) as client:
             resp = await client.get(f"{service}/story", params=params)
         data = resp.json()
     except Exception as e:

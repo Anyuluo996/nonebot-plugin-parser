@@ -27,6 +27,20 @@ def is_pending_path_task(path_task: Path | Task[Path] | None) -> bool:
     return isinstance(path_task, Task)
 
 
+async def _settle_path_task(task: Task[Path]) -> Path:
+    """等待下载/产出 Task，把**已取消**的 Task 归一为业务异常。
+
+    直接 await 已取消的 Task 抛 CancelledError（BaseException），穿透渲染层
+    与 matcher 的 except Exception 让整条消息静默丢失 —— 仓库已两次踩过同形态
+    的坑（get_cover_path / get_gif_path 的超时清理注释）。这里区分「预先取消」
+    与「活取消」：前者转 DownloadException 走正常失败计数；后者（顶层超时传导
+    的取消）由 await 正常上抛，不影响取消传播。
+    """
+    if task.cancelled():
+        raise DownloadException("媒体产出任务已取消")
+    return await task
+
+
 @dataclass(repr=False, slots=True)
 class MediaContent:
     path_task: Path | Task[Path]
@@ -38,7 +52,7 @@ class MediaContent:
         # 是下载耗时的唯一预算方。渲染层 wait_for 会 cancel 底层下载 task, 把仍在
         # 重试、马上就会成功的下载拦腰截断(2026-09-25 推特: twimg 视频重试 35s 后
         # 成功, 却先被 30s 超时判死, 整条解析报"媒体下载失败")。
-        self.path_task = await self.path_task
+        self.path_task = await _settle_path_task(self.path_task)
         return self.path_task
 
     @property
@@ -79,6 +93,10 @@ class VideoContent(MediaContent):
             return None
         if isinstance(self.cover, Path):
             return self.cover
+        if self.cover.cancelled():
+            # 预先取消的 Task 直接 await 会抛 CancelledError 穿透 except Exception（见 _settle_path_task）
+            self.cover = None
+            raise DownloadException("封面下载已取消")
         timeout = pconfig.video_send_timeout
         try:
             self.cover = await self.cover if timeout <= 0 else await asyncio.wait_for(self.cover, timeout=timeout)
@@ -140,6 +158,10 @@ class DynamicContent(MediaContent):
         # 下载段不限时(与 get_path 同理, 下载层自带重试预算);
         # video_send_timeout 只约束转换段(palettegen+paletteuse 两遍 ffmpeg, 秒级)。
         await self.get_path()
+        if self.gif_path.cancelled():
+            self.gif_path = None
+            self._gif_failed = True
+            raise DownloadException("动图转换已取消")
         timeout = pconfig.video_send_timeout
         try:
             self.gif_path = (
@@ -165,6 +187,9 @@ class DynamicContent(MediaContent):
             return None
         if isinstance(self.cover, Path):
             return self.cover
+        if self.cover.cancelled():
+            self.cover = None
+            raise DownloadException("封面下载已取消")
         timeout = pconfig.video_send_timeout
         try:
             self.cover = await self.cover if timeout <= 0 else await asyncio.wait_for(self.cover, timeout=timeout)
@@ -248,7 +273,7 @@ class Author:
             return None
         if isinstance(self.avatar, Path):
             return self.avatar
-        self.avatar = await self.avatar
+        self.avatar = await _settle_path_task(self.avatar)
         return self.avatar
 
     @property

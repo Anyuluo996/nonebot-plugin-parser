@@ -132,7 +132,8 @@ class XiaoHongShuParser(BaseParser):
                 img_urls = preload_data.image_urls
             else:
                 img_urls = note_data.image_urls
-            contents.append(self.create_video_content(video_url, img_urls[0]))
+            # 视频笔记也可能不带图（封面缺失），无图时不取 img_urls[0]（IndexError）
+            contents.append(self.create_video_content(video_url, img_urls[0] if img_urls else None))
         elif img_urls := note_data.image_urls:
             contents.extend(self.create_image_contents(img_urls))
 

@@ -2,9 +2,11 @@
 
 设计要点：
 - stdlib ``sqlite3``（WAL + busy_timeout），**每次操作新建连接**（不跨线程共享连接，
-  规避 ``check_same_thread`` 线程问题），经 ``asyncio.to_thread`` 包装为 async。
-- ``result_json`` 里不存任何 URL / 签名 / 宿主路径 —— 媒体一律 ``media://{filename}``
-  占位符；base_url 与签名由 routes 层在响应时拼接（现签），改配置不影响存量任务。
+  规避 ``check_same_thread`` 线程问题），经 ``asyncio.to_thread`` 包装为 async，
+  连接随操作显式 close。
+- ``result_json`` 不存签名 / base_url / 宿主路径 —— 本地媒体一律 ``media://{filename}``
+  占位符；源链接与已是公开 URL 的远程媒体引用原样保留（见 serialize），签名由
+  routes 层响应时现签（改配置不影响存量任务）。
 - ``staged_files`` 存 ``[{filename, size}]``，供媒体端点反查（不拼用户输入路径）、
   配额释放与签名使用；``staged_bytes`` 是其字节数合计（DELETE/TTL 清理释放配额用）。
 - ``meta`` 表存 pid 做单进程软检测：NoneBot --reload / 多 worker 会让 stale 标记误伤
@@ -18,6 +20,8 @@ import asyncio
 import sqlite3
 from typing import Any
 from pathlib import Path
+from contextlib import contextmanager
+from collections.abc import Iterator
 
 from nonebot import logger
 
@@ -42,19 +46,29 @@ def _normalize_row(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-def _connect() -> "sqlite3.Connection":
+@contextmanager
+def _connect() -> Iterator[sqlite3.Connection]:
+    """每操作一条连接：PRAGMA 就绪 → 事务（commit/rollback）→ 显式 close。
+
+    sqlite3.Connection 自带的 ``with`` 只管事务不关连接，依赖 GC 回收在高频
+    操作下会累积文件句柄；这里包一层保证退出即 close。
+    """
     conn = sqlite3.connect(str(_DB_PATH), timeout=5)
     conn.row_factory = sqlite3.Row
-    # busy_timeout 必须先于 journal_mode：WAL 模式切换需要独占锁，未装 busy handler
-    # 时并发初始化会立即抛 "database is locked"（CI xdist 多 worker 冷启动实测）
-    conn.execute("PRAGMA busy_timeout=5000")
     try:
-        conn.execute("PRAGMA journal_mode=WAL")
-    except sqlite3.OperationalError:
-        # 并发下另一连接正持锁/已切好 WAL（journal_mode 是文件的持久属性，无需重试）
-        pass
-    conn.execute("PRAGMA synchronous=NORMAL")
-    return conn
+        # busy_timeout 必须先于 journal_mode：WAL 模式切换需要独占锁，未装 busy handler
+        # 时并发初始化会立即抛 "database is locked"（CI xdist 多 worker 冷启动实测）
+        conn.execute("PRAGMA busy_timeout=5000")
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError:
+            # 并发下另一连接正持锁/已切好 WAL（journal_mode 是文件的持久属性，无需重试）
+            pass
+        conn.execute("PRAGMA synchronous=NORMAL")
+        with conn:  # 事务语义保持：正常退出 commit，异常 rollback
+            yield conn
+    finally:
+        conn.close()
 
 
 def _init_db() -> None:
@@ -164,8 +178,15 @@ def _sync_find_active_by_url(url_norm: str) -> dict[str, Any] | None:
 
 
 def _sync_count_active() -> int:
+    """queued/running 的 **API** 任务数（队列上限判定用）。
+
+    刻意排除 source='chat'：聊天行只记状态、不占 API 执行引擎的并发/队列额度，
+    聊天流量高峰不应把 API 提交顶成 429。
+    """
     with _connect() as conn:
-        row = conn.execute("SELECT COUNT(*) FROM tasks WHERE status IN ('queued', 'running')").fetchone()
+        row = conn.execute(
+            "SELECT COUNT(*) FROM tasks WHERE status IN ('queued', 'running') AND source = 'api'"
+        ).fetchone()
     return int(row[0])
 
 

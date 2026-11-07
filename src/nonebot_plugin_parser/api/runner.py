@@ -175,11 +175,21 @@ async def cancel_task(task_id: str) -> None:
 
 
 async def shutdown() -> None:
-    """shutdown 钩子：取消全部执行协程，把仍处 active 的行标记 cancelled。"""
+    """shutdown 钩子：取消全部执行协程，把仍处 active 的行标记 cancelled。
+
+    竞态收口与 DELETE 同款：cancel 等待期间任务可能已自行完成（set_cancelled
+    条件写不覆盖终态），重读行只对仍 active 的行写 cancelled + 清目录；
+    已终态的行保持行与媒体一致，交给 TTL 清理 —— 否则会留下「succeeded 行 +
+    媒体 404」的错配，重启后轮询方仍能拿到该行。
+    """
     task_ids = list(registry.keys())
     for task_id in task_ids:
         await cancel_task(task_id)
-        await store.set_cancelled(task_id)
-        await media.remove_task_dir(task_id)
+        row = await store.get_task(task_id)
+        if row is None:
+            continue
+        if row["status"] in ("queued", "running"):
+            await store.set_cancelled(task_id)
+            await media.remove_task_dir(task_id)
     if task_ids:
         logger.info(f"api shutdown：取消 {len(task_ids)} 个未完成任务")

@@ -223,6 +223,12 @@ def build_router() -> "APIRouter":
             # 先取消并 await 执行体真正结束（与其清理串行），再写 cancelled + 清目录，
             # DELETE 返回后立刻重新提交同一 URL 不会与旧任务的收尾交错
             await runner.cancel_task(task_id)
+            # 竞态收口：cancel 等待期间任务可能已自行完成。set_cancelled 是条件写、
+            # 不会覆盖终态，若不重读就清目录，会留下「行 succeeded + 媒体 404」的
+            # 错配（轮询方拿到 200 状态但媒体全 404）。重读后仍 active 走取消分支，
+            # 已终态则与"DELETE 已完成任务"同一清理语义（删行 + 删目录）。
+            row = await store.get_task(task_id) or row
+        if row["status"] in ("queued", "running"):
             await store.set_cancelled(task_id)
         else:
             await store.delete_task(task_id)

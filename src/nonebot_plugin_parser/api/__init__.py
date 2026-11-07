@@ -21,7 +21,7 @@ import asyncio
 
 from nonebot import logger, require, get_driver
 
-from . import media, store, runner
+from . import chat, media, store, runner
 from ..config import pconfig
 
 _API_MEDIA_ORPHAN_GRACE = 600
@@ -74,11 +74,16 @@ async def _startup() -> None:
         from . import routes
 
         routes.reset_sign_key()
-        server_app.include_router(routes.build_router())
+        # 清理 job 先注册：若 include_router 失败，日志「本次启动不提供 API」与
+        # 事实一致（路由确实未上线），而已注册的清理 job 继续兜底 DB/磁盘，无害
         _setup_cleanup_job()
+        server_app.include_router(routes.build_router())
     except Exception:
         logger.exception("异步解析 API 注册失败，本次启动不提供 API（其余功能不受影响）")
         return
+    # 聊天入库门控与真实清理面对齐：只在 API 完整注册（= 清理 job 存在）后写行，
+    # 避免 enabled=true 但 token/base_url/fastapi 缺失时「有写入、无清理」的堆积
+    chat.set_recording_enabled(True)
     logger.info(f"异步解析 API 已注册: 前缀 {routes.API_PREFIX}，并发上限 {pconfig.api_max_concurrent}")
 
 

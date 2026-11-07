@@ -86,7 +86,7 @@ curl -H "Authorization: Bearer <token>" https://bot.example.com/parser/api/tasks
 - `api`：经本 API 提交的解析，succeeded 时携带完整结果载荷；
 - `chat`：bot 聊天里被自动解析的链接（v2.7.22 起轻量入库）——只记**状态与失败原因**，不存结果载荷（消息已直接发进群，避免每条消息做媒体转存挤占配额）。失败行的 `error_kind`（timeout/parse_error/send_error/tip/quota）+ `error`（给维护者的原因详情，含异常 repr）可用于按链接排查"这条链接为什么没解析出来"。
 
-跨源语义：聊天 running 行**不参与** API 提交去重（否则调用方轮询到终态也拿不到结果载荷），同链接跨源会各解析一次，属明确语义。所有任务记录按 `PARSER_API_TASK_TTL`（默认 1 小时）过期清理，媒体文件随行删除。聊天记录入口整体吞异常，永不影响聊天解析本身。
+跨源语义：聊天 running 行**不参与** API 提交去重（否则调用方轮询到终态也拿不到结果载荷），同链接跨源会各解析一次；聊天行也**不计入** API 的队列上限（`429` 判定只数 `source=api` 行，聊天流量高峰不会顶满 API）。聊天入库总开关在 API **完整注册成功**（startup 链走通 = 清理 job 存在）后才打开——`parser_api_enabled=true` 但 token/base_url/fastapi 缺任一时 API 实际未注册，此时不写行，避免「有写入、无清理」的堆积。所有任务记录按 `PARSER_API_TASK_TTL`（默认 1 小时）过期清理，媒体文件随行删除。聊天记录入口整体吞异常，永不影响聊天解析本身。
 
 ## 技术实现
 
@@ -94,13 +94,13 @@ curl -H "Authorization: Bearer <token>" https://bot.example.com/parser/api/tasks
 
 | 模块 | 职责 |
 |---|---|
-| `store.py` | SQLite 任务存储（stdlib `sqlite3`，WAL，**每操作新建连接** + `asyncio.to_thread`；`busy_timeout` 先于 `journal_mode` 设置、迁移容忍 duplicate column、锁竞争整体重试——并发初始化健壮性见测试）。`result_json` 存的是**占位符载荷**：零 URL、零签名、零宿主路径 |
+| `store.py` | SQLite 任务存储（stdlib `sqlite3`，WAL，**每操作新建连接** + `asyncio.to_thread`，连接显式 close；`busy_timeout` 先于 `journal_mode` 设置、迁移容忍 duplicate column、锁竞争整体重试——并发初始化健壮性见测试）。`result_json` 存的是**占位符载荷**：本地媒体一律 `media://` 占位符，零签名、零 base_url、零宿主路径（源链接与远程媒体 URL 本身公开，原样保留） |
 | `media.py` | 媒体转存（硬链接优先/复制回退）+ 进程内配额计数器（预留-提交-回滚，重启从磁盘重建） |
 | `serialize.py` | `ParseResult` → 载荷：metadata 遍历 + `render_messages` → `UniMessage.export(adapter=onebot11)` → 段 JSON 化；`file://` 转存、`base64://` 先预留配额再解码落盘（魔数推断扩展名）、`http(s)://` 原样保留；合并转发 `node.data.content` 嵌套段递归改写 |
 | `runner.py` | 任务执行引擎：复用 `matchers.find_parser_for_url`（共享运行态 parser 凭据/连接池）+ `parse_with_retry`（顶层超时+指数退避）。提交判定顺序：**去重（规范化 URL）→ 零抓取校验（scheme 白名单 + parser 匹配，SSRF 边界）→ 队列上限 429** |
 | `chat.py` | 聊天来源任务记录助手（v2.7.22）：`record_chat_start` / `record_chat_result`，整体吞异常，永不影响聊天链路 |
-| `routes.py` | FastAPI 路由（懒导入，未装 extras 零影响）：Bearer 常量时间比较 + 鉴权失败按 IP 滑窗限流（**先查桶再比对**）；GET 时把占位符现签成完整 URL（改 `base_url` 不失效存量任务，签名每次刷新）；三层穿越防护（task_id 正则 → filename 白名单正则 → DB staged 清单反查 + resolve 包含性兜底） |
-| `__init__.py` | startup 固定顺序：配置校验 → DB 初始化 → **stale 标记先于清理 job 首跑**（interrupted 行先拿到 finished_at，不会被清理误删成 404）→ 配额计数器磁盘重建 → 单进程软检测（meta 表 pid，不一致仅 warning）→ `include_router`（注册链整体 try/except 故障隔离：可选功能失败只降级 API 自身，绝不炸 bot 启动）。清理 job（10 分钟）：TTL 过期行（queued/running 超时行同步 cancel）+ 无主媒体目录（mtime 10 分钟宽限）+ 限流桶瘦身 |
+| `routes.py` | FastAPI 路由（懒导入，未装 extras 零影响）：Bearer 常量时间比较 + 鉴权失败按 IP 滑窗限流（**先查桶再比对**）；GET 时把占位符现签成完整 URL（改 `base_url` 不失效存量任务，签名每次刷新）；三层穿越防护（task_id 正则 → filename 白名单正则 → DB staged 清单反查 + resolve 包含性兜底）；DELETE 取消后**重读行**再收尾（cancel 等待期间任务自行完成时走终态清理分支，杜绝「行 succeeded + 媒体 404」错配） |
+| `__init__.py` | startup 固定顺序：配置校验 → DB 初始化 → **stale 标记先于清理 job 首跑**（interrupted 行先拿到 finished_at，不会被清理误删成 404）→ 配额计数器磁盘重建 → 单进程软检测（meta 表 pid，不一致仅 warning）→ 清理 job 注册 → `include_router`（注册链整体 try/except 故障隔离：可选功能失败只降级 API 自身，绝不炸 bot 启动）→ 打开聊天入库开关。清理 job（10 分钟）：TTL 过期行（queued/running 超时行同步 cancel）+ 无主媒体目录（mtime 10 分钟宽限）+ 限流桶瘦身 |
 
 配置项（`config.py`，字段+property 双写）：`parser_api_enabled` / `parser_api_token` / `parser_api_base_url` / `parser_api_max_concurrent`(3) / `parser_api_task_ttl`(3600s) / `parser_api_media_quota_mb`(2048) / `parser_api_media_sig_ttl`(3600s)。
 
@@ -128,3 +128,4 @@ uv run pytest tests/others/test_api_tasks.py tests/others/test_startup_smoke.py 
 5. **base_url 必须协议端可达**：Docker 网络内地址或公网域名均可，末尾 `/` 自动去除。
 6. **错误只给归一化文案**：解析器异常细节（可能含路径/凭据片段）只进服务端日志。
 7. API 任务的失败**不会**进入 QQ 链路的失败重试队列（failure_store 只由 matcher 层写入），两层互不污染。
+8. **鉴权限流按 IP 共桶**：bot 经反向代理对外时，所有调用方在 API 看来同源 IP——单个调用方的鉴权失败会触发整个反代 IP 的 429（10 次/分钟）。多调用方场景请各自带对 token，或让调用方直连 `base_url` 内网地址绕过反代。

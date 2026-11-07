@@ -223,11 +223,11 @@ class _FakeParser:
 
 async def _make_handler_env(monkeypatch, tmp_path, *, api_enabled: bool = True):
     """parser_handler 端到端环境的聊天记录变体：DB 隔离进 tmp + API 开关门控。"""
-    from nonebot_plugin_parser.api import store
-    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.api import chat, store
 
     monkeypatch.setattr(store, "_DB_PATH", tmp_path / "chat_tasks.db")
-    monkeypatch.setattr(pconfig, "parser_api_enabled", api_enabled)
+    # 门控是 chat._recording_enabled（随 API 完整注册翻转），测试直接模拟该状态
+    monkeypatch.setattr(chat, "_recording_enabled", api_enabled)
     await store.init_db()
     return store
 

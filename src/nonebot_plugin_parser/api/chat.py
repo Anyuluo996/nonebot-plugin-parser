@@ -15,16 +15,27 @@ from nonebot import logger
 
 from . import store
 from .runner import normalize_url
-from ..config import pconfig
+
+_recording_enabled = False
+"""聊天入库总开关：API startup 完整注册成功（清理 job 存在）后才置 True。
+
+刻意不做配置读取式门控 —— ``parser_api_enabled=true`` 但 token/base_url/fastapi
+缺任一时 API 实际未注册（无清理面），此时写行只会无限堆积。开关与真实清理面
+由 :func:`nonebot_plugin_parser.api.set_recording_enabled` 一并翻转。
+"""
+
+
+def set_recording_enabled(value: bool) -> None:
+    global _recording_enabled
+    _recording_enabled = value
 
 
 async def record_chat_start(url: str, platform: str) -> str | None:
     """聊天解析开始：写入 running 行，返回 task_id（失败返回 None，绝不抛出）。
 
-    跟随 ``parser_api_enabled``：API 关闭时不入库 —— 任务表的清理 job 与查询面
-    都随 API 注册，关闭时写行只会无限堆积。
+    仅在 API 完整注册（清理 job 存在）时入库，否则无限堆积。
     """
-    if not pconfig.api_enabled:
+    if not _recording_enabled:
         return None
     try:
         task_id = secrets.token_urlsafe(16)
@@ -48,7 +59,7 @@ async def record_chat_result(
     ``error`` 为给维护者看的失败原因（如 ``ParseException: xxx`` / 发送段异常），
     区别于 API 调用方拿到的脱敏文案。
     """
-    if not task_id or not pconfig.api_enabled:
+    if not task_id or not _recording_enabled:
         return
     try:
         if ok:

@@ -15,7 +15,9 @@
 """
 
 import os
+import hmac
 import time
+import asyncio
 import hashlib
 import logging
 import sqlite3
@@ -157,18 +159,10 @@ def _check_auth(authorization: str | None = Header(None)) -> None:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401)
     token = authorization.removeprefix("Bearer ").strip()
-    # 常量时间比较防时序攻击
-    if not _consteq(token, API_KEY):
+    # 常量时间比较防时序攻击（stdlib hmac.compare_digest，不手写 —— 自实现的
+    # 长度短路也会泄露密钥长度信息）
+    if not token or not hmac.compare_digest(token.encode(), API_KEY.encode()):
         raise HTTPException(403)
-
-
-def _consteq(a: str, b: str) -> bool:
-    if len(a) != len(b):
-        return False
-    r = 0
-    for x, y in zip(a, b):
-        r |= ord(x) ^ ord(y)
-    return r == 0
 
 
 # ── 速率限制 ─────────────────────────────────────────────────────
@@ -182,6 +176,17 @@ def _check_rate(client_ip: str) -> None:
     if len(_rate_buckets[client_ip]) >= _RATE_LIMIT:
         raise HTTPException(429)
     _rate_buckets[client_ip].append(now)
+
+
+def _prune_rate_buckets() -> None:
+    """清掉全过期的限流桶：公开端点 + IPv6 轮换会让每 IP 一桶的字典只增不减。"""
+    now = time.time()
+    for ip in list(_rate_buckets.keys()):
+        pruned = [t for t in _rate_buckets[ip] if now - t < _RATE_WINDOW]
+        if pruned:
+            _rate_buckets[ip] = pruned
+        else:
+            _rate_buckets.pop(ip, None)
 
 
 def _is_allowed_domain(url: str) -> bool:
@@ -383,13 +388,34 @@ def _esc(s: str) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-# ── 数据保留清理（启动时执行一次） ───────────────────────────────
+# ── 数据保留清理（启动执行一次 + 每小时周期） ─────────────────────
+# 90 天保留是数据保护约束不是家务：长驻进程只在启动时清一次会失效，必须周期执行。
 
 
-@app.on_event("startup")
-def _cleanup_old():
+def _run_retention_cleanup():
     cutoff = int(time.time()) - RETENTION_DAYS * 86400
     with _get_db() as conn:
         n = conn.execute("DELETE FROM failures WHERE received_at < ?", (cutoff,)).rowcount
         if n:
             log.info("[cleanup] removed %s records older than %s days", n, RETENTION_DAYS)
+
+
+@app.on_event("startup")
+def _cleanup_old():
+    _run_retention_cleanup()
+
+
+@app.on_event("startup")
+async def _start_maintenance_loop():
+    """每小时执行一次保留清理 + 限流桶瘦身（公开端点常驻，不靠重启兜底）。"""
+
+    async def _loop():
+        while True:
+            await asyncio.sleep(3600)
+            try:
+                _run_retention_cleanup()
+                _prune_rate_buckets()
+            except Exception:
+                log.exception("[maintenance] periodic cleanup failed")
+
+    asyncio.create_task(_loop())

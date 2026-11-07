@@ -32,6 +32,8 @@ async def _retry_one(record: dict) -> None:
         return
 
     # 找到能处理该 URL 的 parser，重建 (keyword, searched)
+    # 经模块内别名调用：公共实现挂在 matchers（与 api 异步任务共用同一函数），
+    # 测试 monkeypatch 的也是本模块的这个名字
     parser = _find_parser_for_url(url)
     if parser is None:
         # 无 parser 能匹配（如平台已禁用），标记重试失败但不反复尝试
@@ -79,23 +81,10 @@ async def _retry_one(record: dict) -> None:
 
 
 def _find_parser_for_url(url: str) -> BaseParser | None:
-    """遍历已注册 parser 实例，找第一个 search_url 能匹配该 url 的。
+    """``find_parser_for_url`` 的向后兼容别名（公共实现见 matchers.find_parser_for_url）。"""
+    from .matchers import find_parser_for_url
 
-    直接复用 ``matchers.KEYWORD_PARSER_MAP`` 里运行态的 parser 实例
-    （与用户消息走的是同一批），而非另起 ``parser_cls()``。这样凭据缓存
-    （如 BilibiliParser._credential）、cookies 文件、连接池在主流程与重试
-    流程间共享，避免重复加载凭据 / 并发写同一 cookies 文件。
-    """
-    # 懒导入避免 matchers 与 failure_retry 之间的循环导入
-    from .matchers import KEYWORD_PARSER_MAP
-
-    for parser in KEYWORD_PARSER_MAP.values():
-        try:
-            parser.search_url(url)  # 不匹配会抛 ParseException
-            return parser
-        except ParseException:
-            continue
-    return None
+    return find_parser_for_url(url)
 
 
 async def run_failure_retry() -> None:

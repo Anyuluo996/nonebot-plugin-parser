@@ -38,7 +38,7 @@ from ..config import gconfig, pconfig
 from ..helper import UniHelper, UniMessage
 from ..parsers import BaseParser, ParseResult, BilibiliParser
 from ..renders import get_renderer
-from ..exception import TipException
+from ..exception import TipException, ParseException
 from ..parse_retry import parse_with_retry
 from ..failure_store import record_failure
 
@@ -63,6 +63,23 @@ def get_parser_by_type(parser_type: type[T]) -> T:
         if isinstance(parser, parser_type):
             return parser
     raise ValueError(f"未找到类型为 {parser_type} 的 parser 实例")
+
+
+def find_parser_for_url(url: str) -> BaseParser | None:
+    """遍历已注册 parser 实例，找第一个 search_url 能匹配该 url 的；无匹配返回 None。
+
+    直接复用 ``KEYWORD_PARSER_MAP`` 里运行态的 parser 实例（与用户消息走的是同一批），
+    而非另起 ``parser_cls()``。这样凭据缓存（如 BilibiliParser._credential）、cookies
+    文件、连接池在主流程与旁路流程（failure_retry 重试 / api 异步任务）间共享，
+    避免重复加载凭据 / 并发写同一 cookies 文件。
+    """
+    for parser in KEYWORD_PARSER_MAP.values():
+        try:
+            parser.search_url(url)  # 不匹配会抛 ParseException
+            return parser
+        except ParseException:
+            continue
+    return None
 
 
 @get_driver().on_startup

@@ -133,3 +133,10 @@ async def _cleanup_tg_2fa_pending():
             logger.info(f"清理 {n} 个陈旧的 Telegram 2FA pending handle")
     except Exception:
         logger.exception("tg 2fa pending 清理 job 异常")
+
+
+# 异步解析 API(HTTP 提交链接 → 任务ID → 轮询结果)。
+# import 即注册 startup/shutdown 钩子; 未启用/缺 fastapi/非 FastAPI driver 时
+# startup 内部静默降级(仅 log), 不影响其余功能。置于末尾: 其 startup 里的
+# stale 标记依赖 DB 初始化, 且 hooks 按注册顺序执行, 保持在 matcher 注册之后。
+from . import api  # noqa: F401

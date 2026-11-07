@@ -55,20 +55,30 @@ async def _startup() -> None:
 
     # 顺序敏感：DB 初始化 → stale 标记（必须先于清理 job 首跑，否则残留 running 行
     # 会被清理误删成 404 而非明确的失败）→ 配额重建 → 单进程检测
-    await store.init_db()
-    await store.mark_stale_interrupted()
-    # 重建是全目录 rglob+stat 遍历（配额默认 2GB 可达数千次 stat），丢线程池避免阻塞事件循环
-    used = await asyncio.to_thread(media.quota.rebuild)
-    if used:
-        logger.info(f"api_media 配额计数器已重建: {used / 1024 / 1024:.1f}MB / {pconfig.api_media_quota_mb}MB")
-    await store.check_single_process()
+    #
+    # 故障隔离：API 是可选功能，注册链任何一环失败只降级 API 自身，**绝不允许
+    # 异常冒出 startup hook 炸掉整个 bot**（2026-11-08 部署实测：cleanup job
+    # 参数错误让 uvicorn "Application startup failed"，容器崩溃循环）。
+    # 功能性回归由 tests/others/test_startup_smoke.py 的真实 lifespan 冒烟
+    # 测试兜底（断言 job/路由确实存在，而非仅无异常）。
+    try:
+        await store.init_db()
+        await store.mark_stale_interrupted()
+        # 重建是全目录 rglob+stat 遍历（配额默认 2GB 可达数千次 stat），丢线程池避免阻塞事件循环
+        used = await asyncio.to_thread(media.quota.rebuild)
+        if used:
+            logger.info(f"api_media 配额计数器已重建: {used / 1024 / 1024:.1f}MB / {pconfig.api_media_quota_mb}MB")
+        await store.check_single_process()
 
-    # 懒导入 routes → fastapi；token/base_url 校验已过，签名子密钥此时可派生
-    from . import routes
+        # 懒导入 routes → fastapi；token/base_url 校验已过，签名子密钥此时可派生
+        from . import routes
 
-    routes.reset_sign_key()
-    server_app.include_router(routes.build_router())
-    _setup_cleanup_job()
+        routes.reset_sign_key()
+        server_app.include_router(routes.build_router())
+        _setup_cleanup_job()
+    except Exception:
+        logger.exception("异步解析 API 注册失败，本次启动不提供 API（其余功能不受影响）")
+        return
     logger.info(f"异步解析 API 已注册: 前缀 {routes.API_PREFIX}，并发上限 {pconfig.api_max_concurrent}")
 
 

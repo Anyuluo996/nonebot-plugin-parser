@@ -82,7 +82,10 @@ def _setup_cleanup_job() -> None:
     require("nonebot_plugin_apscheduler")
     from nonebot_plugin_apscheduler import scheduler
 
-    @scheduler.scheduled_job("interval", minutes=10, id="parser-api-task-cleanup", replace_existing=True)
+    # 注意: scheduled_job（apscheduler 3.x）没有 replace_existing 参数 —— 那是 add_job
+    # 的选项，误传会让 BaseScheduler.add_job 抛 "got multiple values" 直接炸掉整个
+    # 启动流程（2026-11-08 部署实测翻车）。单进程 + 每次启动全新 scheduler，无需去重。
+    @scheduler.scheduled_job("interval", minutes=10, id="parser-api-task-cleanup")
     async def _api_cleanup_job() -> None:
         try:
             await run_cleanup()

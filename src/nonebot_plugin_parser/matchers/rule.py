@@ -49,6 +49,21 @@ class RawData(Struct):
 
 raw_decoder = Decoder(RawData)
 
+# 卡片原文进日志前的脱敏：uin/nick/bbid 等用户侧标识不落日志（AGENTS.md 公开内容规范）。
+# 只做保守的已知字段遮蔽，结构保留供诊断未知卡片形态。
+_REDACT_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r'("uin"\s*:\s*)\d+'), r"\1<redacted>"),
+    (re.compile(r'("nick"\s*:\s*)"[^"]*"'), r"\1<redacted>"),
+    (re.compile(r'("avatar"\s*:\s*)"[^"]*"'), r"\1<redacted>"),
+    (re.compile(r"(bbid=)[A-Za-z0-9]+"), r"\1<redacted>"),
+)
+
+
+def _redact_raw(raw: str) -> str:
+    for pattern, repl in _REDACT_RULES:
+        raw = pattern.sub(repl, raw)
+    return raw
+
 
 class SearchResult:
     """匹配结果"""
@@ -87,15 +102,15 @@ def _extract_url(hyper: Hyper) -> str | None:
     try:
         raw = raw_decoder.decode(raw_str)
     except DecodeError:
-        logger.exception(f"json 卡片解析失败: {raw_str}")
+        logger.exception(f"json 卡片解析失败: {_redact_raw(raw_str)}")
         return None
 
     # 提取 app 类型(QQ 卡片的 com.tencent.xxx), 便于诊断未知卡片形态
     app = _get_card_app(raw)
 
     if not raw.meta:
-        # 卡片有内容但无 meta 字段 —— 可能是未覆盖的卡片类型, 打印原文供诊断
-        logger.warning(f"json 卡片无 meta 字段, 无法提取 URL (app={app}): {raw_str[:300]}")
+        # 卡片有内容但无 meta 字段 —— 可能是未覆盖的卡片类型, 打印脱敏原文供诊断
+        logger.warning(f"json 卡片无 meta 字段, 无法提取 URL (app={app}): {_redact_raw(raw_str[:300])}")
         return None
 
     meta, url = raw.meta, None
@@ -111,9 +126,10 @@ def _extract_url(hyper: Hyper) -> str | None:
         logger.debug(f"extract url[{url}] from raw#meta[{meta}]")
     else:
         # meta 存在但 detail_1/news/music 都不匹配 —— 该卡片类型的 URL 字段位置未知,
-        # 打印 app 类型 + meta 结构原文, 供后续扩展 _extract_url 覆盖 (如 com.tencent.qqmusic)
+        # 打印 app 类型 + meta 结构脱敏原文, 供后续扩展 _extract_url 覆盖 (如 com.tencent.qqmusic)
         logger.warning(
-            f"json 卡片 meta 无已知 URL 字段 (app={app}, meta keys={meta.__struct_fields__}): {raw_str[:500]}"
+            f"json 卡片 meta 无已知 URL 字段 (app={app}, meta keys={meta.__struct_fields__}): "
+            f"{_redact_raw(raw_str[:500])}"
         )
     return url
 

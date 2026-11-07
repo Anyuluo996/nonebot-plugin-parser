@@ -77,11 +77,13 @@ htmlkit = ["nonebot-plugin-htmlkit>=0.1.0rc4"]
 htmlrender = ["nonebot-plugin-htmlrender[playwright]>=0.6.7,<0.8.0"]
 ytdlp = ["yt-dlp[default]>=2026.3.17"]
 emosvg = ["emosvg>=0.1.7"]
+api = ["nonebot2[fastapi]>=2.4.3,<3.0.0"]
 all = [
   "nonebot-plugin-htmlkit>=0.1.0rc4",
   "nonebot-plugin-htmlrender[playwright]>=0.6.7,<0.8.0",
   "yt-dlp[default]>=2026.3.17",
   "emosvg>=0.1.7",
+  "nonebot2[fastapi]>=2.4.3,<3.0.0",
 ]
 
 [dependency-groups]

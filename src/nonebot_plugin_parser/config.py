@@ -262,6 +262,38 @@ class Config(BaseModel):
     parser_failure_report_url: str | None = None
     """失败链接上报地址（HTTP，通常经 nginx 反代 + HTTPS）"""
 
+    # ── 异步解析 API（POST 提交链接拿任务 ID → GET 轮询结果） ─────────
+    parser_api_enabled: bool = False
+    """是否启用异步解析 API。
+
+    需要同时满足：安装 nonebot2[fastapi]（extras: ``api``）且 driver 为 FastAPIDriver、
+    配置 ``parser_api_token`` 与 ``parser_api_base_url``，缺任一项 API 不会注册（仅 log）。
+    """
+    parser_api_token: str = ""
+    """异步解析 API 的 Bearer Token（建议 ≥32 字节随机值，如 `openssl rand -hex 32`）。
+
+    同时用于派生媒体 URL 签名密钥（HMAC），泄露等于 API 与已签发媒体 URL 全部可伪造，
+    轮换 token 会使已发出的媒体 URL 立即失效。留空时即使 enabled=True 也不注册路由。
+    """
+    parser_api_base_url: str = ""
+    """异步解析 API 对外可达的基础地址（如 https://bot.example.com，末尾 `/` 自动去除）。
+
+    媒体文件 URL 由它在响应时拼接（改配置不影响存量任务），必须是 QQ 协议端
+    （NapCat 等）所在网络可达的地址。"""
+    parser_api_max_concurrent: int = Field(default=3, ge=1)
+    """异步解析 API 同时解析的任务数上限"""
+    parser_api_task_ttl: int = Field(default=3600, ge=60)
+    """异步解析 API 任务记录保留时长（秒）。
+
+    queued/running 按 created_at、终态（succeeded/failed/cancelled）按 finished_at 过期，
+    过期任务连同其媒体转存文件一并清理。"""
+    parser_api_media_quota_mb: int = Field(default=2048, ge=1)
+    """媒体转存目录（api_media）总配额（MB）。
+
+    采用预留-提交-回滚计数；超限时任务置失败并清掉已部分转存的文件，不影响已完成任务。"""
+    parser_api_media_sig_ttl: int = Field(default=3600, ge=60)
+    """媒体 URL 签名有效期（秒）。签名在每次 GET 任务时现签，晚取晚发不会拿到过期 URL。"""
+
     @field_validator("parser_bili_video_codes", mode="before")
     @classmethod
     def _coerce_bili_video_codes(cls, v: object) -> object:
@@ -600,6 +632,41 @@ class Config(BaseModel):
     def failure_report_url(self) -> str | None:
         """失败链接上报地址"""
         return self.parser_failure_report_url
+
+    @property
+    def api_enabled(self) -> bool:
+        """是否启用异步解析 API"""
+        return self.parser_api_enabled
+
+    @property
+    def api_token(self) -> str:
+        """异步解析 API 的 Bearer Token"""
+        return self.parser_api_token.strip()
+
+    @property
+    def api_base_url(self) -> str:
+        """异步解析 API 对外基础地址（规范化：去首尾空白与末尾 `/`）"""
+        return self.parser_api_base_url.strip().rstrip("/")
+
+    @property
+    def api_max_concurrent(self) -> int:
+        """异步解析 API 同时解析的任务数上限"""
+        return self.parser_api_max_concurrent
+
+    @property
+    def api_task_ttl(self) -> int:
+        """异步解析 API 任务记录保留时长（秒）"""
+        return self.parser_api_task_ttl
+
+    @property
+    def api_media_quota_mb(self) -> int:
+        """媒体转存目录总配额（MB）"""
+        return self.parser_api_media_quota_mb
+
+    @property
+    def api_media_sig_ttl(self) -> int:
+        """媒体 URL 签名有效期（秒）"""
+        return self.parser_api_media_sig_ttl
 
 
 pconfig: Config = get_plugin_config(Config)

@@ -2048,7 +2048,11 @@ all = [
     { name = "emosvg" },
     { name = "nonebot-plugin-htmlkit" },
     { name = "nonebot-plugin-htmlrender" },
+    { name = "nonebot2", extra = ["fastapi"] },
     { name = "yt-dlp", extra = ["default"] },
+]
+api = [
+    { name = "nonebot2", extra = ["fastapi"] },
 ]
 emosvg = [
     { name = "emosvg" },
@@ -2126,6 +2130,8 @@ requires-dist = [
     { name = "nonebot-plugin-localstore", specifier = ">=0.7.4,<1.0.0" },
     { name = "nonebot-plugin-uninfo", specifier = ">=0.10.1,<1.0.0" },
     { name = "nonebot2", specifier = ">=2.4.3,<3.0.0" },
+    { name = "nonebot2", extras = ["fastapi"], marker = "extra == 'all'", specifier = ">=2.4.3,<3.0.0" },
+    { name = "nonebot2", extras = ["fastapi"], marker = "extra == 'api'", specifier = ">=2.4.3,<3.0.0" },
     { name = "pillow", specifier = ">=11.0.0" },
     { name = "protobuf", specifier = ">=7.36.0,<7.37.0" },
     { name = "qqmusic-api-python", specifier = ">=0.7.2,<1.0.0" },
@@ -2134,7 +2140,7 @@ requires-dist = [
     { name = "yt-dlp", extras = ["default"], marker = "extra == 'all'", specifier = ">=2026.3.17" },
     { name = "yt-dlp", extras = ["default"], marker = "extra == 'ytdlp'", specifier = ">=2026.3.17" },
 ]
-provides-extras = ["htmlkit", "htmlrender", "ytdlp", "emosvg", "all"]
+provides-extras = ["htmlkit", "htmlrender", "ytdlp", "emosvg", "api", "all"]
 
 [package.metadata.requires-dev]
 dev = [

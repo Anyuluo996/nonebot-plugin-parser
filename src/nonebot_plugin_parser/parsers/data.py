@@ -461,6 +461,39 @@ class ParseResult:
             return_exceptions=suppress_errors,
         )
 
+    def cancel_pending_downloads(self) -> None:
+        """best-effort 取消仍挂起的惰性下载 Task（旁路清场用，如 api 异步任务取消）。
+
+        与 :meth:`_iterate_download_coros` 的区别：不调用任何 async getter ——
+        调用 async 方法只会产生无人 await 的裸协程，真正在跑的 eager Task 是
+        字段本身（path_task/cover/gif_path/avatar 等），这里直接遍历字段 cancel。
+        被取消的下载只写插件自身缓存目录，残料由每日缓存清理兜底。
+        """
+
+        def _cancel(value: Path | Task[Path] | None) -> None:
+            if isinstance(value, Task) and not value.done():
+                value.cancel()
+
+        if self.author:
+            _cancel(self.author.avatar)
+        _cancel(self.cover_image)
+        for cont in self.contents:
+            _cancel(cont.path_task)
+            if isinstance(cont, VideoContent):
+                _cancel(cont.cover)
+            elif isinstance(cont, DynamicContent):
+                _cancel(cont.gif_path)
+                _cancel(cont.cover)
+        for gra in self.graphics:
+            if isinstance(gra, MediaContent):
+                _cancel(gra.path_task)
+                if isinstance(gra, VideoContent):
+                    _cancel(gra.cover)
+        for img in self._iter_extra_images():
+            _cancel(img.path_task)
+        if self.repost is not None:
+            self.repost.cancel_pending_downloads()
+
     def _has_pending_resources(self) -> bool:
         """检查是否有待下载的资源"""
         # 检查作者头像

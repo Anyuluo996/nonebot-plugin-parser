@@ -190,3 +190,5 @@ dynamic_api_response.json
 .tmp_*
 test_dynamic_*.json
 dynamic_no_credential.json
+.pytest-tmp/
+.pytest_tmp/

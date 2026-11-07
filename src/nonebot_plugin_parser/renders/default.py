@@ -29,7 +29,7 @@ class DefaultRenderer(BaseRenderer):
 
         try:
             if cover_path := await result.cover_path():
-                segs.insert(1, UniHelper.img_seg(cover_path))
+                segs.insert(1, await UniHelper.img_seg(cover_path))
         except Exception:
             logger.debug("封面下载/插入失败, 转发消息不含封面", exc_info=True)
 

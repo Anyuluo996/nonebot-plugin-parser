@@ -130,7 +130,7 @@ async def _do_music_search(
 
     prefix = pconfig.parse_prefix or "par"
     tip = f"发送「{prefix}序号」选择歌曲（如 {prefix}1）"
-    await UniMessage(UniHelper.img_seg(png)).send()
+    await UniMessage(await UniHelper.img_seg(png)).send()
     await UniMessage(tip).send()
     await matcher.finish()
 

@@ -178,7 +178,7 @@ async def _tg_login(matcher: Matcher):
         await matcher.finish(f"渲染二维码失败: {e}")
         return
 
-    await UniMessage(UniHelper.img_seg(png_bytes)).send()
+    await UniMessage(await UniHelper.img_seg(png_bytes)).send()
     await UniMessage("请用 Telegram App「设置 → 设备 → 扫描二维码」扫描上图（请尽快扫）").send()
 
     success = await wait_login_complete(handle, timeout=120.0)

@@ -150,14 +150,16 @@ async def test_multiple_dynamics_uses_forward():
     ), "多实况应合并转发"
 
 
-def test_extract_forward_nodes_flattens_reference():
+@pytest.mark.asyncio
+async def test_extract_forward_nodes_flattens_reference():
     """extract_forward_nodes 把合并转发拆成节点内容列表 (降级用)。"""
     from nonebot_plugin_alconna.uniseg import UniMessage
 
     from nonebot_plugin_parser.helper import UniHelper
 
-    img1 = UniHelper.img_seg(RED_PNG)
-    img2 = UniHelper.img_seg(GREEN_PNG)
+    # img_seg 是 async（读盘走 to_thread），bytes 形态不触盘但同样需 await
+    img1 = await UniHelper.img_seg(RED_PNG.read_bytes())
+    img2 = await UniHelper.img_seg(GREEN_PNG.read_bytes())
     ref = UniHelper.construct_forward_message([img1, img2], user_id="123")
     msg = UniMessage(ref)
 
@@ -167,13 +169,14 @@ def test_extract_forward_nodes_flattens_reference():
         assert hasattr(node, "__iter__"), "每个节点内容应为可迭代消息"
 
 
-def test_extract_forward_nodes_passes_non_reference():
+@pytest.mark.asyncio
+async def test_extract_forward_nodes_passes_non_reference():
     """非 Reference 消息原样返回, 不丢失段。"""
     from nonebot_plugin_alconna.uniseg import UniMessage
 
     from nonebot_plugin_parser.helper import UniHelper
 
-    img = UniHelper.img_seg(RED_PNG)
+    img = await UniHelper.img_seg(RED_PNG.read_bytes())
     msg = UniMessage(img)
 
     nodes = UniHelper.extract_forward_nodes(msg)
@@ -181,13 +184,14 @@ def test_extract_forward_nodes_passes_non_reference():
     assert len(list(nodes[0])) == 1, "段应保留"
 
 
-def test_extract_forward_nodes_single_node_reference():
+@pytest.mark.asyncio
+async def test_extract_forward_nodes_single_node_reference():
     """单节点 Reference 拆出 1 条 (发送降级时 len<=1 会跳过重发)。"""
     from nonebot_plugin_alconna.uniseg import UniMessage
 
     from nonebot_plugin_parser.helper import UniHelper
 
-    img = UniHelper.img_seg(RED_PNG)
+    img = await UniHelper.img_seg(RED_PNG.read_bytes())
     ref = UniHelper.construct_forward_message([img], user_id="123")
     msg = UniMessage(ref)
 

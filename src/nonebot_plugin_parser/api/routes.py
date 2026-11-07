@@ -45,6 +45,7 @@ _ENVELOPE_FIELDS = (
     "status",
     "url",
     "platform",
+    "source",
     "error_kind",
     "error",
     "created_at",
@@ -190,9 +191,12 @@ def build_router() -> "APIRouter":
         authorization: str | None = Header(None),
         limit: int = Query(default=50, ge=1, le=200),
         offset: int = Query(default=0, ge=0),
+        url: str | None = Query(default=None, max_length=2048, description="按链接过滤（规范化后匹配）"),
     ) -> dict[str, Any]:
         _check_auth(request, authorization)
-        total, rows = await store.list_tasks(limit, offset)
+        # 按链接直查：规范化后精确匹配 url_norm（与提交去重同一键），查不到返回空列表而非 404
+        url_norm = runner.normalize_url(url.strip()) if url and url.strip() else None
+        total, rows = await store.list_tasks(limit, offset, url_norm)
         items = [_envelope(r, include_result=False) for r in rows]
         return {"total": total, "limit": limit, "offset": offset, "items": items}
 

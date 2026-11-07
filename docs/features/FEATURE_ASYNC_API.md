@@ -75,9 +75,18 @@ curl -H "Authorization: Bearer <token>" https://bot.example.com/parser/api/tasks
 
 | 端点 | 说明 |
 |---|---|
-| `GET /parser/api/tasks?limit=&offset=` | 任务列表（分页，不含 result 大字段） |
+| `GET /parser/api/tasks?limit=&offset=&url=` | 任务列表（分页，不含 result 大字段）；`url` 按规范化链接直查（大小写/fragment 不敏感），查不到返回空列表而非 404 |
 | `DELETE /parser/api/tasks/{task_id}` | 取消并清理；queued/running 会先取消执行协程（await 真正结束），状态置 `cancelled` |
 | `GET /parser/api/media/{task_id}/{filename}?exp=&sig=` | 媒体文件（无鉴权，HMAC 签名 URL；支持 Range 分片） |
+
+## 任务历史与来源
+
+任务表同时记录两类来源（`source` 字段）：
+
+- `api`：经本 API 提交的解析，succeeded 时携带完整结果载荷；
+- `chat`：bot 聊天里被自动解析的链接（v2.7.22 起轻量入库）——只记**状态与失败原因**，不存结果载荷（消息已直接发进群，避免每条消息做媒体转存挤占配额）。失败行的 `error_kind`（timeout/parse_error/send_error/tip/quota）+ `error`（给维护者的原因详情，含异常 repr）可用于按链接排查"这条链接为什么没解析出来"。
+
+跨源语义：聊天 running 行**不参与** API 提交去重（否则调用方轮询到终态也拿不到结果载荷），同链接跨源会各解析一次，属明确语义。所有任务记录按 `PARSER_API_TASK_TTL`（默认 1 小时）过期清理，媒体文件随行删除。聊天记录入口整体吞异常，永不影响聊天解析本身。
 
 ## 技术实现
 

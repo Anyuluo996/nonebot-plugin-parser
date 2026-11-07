@@ -77,16 +77,32 @@ def _init_db() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_cleanup ON tasks(created_at)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_finished ON tasks(finished_at)")
         conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        # 迁移：v2.7.21 及之前的库没有 source 列（聊天来源记录是 v2.7.22 新增），
+        # 旧库带 default 'api' 平滑补列，已有行不受影响
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
+        if "source" not in columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN source TEXT NOT NULL DEFAULT 'api'")
 
 
 # ── 同步核心（在 to_thread 里执行，每处新建连接） ────────────────────
 
 
-def _sync_create_task(task_id: str, url: str, url_norm: str, now: int) -> None:
+def _sync_create_task(
+    task_id: str,
+    url: str,
+    url_norm: str,
+    now: int,
+    *,
+    platform: str | None = None,
+    status: str = "queued",
+    source: str = "api",
+    started: bool = False,
+) -> None:
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO tasks (task_id, url, url_norm, status, created_at) VALUES (?, ?, ?, 'queued', ?)",
-            (task_id, url, url_norm, now),
+            "INSERT INTO tasks (task_id, url, url_norm, platform, status, source, created_at, started_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (task_id, url, url_norm, platform, status, source, now, now if started else None),
         )
 
 
@@ -105,10 +121,15 @@ def _sync_get_staged_files(task_id: str) -> list[dict[str, Any]] | None:
 
 
 def _sync_find_active_by_url(url_norm: str) -> dict[str, Any] | None:
-    """按规范化 URL 查 queued/running 任务（去重用，新建的在前）。"""
+    """按规范化 URL 查 queued/running 的 **API** 任务（去重用，新建的在前）。
+
+    刻意限定 source='api'：聊天来源的 running 行只记状态不存结果载荷，
+    若被 API 去重命中，调用方轮询到终态也拿不到 messages —— 语义不成立。
+    跨源重复解析一次属可接受代价（与去重 TOCTOU 同一取舍）。
+    """
     with _connect() as conn:
         row = conn.execute(
-            "SELECT * FROM tasks WHERE url_norm = ? AND status IN ('queued', 'running') "
+            "SELECT * FROM tasks WHERE url_norm = ? AND status IN ('queued', 'running') AND source = 'api' "
             "ORDER BY created_at DESC LIMIT 1",
             (url_norm,),
         ).fetchone()
@@ -131,6 +152,17 @@ def _sync_set_running_if_queued(task_id: str, platform: str, now: int) -> bool:
     return cur.rowcount > 0
 
 
+def _sync_set_succeeded(task_id: str, now: int) -> bool:
+    """active → succeeded（不携带结果载荷；聊天来源任务的终态写法）。"""
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE tasks SET status = 'succeeded', finished_at = ? "
+            "WHERE task_id = ? AND status IN ('queued', 'running')",
+            (now, task_id),
+        )
+    return cur.rowcount > 0
+
+
 def _sync_set_result(task_id: str, result_json: str, staged_files: str, staged_bytes: int, now: int) -> bool:
     """写入成功结果（同样条件于 running，防 DELETE 竞态写出孤儿结果）。"""
     with _connect() as conn:
@@ -142,7 +174,7 @@ def _sync_set_result(task_id: str, result_json: str, staged_files: str, staged_b
     return cur.rowcount > 0
 
 
-def _sync_set_failed(task_id: str, error_kind: str, error: str | None, now: int) -> bool:
+def _sync_set_failed(task_id: str, error_kind: str | None, error: str | None, now: int) -> bool:
     """active 状态 → failed（失败流转永远来自 queued/running）。"""
     with _connect() as conn:
         cur = conn.execute(
@@ -169,15 +201,17 @@ def _sync_delete_task(task_id: str) -> bool:
     return cur.rowcount > 0
 
 
-def _sync_list_tasks(limit: int, offset: int) -> tuple[int, list[dict[str, Any]]]:
-    """任务列表（分页）。刻意不 SELECT result_json / staged_files 大列。"""
+def _sync_list_tasks(limit: int, offset: int, url_norm: str | None = None) -> tuple[int, list[dict[str, Any]]]:
+    """任务列表（分页，可按规范化 URL 过滤）。刻意不 SELECT result_json / staged_files 大列。"""
+    where = "WHERE url_norm = ?" if url_norm else ""
+    params: list[Any] = [url_norm] if url_norm else []
     with _connect() as conn:
-        total = int(conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0])
+        total = int(conn.execute(f"SELECT COUNT(*) FROM tasks {where}", params).fetchone()[0])
         rows = conn.execute(
-            "SELECT task_id, url, url_norm, platform, status, error_kind, error, "
+            "SELECT task_id, url, url_norm, platform, status, source, error_kind, error, "
             "staged_bytes, created_at, started_at, finished_at "
-            "FROM tasks ORDER BY created_at DESC LIMIT ? OFFSET ?",
-            (limit, offset),
+            f"FROM tasks {where} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            [*params, limit, offset],
         ).fetchall()
     return total, [dict(r) for r in rows]
 
@@ -245,9 +279,28 @@ async def init_db() -> None:
     await asyncio.to_thread(_init_db)
 
 
-async def create_task(task_id: str, url: str, url_norm: str) -> None:
+async def create_task(
+    task_id: str,
+    url: str,
+    url_norm: str,
+    *,
+    platform: str | None = None,
+    status: str = "queued",
+    source: str = "api",
+    started: bool = False,
+) -> None:
 
-    await asyncio.to_thread(_sync_create_task, task_id, url, url_norm, int(time.time()))
+    await asyncio.to_thread(
+        _sync_create_task,
+        task_id,
+        url,
+        url_norm,
+        int(time.time()),
+        platform=platform,
+        status=status,
+        source=source,
+        started=started,
+    )
 
 
 async def get_task(task_id: str) -> dict[str, Any] | None:
@@ -273,6 +326,11 @@ async def set_running_if_queued(task_id: str, platform: str) -> bool:
     return await asyncio.to_thread(_sync_set_running_if_queued, task_id, platform, int(time.time()))
 
 
+async def set_succeeded(task_id: str) -> bool:
+    """active → succeeded（不携带结果载荷；聊天来源任务的终态写法）。"""
+    return await asyncio.to_thread(_sync_set_succeeded, task_id, int(time.time()))
+
+
 async def set_result(
     task_id: str, result: dict[str, Any], staged_files: list[dict[str, Any]], staged_bytes: int
 ) -> bool:
@@ -287,7 +345,7 @@ async def set_result(
     )
 
 
-async def set_failed(task_id: str, error_kind: str, error: str | None = None) -> bool:
+async def set_failed(task_id: str, error_kind: str | None, error: str | None = None) -> bool:
 
     return await asyncio.to_thread(_sync_set_failed, task_id, error_kind, error, int(time.time()))
 
@@ -301,8 +359,8 @@ async def delete_task(task_id: str) -> bool:
     return await asyncio.to_thread(_sync_delete_task, task_id)
 
 
-async def list_tasks(limit: int, offset: int) -> tuple[int, list[dict[str, Any]]]:
-    return await asyncio.to_thread(_sync_list_tasks, limit, offset)
+async def list_tasks(limit: int, offset: int, url_norm: str | None = None) -> tuple[int, list[dict[str, Any]]]:
+    return await asyncio.to_thread(_sync_list_tasks, limit, offset, url_norm)
 
 
 async def cleanup_expired() -> list[dict[str, Any]]:

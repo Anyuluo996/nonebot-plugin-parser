@@ -255,6 +255,9 @@ async def parser_handler(
     # 避免误判 parser 内部自行用 asyncio.timeout 抛出的 TimeoutError。
     # 声明在 try 之外：若 try 早期（如缓存读取）抛异常，except 分支引用它仍安全已绑定。
     timed_out = False
+    # 聊天来源任务记录（轻量方案：只记状态+失败原因，不存结果载荷）。缓存命中
+    # 不记录（并非一次真实解析）。记录本身整体吞异常，永不影响聊天链路。
+    chat_task_id: str | None = None
 
     try:
         # 4. 获取缓存结果
@@ -278,6 +281,9 @@ async def parser_handler(
             # < parse_timeout）大概率同样挂起——L2 是尽力而为，最坏消耗 retry 次数后标记
             # reported，不会无限重试。若未来要让 L2 跳过超时记录，可在 record_failure 加
             # is_timeout 标记。
+            from ..api.chat import record_chat_start
+
+            chat_task_id = await record_chat_start(cache_key, parser.platform.name)
             try:
                 result = await parse_with_retry(parser, sr.keyword, sr.searched)
             except asyncio.TimeoutError:
@@ -294,23 +300,33 @@ async def parser_handler(
         try:
             await _send_parse_result(result)
         except Exception as send_err:
+            send_error_msg = f"发送段 {type(send_err).__name__}: {send_err!s}"
             logger.exception(f"发送失败 [{parser.platform.display_name}]: {sr.searched.group(0)[:80]}")
             record_failure(
                 url=sr.searched.group(0),
                 platform=parser.platform.name,
-                error=f"发送段 {type(send_err).__name__}: {send_err!s}",
+                error=send_error_msg,
             )
+            from ..api.chat import record_chat_result
+
+            await record_chat_result(chat_task_id, ok=False, error_kind="send_error", error=send_error_msg)
             await safe_reaction(event, "fail")
             return
 
         # 7. 缓存解析结果
         _cache_result(cache_key, result)
 
-        # 8. 添加"完成"表情
+        # 8. 聊天任务置成功 + 添加"完成"表情
+        from ..api.chat import record_chat_result
+
+        await record_chat_result(chat_task_id, ok=True)
         await safe_reaction(event, "done")
 
     except TipException as e:
         # 可恢复的用户提示：发消息，不冒泡成 ERROR
+        from ..api.chat import record_chat_result
+
+        await record_chat_result(chat_task_id, ok=False, error_kind="tip", error=e.message)
         try:
             await UniMessage(e.message).send()
         except Exception:
@@ -332,6 +348,15 @@ async def parser_handler(
         record_failure(
             url=sr.searched.group(0),
             platform=parser.platform.name,
+            error=error_msg,
+        )
+        # 聊天任务记录失败原因（error 保留异常详情，供维护者按链接排查）
+        from ..api.chat import record_chat_result
+
+        await record_chat_result(
+            chat_task_id,
+            ok=False,
+            error_kind="timeout" if timed_out else "parse_error",
             error=error_msg,
         )
         # 发生错误，添加"失败"表情

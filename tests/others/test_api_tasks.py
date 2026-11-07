@@ -289,6 +289,7 @@ async def test_succeeded_envelope_snapshot_and_signing(client, monkeypatch, tmp_
         "status",
         "url",
         "platform",
+        "source",
         "error_kind",
         "error",
         "created_at",
@@ -725,7 +726,117 @@ async def test_list_tasks_without_result_column(client, monkeypatch, tmp_path):
     assert len(body["items"]) == 2
     # 列表项走信封字段（不含 result），DB 大列（result_json/staged_files）不 SELECT
     expected_keys = {
-        "task_id", "status", "url", "platform", "error_kind", "error",
+        "task_id", "status", "url", "platform", "source", "error_kind", "error",
         "created_at", "started_at", "finished_at",
     }
     assert all(set(item.keys()) == expected_keys for item in body["items"])
+
+
+# ── 聊天来源任务记录（方案 1：只记状态+失败原因） ────────────────────
+
+
+async def test_chat_task_lifecycle_and_reason():
+    """聊天任务：running 行 → 成功置 succeeded / 失败置 failed 带原因。"""
+    from nonebot_plugin_parser.api import store
+    from nonebot_plugin_parser.api.chat import record_chat_result, record_chat_start
+
+    task_id = await record_chat_start("https://stub.example/Chat", "douyin")
+    assert task_id is not None
+    row = await store.get_task(task_id)
+    assert row["source"] == "chat"
+    assert row["status"] == "running"
+    assert row["platform"] == "douyin"
+    assert row["started_at"] is not None
+
+    await record_chat_result(task_id, ok=False, error_kind="parse_error", error="ParseException: 风控空 body")
+    row = await store.get_task(task_id)
+    assert row["status"] == "failed"
+    assert row["error_kind"] == "parse_error"
+    assert row["error"] == "ParseException: 风控空 body"
+
+    # 成功路径：无结果载荷的 succeeded
+    ok_id = await record_chat_start("https://stub.example/ok", "douyin")
+    await record_chat_result(ok_id, ok=True)
+    row = await store.get_task(ok_id)
+    assert row["status"] == "succeeded"
+    assert row["finished_at"] is not None
+
+
+async def test_chat_record_never_raises(tmp_path, monkeypatch):
+    """记录入口整体吞异常：DB 指向父目录不存在的位置也不拖垮聊天链路。"""
+    from nonebot_plugin_parser.api import store
+    from nonebot_plugin_parser.api.chat import record_chat_result, record_chat_start
+
+    monkeypatch.setattr(store, "_DB_PATH", tmp_path / "no-such-dir" / "x.db")
+    assert await record_chat_start("https://stub.example/x", "douyin") is None
+    await record_chat_result("whatever", ok=False, error_kind="parse_error", error="x")
+
+
+async def test_url_filter_normalizes(client, monkeypatch, tmp_path):
+    """?url= 按规范化 URL 直查（host 大小写/fragment 不影响命中）。"""
+    _install_stub(monkeypatch, tmp_path)
+    from nonebot_plugin_parser.api.chat import record_chat_start
+
+    r = await _submit(client, "https://stub.example/target")
+    api_id = r.json()["task_id"]
+    chat_id = await record_chat_start("https://stub.example/other", "bilibili")
+
+    # 大小写 + fragment 变体命中同一 url_norm；列表与直查都返回该任务
+    for variant in ("https://STUB.example/target#frag", "https://stub.example/target"):
+        body = (await client.get("/parser/api/tasks", params={"url": variant}, headers=AUTH)).json()
+        assert body["total"] == 1
+        assert body["items"][0]["task_id"] == api_id
+        assert body["items"][0]["source"] == "api"
+    # 聊天来源的链接也能查到
+    body = (await client.get("/parser/api/tasks", params={"url": "https://stub.example/other"}, headers=AUTH)).json()
+    assert body["total"] == 1
+    assert body["items"][0]["task_id"] == chat_id
+    assert body["items"][0]["source"] == "chat"
+    # 查不到 → 空列表而非 404
+    body = (await client.get("/parser/api/tasks", params={"url": "https://stub.example/none"}, headers=AUTH)).json()
+    assert body == {"total": 0, "limit": 50, "offset": 0, "items": []}
+
+
+async def test_dedup_ignores_chat_rows(client, monkeypatch, tmp_path):
+    """跨源去重隔离：聊天 running 行不参与 API 去重（否则调用方轮询不到结果载荷）。"""
+    _install_stub(monkeypatch, tmp_path)
+    from nonebot_plugin_parser.api import store
+    from nonebot_plugin_parser.api.chat import record_chat_start
+
+    chat_id = await record_chat_start("https://stub.example/dup", "douyin")
+    r = await _submit(client, "https://stub.example/dup")
+    body = r.json()
+    assert body["task_id"] != chat_id
+    row = await store.get_task(body["task_id"])
+    assert row["source"] == "api"
+
+
+async def test_schema_migration_adds_source(tmp_path, monkeypatch):
+    """v2.7.21 旧库（无 source 列）平滑迁移：补列 + 存量行默认 api。"""
+    import sqlite3
+
+    from nonebot_plugin_parser.api import store
+
+    db = tmp_path / "old_api_tasks.db"
+    monkeypatch.setattr(store, "_DB_PATH", db)
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        "CREATE TABLE tasks (task_id TEXT PRIMARY KEY, url TEXT NOT NULL, url_norm TEXT NOT NULL, "
+        "platform TEXT, status TEXT NOT NULL, error_kind TEXT, error TEXT, result_json TEXT, "
+        "staged_files TEXT NOT NULL DEFAULT '[]', staged_bytes INTEGER NOT NULL DEFAULT 0, "
+        "created_at INTEGER NOT NULL, started_at INTEGER, finished_at INTEGER)"
+    )
+    conn.execute(
+        "INSERT INTO tasks (task_id, url, url_norm, status, created_at) "
+        "VALUES (?, ?, ?, 'succeeded', 1700000000)",
+        ("o" * 22, "https://stub.example/old", "https://stub.example/old"),
+    )
+    conn.commit()
+    conn.close()
+
+    await store.init_db()
+    row = await store.get_task("o" * 22)
+    assert row["source"] == "api"
+    # 迁移后新写入不受影响
+    await store.create_task("n" * 22, "https://stub.example/new", "https://stub.example/new", source="chat")
+    assert (await store.get_task("n" * 22))["source"] == "chat"

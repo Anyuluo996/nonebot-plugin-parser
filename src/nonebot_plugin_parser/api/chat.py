@@ -14,7 +14,7 @@ import secrets
 from nonebot import logger
 
 from . import store
-from .runner import normalize_url
+from .runner import normalize_loose_url
 
 _recording_enabled = False
 """聊天入库总开关：API startup 完整注册成功（清理 job 存在）后才置 True。
@@ -50,7 +50,7 @@ async def record_chat_start(url: str, platform: str) -> str | None:
     try:
         task_id = secrets.token_urlsafe(16)
         await store.create_task(
-            task_id, url, normalize_url(url), platform=platform, status="running", source="chat", started=True
+            task_id, url, normalize_loose_url(url), platform=platform, status="running", source="chat", started=True
         )
         return task_id
     except Exception as e:

@@ -754,3 +754,27 @@ async def test_record_chat_result_cache_hit(chat_db, monkeypatch):
     await store.create_task(tid, "u", "u", status="running", source="chat", started=True)
     await chat.record_chat_result(tid, ok=True, cache_hit=True)
     assert (await store.get_task(tid))["cache_hit"] == 1
+
+
+# ── 聊天形态 URL 与 API 共键（normalize 增强） ────────────────────────
+
+
+async def test_chat_url_form_shares_key_with_api():
+    """聊天匹配子串（无 scheme/无 www）与 API 完整 URL 必须归一到同一缓存键。
+
+    线上案例：聊天侧 ``sr.searched.group(0)`` = ``bilibili.com/video/BV…``，
+    旧 normalize 产出 ``://bilibili.com/…``，与 API 提交的
+    ``https://www.bilibili.com/…`` 键不同 → 聊天永远 miss（E2E 12:44 实测）。
+    """
+    from nonebot_plugin_parser.api import rcache
+    from nonebot_plugin_parser.api.runner import normalize_url, normalize_loose_url
+
+    chat_norm = normalize_loose_url("bilibili.com/video/BV1GJ411x7h7")
+    api_norm = normalize_url("https://www.bilibili.com/video/BV1GJ411x7h7")
+    assert chat_norm == api_norm == "https://bilibili.com/video/BV1GJ411x7h7"
+    assert rcache.make_key(chat_norm) == rcache.make_key(api_norm)
+    # 带 www 的聊天子串同样剥 www
+    assert normalize_loose_url("www.bilibili.com/video/BVx") == normalize_url("https://bilibili.com/video/BVx")
+    # 已带 scheme 的输入不受影响；http 保留 http
+    assert normalize_loose_url("https://example.com/a") == "https://example.com/a"
+    assert normalize_loose_url("http://example.com/a") == "http://example.com/a"

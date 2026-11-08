@@ -38,17 +38,31 @@ _MAX_ACTIVE_TASKS = 100
 
 
 def normalize_url(url: str) -> str:
-    """去重键规范化：去首尾空白与 fragment、host 小写。
+    """去重键规范化：去首尾空白与 fragment、host 小写、剥 ``www.`` 前缀。
 
     不做更多激进归一（去 tracking 参数等）——不同参数可能指向不同内容，
-    误合并比漏去重更糟。
+    误合并比漏去重更糟。``www.`` 剥离让「用户提交带 www 的完整 URL」与
+    「聊天消息匹配到的裸 host 子串」归一到同一键（跨机结果缓存要求
+    聊天与 API 共键，二期）；已有行的旧形态键随 TTL 自然过期。
     """
     url = url.strip()
     parts = urlparse(url)
     host = (parts.netloc or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
     path = parts.path or ""
     query = f"?{parts.query}" if parts.query else ""
     return f"{parts.scheme.lower()}://{host}{path}{query}"
+
+
+def normalize_loose_url(url: str) -> str:
+    """聊天形态 URL 修正：消息匹配子串可能无 scheme（如 ``bilibili.com/video/…``），
+    先补 ``https://`` 再走 :func:`normalize_url`——与 API 提交的完整 URL 归一到同一键。
+    """
+    url = url.strip()
+    if not url.startswith(("http://", "https://")):
+        url = f"https://{url}"
+    return normalize_url(url)
 
 
 def validate_url(url: str) -> tuple["BaseParser", str, "Match[str]"]:

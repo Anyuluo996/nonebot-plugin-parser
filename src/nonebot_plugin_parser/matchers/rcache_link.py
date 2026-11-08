@@ -83,9 +83,9 @@ async def try_replay(raw_url: str, chat_task_id: str | None) -> list["UniMessage
         return None
 
     from ..api import media, store, rcache
-    from ..api.runner import normalize_url
+    from ..api.runner import normalize_loose_url
 
-    cached = await rcache.get(normalize_url(raw_url), chat_task_id)
+    cached = await rcache.get(normalize_loose_url(raw_url), chat_task_id)
     if cached is None:
         return None
     payload, staged, staged_bytes = cached
@@ -313,7 +313,7 @@ async def seed_from_result(
         return  # P2-C：忙时直接跳过，种缓存是尽力而为，不排队不拖慢 bot
 
     from ..api import media, store, rcache, serialize
-    from ..api.runner import normalize_url
+    from ..api.runner import normalize_loose_url
 
     async with _SEED_SEM:
         try:
@@ -334,7 +334,7 @@ async def seed_from_result(
             return
         try:
             await rcache.put(
-                normalize_url(raw_url), payload, staged, staged_bytes, chat_task_id, keyword, degraded=degraded
+                normalize_loose_url(raw_url), payload, staged, staged_bytes, chat_task_id, keyword, degraded=degraded
             )
         except Exception:
             # put 失败保留目录：行已带 staged 清单，TTL 清理按实测释放，账本平衡

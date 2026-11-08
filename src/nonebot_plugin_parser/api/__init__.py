@@ -21,7 +21,7 @@ import asyncio
 
 from nonebot import logger, require, get_driver
 
-from . import chat, media, store, runner
+from . import chat, media, store, rcache, runner
 from ..config import pconfig
 
 _API_MEDIA_ORPHAN_GRACE = 600
@@ -78,6 +78,10 @@ async def _startup() -> None:
         # 事实一致（路由确实未上线），而已注册的清理 job 继续兜底 DB/磁盘，无害
         _setup_cleanup_job()
         server_app.include_router(routes.build_router())
+        # 结果缓存（可选叠加功能）：配置校验 + 心跳，任何失败只降级缓存本身
+        for warn in rcache.validate_config():
+            logger.warning(f"结果缓存配置警告: {warn}")
+        await rcache.heartbeat()
     except Exception:
         logger.exception("异步解析 API 注册失败，本次启动不提供 API（其余功能不受影响）")
         return
@@ -109,7 +113,7 @@ def _setup_cleanup_job() -> None:
 
 
 async def run_cleanup() -> None:
-    """TTL 清理：过期行（active 行同步 cancel）→ 无主媒体目录 → 限流桶瘦身。"""
+    """TTL 清理：过期行（active 行同步 cancel）→ 无主媒体目录 → 限流桶瘦身 → 缓存心跳/观测。"""
     from . import routes
 
     expired = await store.cleanup_expired()
@@ -140,3 +144,13 @@ async def run_cleanup() -> None:
         logger.info(f"api 清理：移除 {orphan_count} 个无主媒体目录")
 
     routes.prune_rate_buckets()
+
+    # 结果缓存：实例心跳刷新（TTL 700s > 10min 间隔）+ 周期命中统计
+    if pconfig.rcache_enabled and pconfig.rcache_redis_url and pconfig.rcache_instance_id:
+        try:
+            await rcache.heartbeat()
+            summary = rcache.metrics_summary()
+            if summary:
+                logger.info(f"结果缓存命中统计(累计): {summary}")
+        except Exception:
+            logger.debug("结果缓存心跳/统计失败（不影响清理）", exc_info=True)

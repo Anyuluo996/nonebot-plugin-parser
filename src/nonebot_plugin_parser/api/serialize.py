@@ -43,7 +43,12 @@ def _placeholder(filename: str) -> str:
 
 
 class _Stager:
-    """单任务的转存上下文：按源路径去重（同一文件在段与 metadata 间只转存一次）。"""
+    """单任务的转存上下文：按源路径去重（同一文件在段与 metadata 间只转存一次）。
+
+    ``degraded``：本次产物存在降级（某个媒体项转存失败被丢弃/标记 media_failed）。
+    结果缓存以此判定「不完整成功」——降级产物不写入缓存（否则 24h 内同链接
+    都会拿到缺媒体的结果）。
+    """
 
     def __init__(self, task_id: str) -> None:
         self.task_id = task_id
@@ -51,6 +56,7 @@ class _Stager:
         self._bytes = 0
         self._by_source: dict[str, str] = {}
         self._dir = media.task_media_dir(task_id)
+        self.degraded = False
 
     async def stage_path(self, src: Path) -> str:
         key = str(src)
@@ -93,7 +99,10 @@ _FILE_PREFIX = "file://"
 
 
 async def _convert_file_ref(value: str, stager: _Stager) -> str:
-    """把段 data 里的 ``file`` 值统一改写：转存 → 占位符；远程 URL 原样保留。"""
+    """把段 data 里的 ``file`` 值统一改写：转存 → 占位符；远程 URL 原样保留。
+
+    任何转存失败/丢弃都置 ``stager.degraded``（结果缓存据此跳过降级产物）。
+    """
     if value.startswith(_B64_PREFIX):
         encoded = value[len(_B64_PREFIX) :]
         # 解码前按魔数先窥探扩展名：只解头部避免全量解码后再判断
@@ -101,11 +110,17 @@ async def _convert_file_ref(value: str, stager: _Stager) -> str:
             head = binascii.a2b_base64(encoded[:32] + "==")
         except (binascii.Error, ValueError):
             head = b""
-        return await stager.stage_base64(encoded, media.pick_ext_from_magic(head))
+        placeholder = await stager.stage_base64(encoded, media.pick_ext_from_magic(head))
+        if not placeholder:
+            stager.degraded = True
+        return placeholder
 
     if value.startswith(_FILE_PREFIX):
         path = Path(url2pathname(urlparse(value).path))
-        return await stager.stage_path(path) if path.is_file() else ""
+        if path.is_file():
+            return await stager.stage_path(path)
+        stager.degraded = True
+        return ""
 
     if value.startswith(("http://", "https://")):
         return value
@@ -115,6 +130,7 @@ async def _convert_file_ref(value: str, stager: _Stager) -> str:
     if path.is_file():
         return await stager.stage_path(path)
     logger.debug(f"api 任务 {stager.task_id[:8]}… 未知媒体引用形态，已丢弃: {value[:60]}")
+    stager.degraded = True
     return ""
 
 
@@ -192,6 +208,7 @@ async def _meta_contents(result: ParseResult, stager: _Stager) -> list[dict[str,
         except Exception as e:
             # 单项媒体失败不拖垮整个任务：标注失败继续
             logger.debug(f"api 任务 {stager.task_id[:8]}… 单项媒体转存失败: {e!r}")
+            stager.degraded = True
             item = {"type": "media_failed"}
         out.append(item)
     return out
@@ -235,6 +252,7 @@ async def _metadata_of(result: ParseResult, stager: _Stager, *, top: bool) -> di
                     graphics.append({"type": "image", "file": await stager.stage_path(path)})
                 except Exception as e:
                     logger.debug(f"api 任务 {stager.task_id[:8]}… 图文项转存失败: {e!r}")
+                    stager.degraded = True
         meta["graphics"] = graphics
     if result.repost is not None:
         meta["repost"] = await _metadata_of(result.repost, stager, top=False)
@@ -244,8 +262,8 @@ async def _metadata_of(result: ParseResult, stager: _Stager, *, top: bool) -> di
 # ── 入口 ─────────────────────────────────────────────────────────────
 
 
-async def build_result(result: ParseResult, task_id: str) -> tuple[dict[str, Any], list[dict[str, Any]], int]:
-    """渲染 + 序列化 ``ParseResult``，返回 ``(载荷, staged清单, staged总字节)``。
+async def build_result(result: ParseResult, task_id: str) -> tuple[dict[str, Any], list[dict[str, Any]], int, bool]:
+    """渲染 + 序列化 ``ParseResult``，返回 ``(载荷, staged清单, staged总字节, 是否降级)``。
 
     载荷结构::
 
@@ -253,6 +271,8 @@ async def build_result(result: ParseResult, task_id: str) -> tuple[dict[str, Any
             "metadata": {...},                    # 结构化元数据（媒体为占位符）
             "messages": [ [段, ...], ... ],       # OneBot V11 段数组（可直接经协议端发送）
         }
+
+    ``降级``：存在媒体项转存失败被丢弃——结果可用但不完整，结果缓存据此跳过。
     """
     # 全量等下载落盘（contents/render_image 的懒 Task → Path），后续转存只碰真实文件
     await result.ensure_downloads_complete()
@@ -266,4 +286,4 @@ async def build_result(result: ParseResult, task_id: str) -> tuple[dict[str, Any
         messages.append(await _message_to_segments(message, stager))
 
     payload = {"metadata": metadata, "messages": messages}
-    return payload, stager.staged, stager.total_bytes
+    return payload, stager.staged, stager.total_bytes, stager.degraded

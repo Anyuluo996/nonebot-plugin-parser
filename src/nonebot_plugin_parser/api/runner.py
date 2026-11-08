@@ -22,7 +22,7 @@ from urllib.parse import urlparse
 
 from nonebot import logger
 
-from . import media, store, serialize
+from . import media, store, rcache, serialize
 from ..config import pconfig
 from ..matchers import find_parser_for_url
 from ..exception import TipException, IgnoreException
@@ -77,10 +77,12 @@ registry: dict[str, asyncio.Task] = {}
 async def submit_task(url: str) -> tuple[dict, bool]:
     """提交任务，返回 ``(任务行, 是否新建)``。
 
-    判定顺序：去重（queued/running）→ 零抓取校验 → 队列上限。
+    判定顺序：去重（queued/running）→ 零抓取校验 → 结果缓存复用 → 队列上限。
     去重命中返回既有行（created=False）—— 队列满时同 URL 重复提交仍能拿回既有
-    task_id（轮询方重试不受 429 误伤）。succeeded 后的同 URL 提交会重新解析，
-    属明确语义。校验失败抛 :class:`ValueError`（422），超限抛 :class:`QueueFullError`（429）。
+    task_id（轮询方重试不受 429 误伤）。零抓取校验先行：被禁用平台/垃圾输入
+    不白发缓存请求。succeeded 后的同 URL 提交：结果缓存命中则直接复用（不占
+    解析并发/队列额度，行带 cache_hit=1）；未命中才重新解析。校验失败抛
+    :class:`ValueError`（422），超限抛 :class:`QueueFullError`（429）。
 
     去重是 best-effort（并发同 URL 提交存在查-插窗口，无唯一约束兜底）：
     最坏结果是同链接重复解析一次，属可接受代价，不为此引入唯一索引复杂度。
@@ -90,17 +92,40 @@ async def submit_task(url: str) -> tuple[dict, bool]:
         return existing, False
 
     parser, keyword, searched = validate_url(url)
+
+    # 结果缓存复用：媒体已在 get() 内物化到本任务目录，载荷零改写直接建行。
+    # 拉取先于建行：配额不足/对端失败在 get 内部回滚并返回 None（绝不 500）；
+    # 建行失败 → remove_task_dir 回滚 → 落到原解析路径。
+    task_id = secrets.token_urlsafe(16)
+    cached = await rcache.get(normalized, task_id)
+    if cached is not None:
+        payload, staged, staged_bytes = cached
+        try:
+            await store.create_task_with_result(
+                task_id, url.strip(), normalized, parser.platform.name, payload, staged, staged_bytes
+            )
+            row = await store.get_task(task_id)
+            if row is not None:
+                logger.info(
+                    f"api 任务结果缓存命中: task={task_id[:8]}… platform={parser.platform.name} staged={len(staged)}"
+                )
+                return row, True
+        except Exception:
+            logger.warning("api 任务缓存复用建行失败，回滚后走原解析", exc_info=True)
+        await media.remove_task_dir(task_id, staged_bytes)
+        # 换新 task_id 走原解析（防建行部分成功后主键冲突）
+        task_id = secrets.token_urlsafe(16)
+
     if await store.count_active() >= _MAX_ACTIVE_TASKS:
         raise QueueFullError
 
-    task_id = secrets.token_urlsafe(16)
     await store.create_task(task_id, url.strip(), normalized)
     # 先读行再调度：create_task 让出循环后 _run 可能已把行翻到 running，
     # 202 信封里的 status 必须确定性为 queued
     row = await store.get_task(task_id)
     if row is None:  # 理论不可达（刚插入）；防御性兜底
         raise RuntimeError("task row vanished immediately after insert")
-    atask = asyncio.create_task(_run(task_id, parser, keyword, searched))
+    atask = asyncio.create_task(_run(task_id, normalized, parser, keyword, searched))
     registry[task_id] = atask
     return row, True
 
@@ -113,7 +138,7 @@ _PARSE_SEM = asyncio.Semaphore(pconfig.api_max_concurrent)
 """解析并发闸门（模块级共享，覆盖解析+序列化全程）。"""
 
 
-async def _run(task_id: str, parser: "BaseParser", keyword: str, searched: "Match[str]") -> None:
+async def _run(task_id: str, url_norm: str, parser: "BaseParser", keyword: str, searched: "Match[str]") -> None:
     """单任务执行体。状态流转 queued → running → succeeded/failed；取消由调用方写 cancelled。"""
     result: "ParseResult | None" = None
     try:
@@ -124,7 +149,7 @@ async def _run(task_id: str, parser: "BaseParser", keyword: str, searched: "Matc
                 return
             logger.info(f"api 任务开始解析: task={task_id[:8]}… platform={parser.platform.name}")
             result = await parse_with_retry(parser, keyword, searched)
-            payload, staged, staged_bytes = await serialize.build_result(result, task_id)
+            payload, staged, staged_bytes, degraded = await serialize.build_result(result, task_id)
             if not await store.set_result(task_id, payload, staged, staged_bytes):
                 # 行已被 DELETE 删掉（或已被清理 job 处理）：清掉本轮已转存的文件
                 await media.remove_task_dir(task_id, staged_bytes)
@@ -133,6 +158,9 @@ async def _run(task_id: str, parser: "BaseParser", keyword: str, searched: "Matc
                 logger.info(
                     f"api 任务解析成功: task={task_id[:8]}… platform={parser.platform.name} staged={len(staged)}"
                 )
+                # 写结果缓存（完整成功才入缓存；降级产物由 put 内部跳过）。整体
+                # 吞异常：缓存只是加速，绝不影响解析结果交付
+                await rcache.put(url_norm, payload, staged, staged_bytes, task_id, keyword, degraded=degraded)
     except TipException as e:
         # Tip 是设计为用户可见的语义性提示（已下架/需登录等），原文案可安全返回
         await store.set_failed(task_id, "tip", e.message)

@@ -167,11 +167,13 @@ def _link_or_copy(src: Path, dest: Path) -> None:
         shutil.copy2(src, dest)
 
 
-async def stage_path(src: Path, dest_dir: Path) -> tuple[str, int]:
+async def stage_path(src: Path, dest_dir: Path, *, filename: str | None = None) -> tuple[str, int]:
     """转存一个本地文件，返回 ``(转存文件名, 字节数)``。
 
     内部完成预留 → 硬链/复制 → 失败回滚的完整闭环。转存文件名即时生成，
-    与源文件名无关（不泄露宿主信息）。
+    与源文件名无关（不泄露宿主信息）；``filename`` 显式指定时不生成——
+    结果缓存跨任务复用要求占位符引用的文件名保持不变（调用方须保证
+    文件名形态合法）。
     """
 
     def _stat() -> int:
@@ -182,7 +184,8 @@ async def stage_path(src: Path, dest_dir: Path) -> tuple[str, int]:
 
     size = await asyncio.to_thread(_stat)
     await quota.reserve(size)
-    filename = gen_filename(pick_ext(src.name))
+    if filename is None:
+        filename = gen_filename(pick_ext(src.name))
     dest = dest_dir / filename
     try:
         await asyncio.to_thread(_link_or_copy, src, dest)

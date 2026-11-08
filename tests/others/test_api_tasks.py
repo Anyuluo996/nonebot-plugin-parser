@@ -292,6 +292,7 @@ async def test_succeeded_envelope_snapshot_and_signing(client, monkeypatch, tmp_
         "source",
         "error_kind",
         "error",
+        "cache_hit",
         "created_at",
         "started_at",
         "finished_at",
@@ -760,7 +761,7 @@ async def test_list_tasks_without_result_column(client, monkeypatch, tmp_path):
     assert len(body["items"]) == 2
     # 列表项走信封字段（不含 result），DB 大列（result_json/staged_files）不 SELECT
     expected_keys = {
-        "task_id", "status", "url", "platform", "source", "error_kind", "error",
+        "task_id", "status", "url", "platform", "source", "error_kind", "error", "cache_hit",
         "created_at", "started_at", "finished_at",
     }
     assert all(set(item.keys()) == expected_keys for item in body["items"])

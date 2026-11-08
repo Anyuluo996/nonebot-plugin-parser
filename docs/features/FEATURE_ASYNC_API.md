@@ -88,6 +88,25 @@ curl -H "Authorization: Bearer <token>" https://bot.example.com/parser/api/tasks
 
 跨源语义：聊天 running 行**不参与** API 提交去重（否则调用方轮询到终态也拿不到结果载荷），同链接跨源会各解析一次；聊天行也**不计入** API 的队列上限（`429` 判定只数 `source=api` 行，聊天流量高峰不会顶满 API）。聊天入库总开关在 API **完整注册成功**（startup 链走通 = 清理 job 存在）后才打开——`parser_api_enabled=true` 但 token/base_url/fastapi 缺任一时 API 实际未注册，此时不写行，避免「有写入、无清理」的堆积。所有任务记录按 `PARSER_API_TASK_TTL`（默认 1 小时）过期清理，媒体文件随行删除。聊天记录入口整体吞异常，永不影响聊天解析本身。
 
+## 跨机结果缓存（v2.7.24 起，可选）
+
+相同链接（规范化后一致）的重复提交直接复用上次的完整解析结果——不再解析、不再下载。响应信封新增 `cache_hit: bool` 观测字段；202/Location 契约不变，复用路径的行直接 `succeeded`，客户端轮询首轮即拿到结果。
+
+### 语义
+
+- **键**：`pcache:v1:{cfg_fp}:{sha256(url_norm)[:32]}`——`cfg_fp` 是输出影响配置+插件版本的指纹，不同配置/版本的主机互不踩键；
+- **条目**：HMAC 签名（密钥 = `PARSER_RCACHE_SHARED_SECRET` 派生，**独立于 API token**）+ zlib 压缩，载荷为 `media://` 占位符零改写复用；
+- **本机命中**：从源任务目录硬链复用到新任务目录（秒回）；**跨机命中**：按 `PARSER_RCACHE_PEER_MAP` 自签对端媒体 URL 拉回本机（整体 10s deadline，超时按未命中走原解析），成功后回写条目为本机（二次命中不再拉取）；
+- **信任边界**：条目按半可信输入处理——受限解压（zlib 炸弹截断）→ 验签 → schema 强校验（文件名白名单/任务 ID 格式/绑定键/新鲜度），任何违规按未命中；对端 URL 只来自本机配置，条目永不提供 URL 来源；
+- **降级**：Redis 不可用熔断 30s、payload 超 1MB、降级产物（媒体项转存失败）、短时效内容（`PARSER_RCACHE_SKIP_KEYWORDS`，默认直播）一律不缓存/按未命中——**缓存永不影响解析主流程**；
+- **cache_hit 行保留期从复用时刻起算**，条目 TTL 不超过媒体任务保留期（条目先于其引用的媒体过期）。
+
+### 配置（详见 deploy/rcache-redis/README.md）
+
+`PARSER_RCACHE_ENABLED` / `PARSER_RCACHE_REDIS_URL` / `PARSER_RCACHE_INSTANCE_ID`（跨机必须唯一）/ `PARSER_RCACHE_SHARED_SECRET`（跨机一致，独立于 API token）/ `PARSER_RCACHE_PEER_MAP`（其它实例 → 其 API 地址）/ `PARSER_RCACHE_TTL`（默认 86400，生效值 ≤ task_ttl−600）/ `PARSER_RCACHE_SKIP_KEYWORDS`。
+
+部署前提：各机 NTP 时钟同步（自签 URL 有 300s 时钟余量）；Redis 仅内网监听。聊天链路缓存（还原 `ParseResult` 走渲染管线）为二期。
+
 ## 技术实现
 
 新增包 `src/nonebot_plugin_parser/api/`：
@@ -108,7 +127,9 @@ curl -H "Authorization: Bearer <token>" https://bot.example.com/parser/api/tasks
 
 ## 测试
 
-`tests/others/test_api_tasks.py`（37 用例，纯单元）：鉴权 401/403/限流（被限 IP 不消耗 token 比对；非 ASCII token bytes 比较不 500 不绕限流）、422 双路径、判定顺序（队列满时同 URL 仍拿回既有 id）、URL 去重规范化、202 信封 + Location/Retry-After、成功信封字段全集快照、**落库无泄露断言**（无 base_url/sig=/file:///宿主路径）、重复 GET 现签刷新、四类段导出形态 + base64 魔数落盘、metadata 媒体改写、路径穿越全组、签名 有效/过期 410/篡改 403、扩展名白名单 `.bin` 兜底、nosniff + Range 206、DELETE running 取消语义 + DELETE→POST 不交错、配额全生命周期（预留回滚/删除释放/磁盘重建）、TTL 清理 + stale 先于清理、shutdown 取消、store 并发写、set_result 条件写（DELETE 端竞态）、错误脱敏、聊天任务生命周期与失败原因、记录入口永不抛出、`?url=` 过滤、跨源去重隔离、v2.7.21 旧库迁移、**4 线程并发 `_init_db`**（xdist 多 worker 冷启动场景：locked/duplicate column 均须被吸收）。
+`tests/others/test_api_tasks.py`（37 用例，纯单元）：鉴权 401/403/限流（被限 IP 不消耗 token 比对；非 ASCII token bytes 比较不 500 不绕限流）、422 双路径、判定顺序（队列满时同 URL 仍拿回既有 id）、URL 去重规范化、202 信封 + Location/Retry-After、成功信封字段全集快照（含 cache_hit）、**落库无泄露断言**（无 base_url/sig=/file:///宿主路径）、重复 GET 现签刷新、四类段导出形态 + base64 魔数落盘、metadata 媒体改写、路径穿越全组、签名 有效/过期 410/篡改 403、扩展名白名单 `.bin` 兜底、nosniff + Range 206、DELETE running 取消语义 + DELETE→POST 不交错、配额全生命周期（预留回滚/删除释放/磁盘重建）、TTL 清理 + stale 先于清理、shutdown 取消、store 并发写、set_result 条件写（DELETE 端竞态）、错误脱敏、聊天任务生命周期与失败原因、记录入口永不抛出、`?url=` 过滤、跨源去重隔离、v2.7.21 旧库迁移、**4 线程并发 `_init_db`**（xdist 多 worker 冷启动场景：locked/duplicate column 均须被吸收）。
+
+`tests/others/test_rcache.py`（28 用例，内存 Redis 桩）：条目往返保真（R/Z 形态）、**验签绑定键**（条目复制他键即死）、created_at 续命防护、恶意矩阵（zlib 炸弹/路径穿越文件名/v2 版本/sig 错/cfg_fp 异/JSON 损坏/staged 501 项——删键与不删键分类断言）、熔断 30s + 池满≠熔断、本机硬链复用 + 源缺失删键自愈、跨机拉取（mock 流式：落地 + CAS 回写 + 二次命中本机）、404 整体回滚、deadline 超时回落、EXDEV copy 回退、配额不足回滚、并发双提交互不破坏、exp_span 地板/封顶、TTL 对齐断言、心跳重启不误报 + 异机告警、配置校验告警、local-only nonce 派生 + 伪造条目验签失败。
 
 另有两个跨切面防线：
 

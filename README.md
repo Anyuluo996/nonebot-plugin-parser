@@ -401,6 +401,23 @@ parser_api_task_ttl=3600
 parser_api_media_quota_mb=2048
 # 媒体 URL 签名有效期（秒）；签名每次 GET 任务时现签，晚取晚发不过期
 parser_api_media_sig_ttl=3600
+
+# [可选] 跨机解析结果缓存（相同链接复用上次完整解析结果，不重复解析/下载）
+# 详见 docs/features/FEATURE_ASYNC_API.md 与 deploy/rcache-redis/。需安装 extras: uv add "nonebot-plugin-parser[rcache]"
+# Redis 不可用时按未命中降级（熔断 30s），绝不影响解析主流程
+parser_rcache_enabled=false
+# Redis 连接串（插件专用 ACL 用户，部署见 deploy/rcache-redis/）
+parser_rcache_redis_url=""
+# 本机实例标识（跨机共享部署时每台必须唯一）
+parser_rcache_instance_id=""
+# 跨机共享密钥（各机一致，独立于 parser_api_token）；留空 = 仅本机条目生效
+parser_rcache_shared_secret=""
+# 对端实例映射（JSON：{"<instance_id>": "<对端 API base_url>"}），跨机拉取媒体用
+parser_rcache_peer_map={}
+# 缓存条目 TTL（秒），生效值不超过 parser_api_task_ttl - 600
+parser_rcache_ttl=86400
+# 不参与缓存的 handler keyword（精确匹配，默认直播类短时效内容）
+parser_rcache_skip_keywords=["live.bili", "live.douyin"]
 ```
 
 </details>

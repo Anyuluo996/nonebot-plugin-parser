@@ -294,6 +294,59 @@ class Config(BaseModel):
     parser_api_media_sig_ttl: int = Field(default=3600, ge=60)
     """媒体 URL 签名有效期（秒）。签名在每次 GET 任务时现签，晚取晚发不会拿到过期 URL。"""
 
+    # ── 跨机解析结果缓存（Redis 共享索引：相同链接复用上次完整解析结果） ──
+    parser_rcache_enabled: bool = False
+    """是否启用跨机解析结果缓存。
+
+    需要 ``parser_rcache_redis_url`` 指向 Redis 实例（extras: ``rcache``）；
+    启用后 API 提交命中同链接（规范化后一致）时直接复用上次的解析结果，
+    不再重复解析与下载。聊天链路暂不接入（二期）。"""
+    parser_rcache_redis_url: str = ""
+    """Redis 连接串（如 ``redis://pcache:<密码>@<host>:6379/0``），空 = 功能关闭。
+
+    连接失败按未命中降级（熔断 30 秒），绝不影响解析主流程。"""
+    parser_rcache_instance_id: str = ""
+    """本机实例标识（缓存条目的 ``host`` 字段，本机/对端条目判定依据）。
+
+    跨机共享部署时每台必须唯一；配了 redis_url 而此项为空时功能不启用（仅 warning）。
+    各机配成相同值会把对方条目误判为本机，启动时以心跳键检测并告警。"""
+    parser_rcache_ttl: int = Field(default=86400, ge=300)
+    """缓存条目 TTL（秒）。生效值 = min(此值, parser_api_task_ttl - 600)，
+    保证条目先于其引用的媒体任务过期；低于 300 视为配置错误，功能不启用。"""
+    parser_rcache_peer_map: dict[str, str] = Field(default_factory=dict)
+    """对端实例映射：``{"<instance_id>": "<对端 API base_url>"}``（JSON 字符串或内联表）。
+
+    命中对端条目时按此映射自签媒体 URL 拉取文件；只信任这里配置的地址，
+    条目本身永不提供 URL 来源。"""
+    parser_rcache_shared_secret: str = ""
+    """跨机共享密钥（≥32 字节随机值）。条目 HMAC 签名与跨机媒体 URL 自签的统一密钥源。
+
+    为空时进入 local-only 模式（用本机持久化 nonce 派生，只认本机条目）；
+    共享部署的所有主机必须一致，且**独立于 parser_api_token**（该 token 已发给 API
+    调用方，不得再掌握条目签名能力）。轮换会使全部旧条目失效（自然过期）。"""
+    parser_rcache_skip_keywords: list[str] = Field(default_factory=lambda: ["live.bili", "live.douyin"])
+    """不参与结果缓存的 handler keyword（精确匹配）。直播等短时效内容不复用。"""
+
+    @field_validator("parser_rcache_peer_map", mode="before")
+    @classmethod
+    def _coerce_rcache_peer_map(cls, v: object) -> object:
+        """.env 里 peer_map 只能写成 JSON 字符串, 这里容错解析为 dict。
+
+        非法 JSON 按 ``{}`` 处理并 warning（对端拉取会按未命中降级, 不炸启动）。
+        """
+        import json as _json
+
+        if isinstance(v, str):
+            try:
+                parsed = _json.loads(v)
+            except ValueError:
+                from nonebot import logger
+
+                logger.warning("parser_rcache_peer_map 不是合法 JSON, 按空映射处理")
+                return {}
+            return parsed
+        return v
+
     @field_validator("parser_bili_video_codes", mode="before")
     @classmethod
     def _coerce_bili_video_codes(cls, v: object) -> object:
@@ -667,6 +720,41 @@ class Config(BaseModel):
     def api_media_sig_ttl(self) -> int:
         """媒体 URL 签名有效期（秒）"""
         return self.parser_api_media_sig_ttl
+
+    @property
+    def rcache_enabled(self) -> bool:
+        """是否启用跨机解析结果缓存"""
+        return self.parser_rcache_enabled
+
+    @property
+    def rcache_redis_url(self) -> str:
+        """结果缓存 Redis 连接串"""
+        return self.parser_rcache_redis_url.strip()
+
+    @property
+    def rcache_instance_id(self) -> str:
+        """本机实例标识"""
+        return self.parser_rcache_instance_id.strip()
+
+    @property
+    def rcache_ttl(self) -> int:
+        """缓存条目 TTL（秒，未经 api_task_ttl 钳制的配置原值）"""
+        return self.parser_rcache_ttl
+
+    @property
+    def rcache_peer_map(self) -> dict[str, str]:
+        """对端实例映射（instance_id → base_url）"""
+        return {str(k).strip(): str(v).strip().rstrip("/") for k, v in self.parser_rcache_peer_map.items()}
+
+    @property
+    def rcache_shared_secret(self) -> str:
+        """跨机共享密钥"""
+        return self.parser_rcache_shared_secret.strip()
+
+    @property
+    def rcache_skip_keywords(self) -> list[str]:
+        """不参与缓存的 handler keyword 列表"""
+        return list(self.parser_rcache_skip_keywords)
 
 
 pconfig: Config = get_plugin_config(Config)

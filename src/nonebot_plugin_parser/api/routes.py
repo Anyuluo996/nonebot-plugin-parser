@@ -48,6 +48,7 @@ _ENVELOPE_FIELDS = (
     "source",
     "error_kind",
     "error",
+    "cache_hit",
     "created_at",
     "started_at",
     "finished_at",
@@ -154,6 +155,8 @@ def build_router() -> "APIRouter":
 
     def _envelope(row: dict[str, Any], *, include_result: bool) -> dict[str, Any]:
         env = {k: row.get(k) for k in _ENVELOPE_FIELDS}
+        # cache_hit 列是 0/1 整数，信封输出 bool（结果缓存复用观测字段）
+        env["cache_hit"] = bool(env.get("cache_hit"))
         if include_result:
             # 列表端点不携带 result 键（也不 SELECT 大列）；单查端点恒有 result 键（未完成为 null）
             payload = row.get("result")

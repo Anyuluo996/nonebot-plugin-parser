@@ -114,6 +114,13 @@ def _init_db() -> None:
                         # 竞态下另一进程已补列，属预期结果
                         if "duplicate column" not in str(e):
                             raise
+                # 迁移：v2.7.23 及之前的库没有 cache_hit 列（结果缓存复用新增）
+                if "cache_hit" not in columns:
+                    try:
+                        conn.execute("ALTER TABLE tasks ADD COLUMN cache_hit INTEGER NOT NULL DEFAULT 0")
+                    except sqlite3.OperationalError as e:
+                        if "duplicate column" not in str(e):
+                            raise
             return
         except sqlite3.OperationalError as e:
             # 锁竞争（database is locked / busy）整体重试；其余 OperationalError 上抛
@@ -144,6 +151,31 @@ def _sync_create_task(
             "INSERT INTO tasks (task_id, url, url_norm, platform, status, source, created_at, started_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (task_id, url, url_norm, platform, status, source, now, now if started else None),
+        )
+
+
+def _sync_create_task_with_result(
+    task_id: str,
+    url: str,
+    url_norm: str,
+    platform: str,
+    result_json: str,
+    staged_files: str,
+    staged_bytes: int,
+    now: int,
+) -> None:
+    """结果缓存复用路径：单 INSERT 直接建 succeeded 行（携带完整结果载荷）。
+
+    不经过 queued/running 中间态（无执行协程，set_result 条件写不适用）；
+    保留期从复用时刻起算（started_at=finished_at=now）。count_active 只数
+    queued/running，复用行不占 API 队列额度。
+    """
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO tasks (task_id, url, url_norm, platform, status, source, cache_hit, "
+            "result_json, staged_files, staged_bytes, created_at, started_at, finished_at) "
+            "VALUES (?, ?, ?, ?, 'succeeded', 'api', 1, ?, ?, ?, ?, ?, ?)",
+            (task_id, url, url_norm, platform, result_json, staged_files, staged_bytes, now, now, now),
         )
 
 
@@ -353,6 +385,29 @@ async def create_task(
 
 async def get_task(task_id: str) -> dict[str, Any] | None:
     return await asyncio.to_thread(_sync_get_task, task_id)
+
+
+async def create_task_with_result(
+    task_id: str,
+    url: str,
+    url_norm: str,
+    platform: str,
+    result: dict[str, Any],
+    staged_files: list[dict[str, Any]],
+    staged_bytes: int,
+) -> None:
+    """结果缓存复用路径：直接建携带完整结果的 succeeded 行。"""
+    await asyncio.to_thread(
+        _sync_create_task_with_result,
+        task_id,
+        url,
+        url_norm,
+        platform,
+        json.dumps(result, ensure_ascii=False),
+        json.dumps(staged_files, ensure_ascii=False),
+        staged_bytes,
+        int(time.time()),
+    )
 
 
 async def get_staged_files(task_id: str) -> list[dict[str, Any]] | None:

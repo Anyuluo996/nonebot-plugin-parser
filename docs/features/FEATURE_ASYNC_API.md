@@ -84,20 +84,20 @@ curl -H "Authorization: Bearer <token>" https://bot.example.com/parser/api/tasks
 任务表同时记录两类来源（`source` 字段）：
 
 - `api`：经本 API 提交的解析，succeeded 时携带完整结果载荷；
-- `chat`：bot 聊天里被自动解析的链接（v2.7.22 起轻量入库）——只记**状态与失败原因**，不存结果载荷（消息已直接发进群，避免每条消息做媒体转存挤占配额）。失败行的 `error_kind`（timeout/parse_error/send_error/tip/quota）+ `error`（给维护者的原因详情，含异常 repr）可用于按链接排查"这条链接为什么没解析出来"。
+- `chat`：bot 聊天里被自动解析的链接（v2.7.22 起入库）——普通解析只记**状态与失败原因**（消息已直接发进群，不存结果载荷）；启用结果缓存后（v2.7.25 起），缓存命中/种缓存的行会额外回写 `staged_files/staged_bytes` 媒体记账（供对端经媒体端点反查与体积观测）。失败行的 `error_kind`（timeout/parse_error/send_error/tip/quota）+ `error`（给维护者的原因详情，含异常 repr）可用于按链接排查"这条链接为什么没解析出来"。
 
 跨源语义：聊天 running 行**不参与** API 提交去重（否则调用方轮询到终态也拿不到结果载荷），同链接跨源会各解析一次；聊天行也**不计入** API 的队列上限（`429` 判定只数 `source=api` 行，聊天流量高峰不会顶满 API）。聊天入库总开关在 API **完整注册成功**（startup 链走通 = 清理 job 存在）后才打开——`parser_api_enabled=true` 但 token/base_url/fastapi 缺任一时 API 实际未注册，此时不写行，避免「有写入、无清理」的堆积。所有任务记录按 `PARSER_API_TASK_TTL`（默认 1 小时）过期清理，媒体文件随行删除。聊天记录入口整体吞异常，永不影响聊天解析本身。
 
-## 跨机结果缓存（v2.7.24 起，可选）
+## 跨机结果缓存（v2.7.24 起 API 链路，v2.7.25 起聊天链路，可选）
 
-相同链接（规范化后一致）的重复提交直接复用上次的完整解析结果——不再解析、不再下载。响应信封新增 `cache_hit: bool` 观测字段；202/Location 契约不变，复用路径的行直接 `succeeded`，客户端轮询首轮即拿到结果。
+相同链接（规范化后一致）的重复提交直接复用上次的完整解析结果——不再解析、不再下载。响应信封新增 `cache_hit: bool` 观测字段；202/Location 契约不变，复用路径的行直接 `succeeded`，客户端轮询首轮即拿到结果。版本演进：v2.7.25 接入聊天链路（见下）；v2.7.26 修正聊天/提交两侧的键归一（`normalize_url` 剥离 `www.` + 无 scheme 补全，两侧归一到同一键）；v2.7.27 修正聊天种缓存的 skip 判定口径（按下）。
 
 ### 语义
 
 - **键**：`pcache:v1:{cfg_fp}:{sha256(url_norm)[:32]}`——`cfg_fp` 是输出影响配置+插件版本的指纹，不同配置/版本的主机互不踩键；
 - **条目**：HMAC 签名（密钥 = `PARSER_RCACHE_SHARED_SECRET` 派生，**独立于 API token**）+ zlib 压缩，载荷为 `media://` 占位符零改写复用；
 - **本机命中**：从源任务目录硬链复用到新任务目录（秒回）；**跨机命中**：按 `PARSER_RCACHE_PEER_MAP` 自签对端媒体 URL 拉回本机（整体 10s deadline，超时按未命中走原解析），成功后回写条目为本机（二次命中不再拉取）；
-- **信任边界**：条目按半可信输入处理——受限解压（zlib 炸弹截断）→ 验签 → schema 强校验（文件名白名单/任务 ID 格式/绑定键/新鲜度），任何违规按未命中；对端 URL 只来自本机配置，条目永不提供 URL 来源；
+- **信任边界**：条目按半可信输入处理——受限解压（zlib 炸弹截断）→ 验签 → schema 强校验（文件名白名单/任务 ID 格式/绑定键/新鲜度 + **媒体引用白名单**：`file` 键仅允许 `media://{staged 清单内文件名}` 与公开 `http(s)://`，`url`/`path` 键禁本地形态——穿越串/宿主路径按"已验签但结构违规"删键），任何违规按未命中；对端 URL 只来自本机配置，条目永不提供 URL 来源；
 - **降级**：Redis 不可用熔断 30s、payload 超 1MB、降级产物（媒体项转存失败）、短时效内容（`PARSER_RCACHE_SKIP_KEYWORDS`，默认直播）一律不缓存/按未命中——**缓存永不影响解析主流程**；
 - **cache_hit 行保留期从复用时刻起算**，条目 TTL 不超过媒体任务保留期（条目先于其引用的媒体过期）。
 
@@ -113,6 +113,8 @@ curl -H "Authorization: Bearer <token>" https://bot.example.com/parser/api/tasks
 
 1. **API 栈完整注册**（清理 job 存在）：命中/种缓存会把媒体物化进 `api_media/{chat_task_id}/`，这些目录靠 API 的 TTL/孤儿清理兜底删除，API 未注册时绝不启用（防目录无限堆积）；
 2. **协议端能读到 `api_media/`**：命中重放以 `file://` 引用该目录下的文件，NapCat 与插件容器须共享 `data_dir` 挂载（与既有下载缓存目录同源部署则天然满足）；不可见时的表现为发送全部失败——此时插件会**自动清场回源解析**（仅当一条都没发出去），已发出部分才失败的按发送失败口径收口。
+
+**键归一（v2.7.26）**：聊天侧的键来自消息正则匹配子串（如 `bilibili.com/video/BV…`，常无 scheme、无 `www.`），与 API 提交的完整 URL 直做规范化会得到不同键（`://bilibili.com/…` ≠ `https://www.bilibili.com/…`）——聊天侧统一经 `normalize_loose_url`（无 scheme 先补 `https://`）再归一，`normalize_url` 本体剥离 host 的 `www.` 前缀，两侧（含 API 提交去重）归一到同一键。旧行的旧形态键随 TTL 自然过期。
 
 **重放语义**：缓存的 `messages` 是首次发送前已完成渲染+长图切片+转发组装的 OneBot V11 段数组，命中后重建为消息直发——**跳过解析与渲染**，发出的内容与首次一致。因此仅 OneBot V11 适配器参与重放（其他适配器回源解析）；`reply`/`at` 段在写入与重建两处剥离（绑定首次会话，跨会话重放会错位）；合并转发节点的 `uid`/`nickname` 重建为本机 Bot（跨机重放不出现陌生头像）。未纳入 `cfg_fp` 指纹的渲染配置（如渲染器类型）变更后，TTL 内旧条目仍按旧渲染产物重放，属已知取舍。
 
@@ -131,7 +133,7 @@ curl -H "Authorization: Bearer <token>" https://bot.example.com/parser/api/tasks
 | `store.py` | SQLite 任务存储（stdlib `sqlite3`，WAL，**每操作新建连接** + `asyncio.to_thread`，连接显式 close；`busy_timeout` 先于 `journal_mode` 设置、迁移容忍 duplicate column、锁竞争整体重试——并发初始化健壮性见测试）。`result_json` 存的是**占位符载荷**：本地媒体一律 `media://` 占位符，零签名、零 base_url、零宿主路径（源链接与远程媒体 URL 本身公开，原样保留） |
 | `media.py` | 媒体转存（硬链接优先/复制回退）+ 进程内配额计数器（预留-提交-回滚，重启从磁盘重建） |
 | `serialize.py` | `ParseResult` → 载荷：metadata 遍历 + `render_messages` → `UniMessage.export(adapter=onebot11)` → 段 JSON 化（`reply`/`at` 段导出后剥离——绑定首次会话，入缓存会跨会话错位）；`file://` 转存、`base64://` 先预留配额再解码落盘（魔数推断扩展名）、`http(s)://` 原样保留；合并转发 `node.data.content` 嵌套段递归改写 |
-| `runner.py` | 任务执行引擎：复用 `matchers.find_parser_for_url`（共享运行态 parser 凭据/连接池）+ `parse_with_retry`（顶层超时+指数退避）。提交判定顺序：**去重（规范化 URL）→ 零抓取校验（scheme 白名单 + parser 匹配，SSRF 边界）→ 队列上限 429** |
+| `runner.py` | 任务执行引擎：复用 `matchers.find_parser_for_url`（共享运行态 parser 凭据/连接池）+ `parse_with_retry`（顶层超时+指数退避）。提交判定顺序：**去重（规范化 URL）→ 零抓取校验（scheme 白名单 + parser 匹配，SSRF 边界）→ 结果缓存复用（命中直接建 succeeded 行，不占队列额度）→ 队列上限 429**。`normalize_url` 剥 `www.` + `normalize_loose_url` 补 scheme——API 提交与聊天侧归一到同一缓存/去重键（v2.7.26） |
 | `chat.py` | 聊天来源任务记录助手（v2.7.22）：`record_chat_start` / `record_chat_result`（含 `cache_hit` 标记），整体吞异常，永不影响聊天链路 |
 | `rcache.py` | 跨机结果缓存（v2.7.24）：五步流水线（前缀→受限解压→JSON→HMAC 验签→schema 强校验，媒体引用白名单含 `file`/`url`/`path` 键分级校验）、熔断、本机硬链复用、跨机签名拉取 + Lua CAS 回写、实例心跳、命中观测 |
 | `routes.py` | FastAPI 路由（懒导入，未装 extras 零影响）：Bearer 常量时间比较 + 鉴权失败按 IP 滑窗限流（**先查桶再比对**）；GET 时把占位符现签成完整 URL（改 `base_url` 不失效存量任务，签名每次刷新）；三层穿越防护（task_id 正则 → filename 白名单正则 → DB staged 清单反查 + resolve 包含性兜底）；DELETE 取消后**重读行**再收尾（cancel 等待期间任务自行完成时走终态清理分支，杜绝「行 succeeded + 媒体 404」错配） |
@@ -143,11 +145,11 @@ curl -H "Authorization: Bearer <token>" https://bot.example.com/parser/api/tasks
 
 ## 测试
 
-`tests/others/test_api_tasks.py`（37 用例，纯单元）：鉴权 401/403/限流（被限 IP 不消耗 token 比对；非 ASCII token bytes 比较不 500 不绕限流）、422 双路径、判定顺序（队列满时同 URL 仍拿回既有 id）、URL 去重规范化、202 信封 + Location/Retry-After、成功信封字段全集快照（含 cache_hit）、**落库无泄露断言**（无 base_url/sig=/file:///宿主路径）、重复 GET 现签刷新、四类段导出形态 + base64 魔数落盘、metadata 媒体改写、路径穿越全组、签名 有效/过期 410/篡改 403、扩展名白名单 `.bin` 兜底、nosniff + Range 206、DELETE running 取消语义 + DELETE→POST 不交错、配额全生命周期（预留回滚/删除释放/磁盘重建）、TTL 清理 + stale 先于清理、shutdown 取消、store 并发写、set_result 条件写（DELETE 端竞态）、错误脱敏、聊天任务生命周期与失败原因、记录入口永不抛出、`?url=` 过滤、跨源去重隔离、v2.7.21 旧库迁移、**4 线程并发 `_init_db`**（xdist 多 worker 冷启动场景：locked/duplicate column 均须被吸收）。
+`tests/others/test_api_tasks.py`（38 用例，纯单元）：鉴权 401/403/限流（被限 IP 不消耗 token 比对；非 ASCII token bytes 比较不 500 不绕限流）、422 双路径、判定顺序（队列满时同 URL 仍拿回既有 id）、URL 去重规范化、202 信封 + Location/Retry-After、成功信封字段全集快照（含 cache_hit）、**落库无泄露断言**（无 base_url/sig=/file:///宿主路径）、重复 GET 现签刷新、四类段导出形态 + base64 魔数落盘、metadata 媒体改写、路径穿越全组、签名 有效/过期 410/篡改 403、扩展名白名单 `.bin` 兜底、nosniff + Range 206、DELETE running 取消语义 + DELETE→POST 不交错、配额全生命周期（预留回滚/删除释放/磁盘重建）、TTL 清理 + stale 先于清理、shutdown 取消、store 并发写、set_result 条件写（DELETE 端竞态）、错误脱敏、聊天任务生命周期与失败原因、记录入口永不抛出、`?url=` 过滤、跨源去重隔离、v2.7.21 旧库迁移、**4 线程并发 `_init_db`**（xdist 多 worker 冷启动场景：locked/duplicate column 均须被吸收）。
 
-`tests/others/test_rcache.py`（28 用例，内存 Redis 桩）：条目往返保真（R/Z 形态）、**验签绑定键**（条目复制他键即死）、created_at 续命防护、恶意矩阵（zlib 炸弹/路径穿越文件名/v2 版本/sig 错/cfg_fp 异/JSON 损坏/staged 501 项——删键与不删键分类断言）、熔断 30s + 池满≠熔断、本机硬链复用 + 源缺失删键自愈、跨机拉取（mock 流式：落地 + CAS 回写 + 二次命中本机）、404 整体回滚、deadline 超时回落、EXDEV copy 回退、配额不足回滚、并发双提交互不破坏、exp_span 地板/封顶、TTL 对齐断言、心跳重启不误报 + 异机告警、配置校验告警、local-only nonce 派生 + 伪造条目验签失败、媒体引用白名单矩阵。
+`tests/others/test_rcache.py`（27 用例，内存 Redis 桩）：条目往返保真（R/Z 形态）、**验签绑定键**（条目复制他键即死）、created_at 续命防护、恶意矩阵（zlib 炸弹/路径穿越文件名/v2 版本/sig 错/cfg_fp 异/JSON 损坏/staged 501 项——删键与不删键分类断言）、熔断 30s + 池满≠熔断、本机硬链复用 + 源缺失删键自愈、跨机拉取（mock 流式：落地 + CAS 回写 + 二次命中本机）、404 整体回滚、deadline 超时回落、EXDEV copy 回退、配额不足回滚、并发双提交互不破坏、exp_span 地板/封顶、TTL 对齐断言、心跳重启不误报 + 异机告警、配置校验告警、local-only nonce 派生 + 伪造条目验签失败、媒体引用白名单矩阵。
 
-`tests/others/test_rcache_chat.py`（21 用例，二期聊天链路）：**字节级往返保真**（file:// 路径形态规范化比对 + base64:// 形态含媒体内容全等 + 合并转发 node 段往返）、reply/at 双侧剥离、face 直构与未知段 `of()` 兜底透传、远程 URL 原样回放、node uid 本机化断言、门控矩阵（recording 关/rcache 关/非 OneBot 适配器 → None 且不触 Redis）、**命中后清场与配额归还**（重建异常/staged 回写 DB 异常 → 目录删除 + 配额还原）、占位符缺失未命中自愈、rcache 白名单矩阵（file 键穿越/base64/不在 staged → 删键；url/path 键本地形态 → 删键；text 字面不误杀；node 嵌套同样拦截）、seed 门控矩阵（task_id None/rcache 关/parser 级 skip/信号量占满）与异常清场（build_result/staged 回写失败 → 清场；put 失败 → 保留目录）、`_send_message_list` sent_flag 语义（部分发出置位/全降级失败零发出）、store `set_succeeded(cache_hit)` 与 `update_staged` 落库。
+`tests/others/test_rcache_chat.py`（22 用例，二期聊天链路）：**字节级往返保真**（file:// 路径形态规范化比对 + base64:// 形态含媒体内容全等 + 合并转发 node 段往返）、reply/at 双侧剥离、face 直构与未知段 `of()` 兜底透传、远程 URL 原样回放、node uid 本机化断言、门控矩阵（recording 关/rcache 关/非 OneBot 适配器 → None 且不触 Redis）、**命中后清场与配额归还**（重建异常/staged 回写 DB 异常 → 目录删除 + 配额还原）、占位符缺失未命中自愈、rcache 白名单矩阵（file 键穿越/base64/不在 staged → 删键；url/path 键本地形态 → 删键；text 字面不误杀；node 嵌套同样拦截）、seed 门控矩阵（task_id None/rcache 关/keyword 精确 skip——直播 keyword 不牵连同平台普通视频/信号量占满）与异常清场（build_result/staged 回写失败 → 清场；put 失败 → 保留目录）、`_send_message_list` sent_flag 语义（部分发出置位/全降级失败零发出）、**聊天形态 URL 与 API 共键**（裸 host 子串 + www 剥离归一）、store `set_succeeded(cache_hit)` 与 `update_staged` 落库。
 
 另有两个跨切面防线：
 
@@ -162,7 +164,7 @@ uv run pytest tests/others/test_api_tasks.py tests/others/test_startup_smoke.py 
 
 1. **单进程假设**：NoneBot 常规单进程部署不受影响；`--reload` / 多 worker 会让 stale 标记与配额计数互相干扰（启动时以 meta 表 pid 做软检测并 warning）。
 2. **单租户**：全部端点共用一个 token，任一调用方 DELETE 会影响其他调用方；对同一任务并发轮询安全。
-3. **去重仅覆盖 queued/running**：任务 succeeded 后再提交同 URL 会重新解析下载（明确语义，不是缓存层）。
+3. **同 URL 重复提交**：queued/running 期间去重合并；succeeded 后再提交走结果缓存复用（v2.7.24 起，`cache_hit=true`，不重新解析下载），缓存未启用或未命中才重新解析。
 4. **媒体端点无鉴权**：QQ 协议端拉取图片 URL 无法携带 header，故签名 URL 设计为免 header、带过期时间；`base_url` 若经公网隧道暴露，媒体 URL 外泄即过期前可访问，请勿外传。
 5. **base_url 必须协议端可达**：Docker 网络内地址或公网域名均可，末尾 `/` 自动去除。
 6. **错误只给归一化文案**：解析器异常细节（可能含路径/凭据片段）只进服务端日志。

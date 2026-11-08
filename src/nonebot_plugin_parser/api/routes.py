@@ -56,9 +56,13 @@ _ENVELOPE_FIELDS = (
 
 
 def _sign_key() -> bytes:
+    """媒体签名子密钥。密钥源：配了 ``parser_rcache_shared_secret`` 用它
+    （跨机结果缓存的自签拉取与本端校验同源，且 API 调用方不再能伪造媒体 URL）；
+    未配置回落 api_token（与历史行为一致）。"""
     global _sign_key_cache
     if _sign_key_cache is None:
-        _sign_key_cache = hmac.new(pconfig.api_token.encode(), b"media-sig-v1", "sha256").digest()
+        secret = pconfig.rcache_shared_secret or pconfig.api_token
+        _sign_key_cache = hmac.new(secret.encode(), b"media-sig-v1", "sha256").digest()
     return _sign_key_cache
 
 

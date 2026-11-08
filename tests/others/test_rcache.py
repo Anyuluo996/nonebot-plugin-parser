@@ -130,8 +130,9 @@ def _make_entry(
 
 async def test_roundtrip_and_local_reuse(rcache_env, tmp_path):
     from nonebot_plugin_parser.api import rcache
+
     """本机条目：硬链复用进新任务目录，文件名与载荷保真。"""
-    from nonebot_plugin_parser.api import media, rcache
+    from nonebot_plugin_parser.api import media
 
     # 源任务目录与文件
     src = media.task_media_dir(_TASK_ID) / _FILENAME
@@ -154,6 +155,7 @@ async def test_roundtrip_and_local_reuse(rcache_env, tmp_path):
 
 async def test_local_source_missing_deletes_key(rcache_env):
     from nonebot_plugin_parser.api import rcache
+
     """本机条目源文件缺失 → 删键自愈 + 未命中。"""
     fake = rcache_env
     key = _make_entry(fake)
@@ -190,6 +192,7 @@ async def test_sig_failure_keeps_key(rcache_env):
 
 async def test_version_mismatch_keeps_key(rcache_env):
     from nonebot_plugin_parser.api import rcache
+
     """v=2（升级期新版本写入）→ 未命中不删键。"""
     fake = rcache_env
     key = _make_entry(fake, v=2)
@@ -200,6 +203,7 @@ async def test_version_mismatch_keeps_key(rcache_env):
 
 async def test_cfg_fp_mismatch_keeps_key(rcache_env):
     from nonebot_plugin_parser.api import rcache
+
     """cfg_fp 不同（另一台写入的异配置条目）→ 未命中不删键。"""
     fake = rcache_env
     key = _make_entry(fake, cfg_fp="deadbeef")
@@ -210,6 +214,7 @@ async def test_cfg_fp_mismatch_keeps_key(rcache_env):
 
 async def test_created_at_renewal_guard(rcache_env):
     from nonebot_plugin_parser.api import rcache
+
     """created_at 过旧（SETEX 续命攻击）→ 未命中。"""
     fake = rcache_env
     _make_entry(fake, created_at=int(time.time()) - rcache.eff_ttl() - 10)
@@ -220,6 +225,7 @@ async def test_created_at_renewal_guard(rcache_env):
 @pytest.mark.parametrize("bad_name", ["../../etc/passwd.jpg", "short.jpg", "x" * 22 + ".exe"])
 async def test_malicious_filename_deleted(rcache_env, bad_name):
     from nonebot_plugin_parser.api import rcache
+
     """路径穿越/异形文件名（已验签的结构违规）→ 删键。"""
     fake = rcache_env
     key = _make_entry(fake, staged_files=[{"filename": bad_name, "size": 10}], staged_bytes=10)
@@ -249,6 +255,7 @@ def zlib_compress(data: bytes) -> bytes:
 
 async def test_corrupt_json_deleted(rcache_env):
     from nonebot_plugin_parser.api import rcache
+
     """JSON 损坏 → 删键。"""
     fake = rcache_env
     key = rcache.make_key(_URL_NORM)
@@ -260,6 +267,7 @@ async def test_corrupt_json_deleted(rcache_env):
 
 async def test_staged_files_over_limit_deleted(rcache_env):
     from nonebot_plugin_parser.api import rcache
+
     """staged_files 超过 500 项 → 结构违规删键。"""
     fake = rcache_env
     many = [{"filename": f"{i:022d}.jpg", "size": 0} for i in range(501)]
@@ -328,9 +336,10 @@ async def test_put_oversize_skipped(rcache_env, monkeypatch):
 
 async def test_peer_pull_with_mocked_stream(rcache_env, monkeypatch, tmp_path):
     from nonebot_plugin_parser.api import rcache
+
     """对端条目：mock direct_client 流式拉取 → 文件落地 + CAS 回写为本机条目 →
     二次命中走本机硬链。"""
-    from nonebot_plugin_parser.api import media, rcache
+    from nonebot_plugin_parser.api import media
 
     fake = rcache_env
     peer_entry_key = _make_entry(fake, host="host-b", origin_task_id="b" * 22)
@@ -392,8 +401,9 @@ async def test_peer_pull_with_mocked_stream(rcache_env, monkeypatch, tmp_path):
 
 async def test_peer_pull_404_rolls_back(rcache_env, monkeypatch):
     from nonebot_plugin_parser.api import rcache
+
     """对端 404 → 整体未命中，已拉取文件回滚（目录被清）。"""
-    from nonebot_plugin_parser.api import media, rcache
+    from nonebot_plugin_parser.api import media
 
     fake = rcache_env
     _make_entry(
@@ -432,8 +442,9 @@ async def test_peer_pull_404_rolls_back(rcache_env, monkeypatch):
 
 async def test_pull_deadline_falls_back(rcache_env, monkeypatch):
     from nonebot_plugin_parser.api import rcache
+
     """拉取超过整体 deadline → 未命中走原解析（请求不被拖死），目录回滚。"""
-    from nonebot_plugin_parser.api import media, rcache
+    from nonebot_plugin_parser.api import media
 
     fake = rcache_env
     _make_entry(fake, host="host-b")
@@ -480,8 +491,9 @@ async def test_pull_deadline_falls_back(rcache_env, monkeypatch):
 
 async def test_exdev_copy_fallback(rcache_env, monkeypatch):
     from nonebot_plugin_parser.api import rcache
+
     """硬链跨文件系统（EXDEV）→ copy 回退成功。"""
-    from nonebot_plugin_parser.api import media, rcache
+    from nonebot_plugin_parser.api import media
 
     src = media.task_media_dir(_TASK_ID) / _FILENAME
     src.parent.mkdir(parents=True, exist_ok=True)
@@ -505,8 +517,9 @@ async def test_exdev_copy_fallback(rcache_env, monkeypatch):
 
 async def test_quota_exceeded_rolls_back(rcache_env, monkeypatch):
     from nonebot_plugin_parser.api import rcache
+
     """配额不足 → 整体回滚为未命中（不 500、不留半份文件）。"""
-    from nonebot_plugin_parser.api import media, rcache
+    from nonebot_plugin_parser.api import media
 
     src = media.task_media_dir(_TASK_ID) / _FILENAME
     src.parent.mkdir(parents=True, exist_ok=True)
@@ -546,8 +559,9 @@ async def test_exp_span_bounds(monkeypatch):
 
 async def test_local_only_mode_isolated(rcache_env, tmp_path, monkeypatch):
     from nonebot_plugin_parser.api import rcache
+
     """local-only（shared_secret 空）：nonce 派生验签通过；异机伪造本机条目验签失败。"""
-    from nonebot_plugin_parser.api import media, rcache
+    from nonebot_plugin_parser.api import media
     from nonebot_plugin_parser.config import pconfig
 
     monkeypatch.setattr(pconfig, "parser_rcache_shared_secret", "")
@@ -613,6 +627,25 @@ async def test_heartbeat_no_false_alarm_on_restart(rcache_env, monkeypatch):
     assert any("instance_id" in w for w in warns), "异机同 id 应告警"
 
 
+async def test_media_key_matches_routes_sign_key(rcache_env, monkeypatch):
+    """rcache 自签媒体 URL 与 routes 媒体签名必须同密钥源——否则对端校验 403
+    （生产实测事故：rcache 用 shared_secret 派生而 routes 用 api_token，签名互相不认）。"""
+    from nonebot_plugin_parser.api import rcache, routes
+    from nonebot_plugin_parser.config import pconfig
+
+    # 共享密钥模式：两侧同源
+    monkeypatch.setattr(pconfig, "parser_rcache_shared_secret", "shared-s3cret")
+    rcache.reset_keys()
+    routes.reset_sign_key()
+    assert rcache._media_key() == routes._sign_key()
+
+    # 回落模式：双侧都落到 api_token
+    monkeypatch.setattr(pconfig, "parser_rcache_shared_secret", "")
+    rcache.reset_keys()
+    routes.reset_sign_key()
+    assert rcache._media_key() == routes._sign_key()
+
+
 async def test_validate_config_warns(rcache_env, monkeypatch):
     """instance_id 空缺 / peer_map 含本机 / TTL 过短的启动告警。"""
     from nonebot_plugin_parser.api import rcache
@@ -632,8 +665,9 @@ async def test_validate_config_warns(rcache_env, monkeypatch):
 
 async def test_concurrent_same_url_local_reuse(rcache_env):
     from nonebot_plugin_parser.api import rcache
+
     """并发同链接提交复用：两请求各自硬链到各自目录，互不破坏。"""
-    from nonebot_plugin_parser.api import media, rcache
+    from nonebot_plugin_parser.api import media
 
     src = media.task_media_dir(_TASK_ID) / _FILENAME
     src.parent.mkdir(parents=True, exist_ok=True)

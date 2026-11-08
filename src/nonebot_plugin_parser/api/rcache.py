@@ -144,11 +144,14 @@ def _sig_key() -> bytes:
 
 
 def _media_key() -> bytes:
+    """跨机自签媒体 URL 的子密钥——与 routes._sign_key **完全同公式**
+    （HMAC(共享密钥, "media-sig-v1") 直接作 key，无二次包装），否则对端
+    校验 403。密钥源由 routes 侧统一：shared_secret 优先，回落 api_token。
+    """
     global _media_key_cache
     if _media_key_cache is None:
-        _media_key_cache = hashlib.sha256(
-            hmac.new(_shared_secret().encode(), _MEDIA_INFO, hashlib.sha256).digest()
-        ).digest()
+        secret = pconfig.rcache_shared_secret or pconfig.api_token
+        _media_key_cache = hmac.new(secret.encode(), _MEDIA_INFO, hashlib.sha256).digest()
     return _media_key_cache
 
 

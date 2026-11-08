@@ -30,6 +30,16 @@ def set_recording_enabled(value: bool) -> None:
     _recording_enabled = value
 
 
+def is_recording_enabled() -> bool:
+    """聊天入库门控的读取器。
+
+    二期聊天链路复用结果缓存（rcache_link）以此为前提之一：命中/种缓存都会往
+    ``api_media/{chat_task_id}/`` 落媒体文件，这些目录靠 API 清理 job（TTL/孤儿
+    清理）兜底删除 —— API 未完整注册时没有清理面，绝不启用，防目录无限堆积。
+    """
+    return _recording_enabled
+
+
 async def record_chat_start(url: str, platform: str) -> str | None:
     """聊天解析开始：写入 running 行，返回 task_id（失败返回 None，绝不抛出）。
 
@@ -53,17 +63,20 @@ async def record_chat_result(
     ok: bool,
     error_kind: str | None = None,
     error: str | None = None,
+    *,
+    cache_hit: bool = False,
 ) -> None:
     """聊天解析终态：成功置 succeeded；失败置 failed 并记录归一化原因 + 详情。
 
     ``error`` 为给维护者看的失败原因（如 ``ParseException: xxx`` / 发送段异常），
-    区别于 API 调用方拿到的脱敏文案。
+    区别于 API 调用方拿到的脱敏文案。``cache_hit``：结果缓存复用命中时置 True
+    （观测字段，与 API 复用行同列）。
     """
     if not task_id or not _recording_enabled:
         return
     try:
         if ok:
-            await store.set_succeeded(task_id)
+            await store.set_succeeded(task_id, cache_hit=cache_hit)
         else:
             await store.set_failed(task_id, error_kind, error)
     except Exception as e:

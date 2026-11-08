@@ -21,7 +21,7 @@
 import re
 import asyncio
 from copy import deepcopy
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from nonebot import logger, get_driver, on_command
 from nonebot.params import CommandArg
@@ -160,14 +160,14 @@ def clear_result_cache():
     _RESULT_CACHE.clear()
 
 
-async def _send_parse_result(result: ParseResult) -> None:
-    """渲染并逐条发送 ``ParseResult``（含单节点重试与合并转发降级逻辑）。
+async def _send_message_list(messages: list["UniMessage[Any]"], *, sent_flag: list[bool] | None = None) -> None:
+    """逐条发送 UniMessage 列表（含单节点重试与合并转发降级逻辑）。
 
-    抽自 :func:`parser_handler`,供「点歌选择后复用现有渲染流水线」场景调用
-    (见 :mod:`matchers.music`), 避免渲染+发送代码重复。
+    ``sent_flag`` 出参：任一节点**成功发出**即置位（含首次成功、单节点重试成功、
+    合并转发降级逐条直发的成功；末尾"仅显示前 N 条"提示不计）。结果缓存重放
+    路径据此判定「零发出」——此时清场回源解析兜底，而非直接报失败（P1-B）。
     """
-    renderer = get_renderer(result.platform.name)
-    async for message in renderer.render_messages(result):
+    for message in messages:
         try:
             await message.send()
         except Exception as send_err:
@@ -181,6 +181,8 @@ async def _send_parse_result(result: ParseResult) -> None:
                 logger.warning(f"消息发送失败({send_err!r}), {_SEND_RETRY_DELAY:g}s 后重试一次")
                 await asyncio.sleep(_SEND_RETRY_DELAY)
                 await message.send()
+                if sent_flag is not None:
+                    sent_flag.append(True)
             else:
                 # 合并转发发送失败 (如 NTQQ sendMsg 超时) 时, 降级为逐条直接发送,
                 # 提升协议端兼容性; 转发整体重发有整包重复风险, 直接降级不重试。
@@ -192,6 +194,8 @@ async def _send_parse_result(result: ParseResult) -> None:
                 for node_msg in fallback_nodes:
                     try:
                         await node_msg.send()
+                        if sent_flag is not None:
+                            sent_flag.append(True)
                     except Exception:
                         logger.warning(f"降级发送单条消息失败, 跳过该条: {send_err!r}")
                 if len(nodes) > _MAX_FALLBACK_NODES:
@@ -201,6 +205,21 @@ async def _send_parse_result(result: ParseResult) -> None:
                         ).send()
                     except Exception:
                         logger.warning("降级提示发送失败，跳过")
+        else:
+            if sent_flag is not None:
+                sent_flag.append(True)
+
+
+async def _send_parse_result(result: ParseResult) -> None:
+    """渲染并逐条发送 ``ParseResult``（含单节点重试与合并转发降级逻辑）。
+
+    抽自 :func:`parser_handler`,供「点歌选择后复用现有渲染流水线」场景调用
+    (见 :mod:`matchers.music`), 避免渲染+发送代码重复。发送机制收敛于
+    :func:`_send_message_list`（结果缓存重放路径同款复用）。
+    """
+    renderer = get_renderer(result.platform.name)
+    messages = [message async for message in renderer.render_messages(result)]
+    await _send_message_list(messages)
 
 
 async def parser_handler(
@@ -284,6 +303,58 @@ async def parser_handler(
             from ..api.chat import record_chat_start
 
             chat_task_id = await record_chat_start(cache_key, parser.platform.name)
+
+            # 4.5 跨机结果缓存命中 → 重放渲染产物直发（跳过解析+渲染，二期）。
+            # try_replay 内部全吞异常返回 None，这里再兜一层 import/调用异常，
+            # 与 record_chat_* 同一原则：缓存永不影响聊天链路。
+            replay: list[UniMessage[Any]] | None = None
+            try:
+                from .rcache_link import try_replay
+
+                replay = await try_replay(cache_key, chat_task_id)
+            except Exception:
+                logger.debug("结果缓存重放探测失败（不影响聊天链路）", exc_info=True)
+            if replay is not None:
+                sent_flag: list[bool] = []
+                try:
+                    await _send_message_list(replay, sent_flag=sent_flag)
+                except Exception as send_err:
+                    if sent_flag:
+                        # 部分发出后才失败：内容已出，重发会重复 —— 与发送段失败
+                        # 同口径收口（record_failure + 行置 failed + fail 表情）
+                        send_error_msg = f"发送段 {type(send_err).__name__}: {send_err!s}"
+                        logger.error(
+                            f"缓存重放发送失败(已部分发出) [{parser.platform.display_name}]: "
+                            f"{cache_key[:80]} - {send_err!r}"
+                        )
+                        record_failure(url=cache_key, platform=parser.platform.name, error=send_error_msg)
+                        from ..api.chat import record_chat_result
+
+                        await record_chat_result(chat_task_id, ok=False, error_kind="send_error", error=send_error_msg)
+                        await safe_reaction(event, "fail")
+                        return
+                    # 零发出异常 → 与无异常零发出同一处理（下方清场回源）
+                if sent_flag:
+                    from ..api.chat import record_chat_result
+
+                    await record_chat_result(chat_task_id, ok=True, cache_hit=True)
+                    logger.info(f"聊天命中结果缓存: task={(chat_task_id or '?')[:8]}… url={cache_key[:60]}")
+                    await safe_reaction(event, "done")
+                    return
+                # 零发出（发送异常或合并转发降级全部失败）：清掉已物化的媒体目录
+                # 与行上的 staged 清单，回源解析兜底（行保持 running，走正常终态）。
+                # replay 非 None 必然源于非 None task_id（try_replay 门控），
+                # pyright 无法推断，这里显式收窄。
+                logger.warning(f"结果缓存重放零发出，回源解析: url={cache_key[:60]}")
+                if chat_task_id is not None:
+                    try:
+                        from ..api.media import remove_task_dir
+                        from ..api.store import update_staged
+
+                        await remove_task_dir(chat_task_id)
+                        await update_staged(chat_task_id, [], 0)
+                    except Exception:
+                        logger.debug("重放零发出清场失败（不影响回源）", exc_info=True)
             try:
                 result = await parse_with_retry(parser, sr.keyword, sr.searched)
             except asyncio.TimeoutError:
@@ -321,6 +392,16 @@ async def parser_handler(
 
         await record_chat_result(chat_task_id, ok=True)
         await safe_reaction(event, "done")
+
+        # 9. 种跨机结果缓存（二期写路径）。刻意放在完成反馈**之后**（P2-3）：
+        # build_result 的长图重切片 + 压缩 + Redis IO 可达数百毫秒，不能挡住
+        # 用户完成表情。整体吞异常（缓存永不影响聊天链路）。
+        try:
+            from .rcache_link import seed_from_result
+
+            await seed_from_result(result, cache_key, sr.keyword, parser, chat_task_id)
+        except Exception:
+            logger.debug("种结果缓存失败（不影响聊天链路）", exc_info=True)
 
     except TipException as e:
         # 可恢复的用户提示：发消息，不冒泡成 ERROR

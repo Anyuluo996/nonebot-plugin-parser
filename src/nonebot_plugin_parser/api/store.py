@@ -232,13 +232,32 @@ def _sync_set_running_if_queued(task_id: str, platform: str, now: int) -> bool:
     return cur.rowcount > 0
 
 
-def _sync_set_succeeded(task_id: str, now: int) -> bool:
-    """active → succeeded（不携带结果载荷；聊天来源任务的终态写法）。"""
+def _sync_set_succeeded(task_id: str, now: int, cache_hit: int = 0) -> bool:
+    """active → succeeded（不携带结果载荷；聊天来源任务的终态写法）。
+
+    ``cache_hit``：结果缓存复用标记（二期聊天链路命中时置 1，观测用）。
+    """
     with _connect() as conn:
         cur = conn.execute(
-            "UPDATE tasks SET status = 'succeeded', finished_at = ? "
+            "UPDATE tasks SET status = 'succeeded', cache_hit = ?, finished_at = ? "
             "WHERE task_id = ? AND status IN ('queued', 'running')",
-            (now, task_id),
+            (cache_hit, now, task_id),
+        )
+    return cur.rowcount > 0
+
+
+def _sync_update_staged(task_id: str, staged_files: str, staged_bytes: int) -> bool:
+    """按主键无条件更新 staged 清单（聊天链路复用缓存的媒体记账）。
+
+    聊天行建行时不带 staged 信息，命中复用（媒体物化进本任务目录）或种缓存
+    （build_result 转存）后必须回写 —— 对端经媒体端点拉取时按
+    ``get_staged_files`` 反查，缺了会 404；配额账本本身靠删除时实测目录释放，
+    此列仅端点反查与观测依赖。
+    """
+    with _connect() as conn:
+        cur = conn.execute(
+            "UPDATE tasks SET staged_files = ?, staged_bytes = ? WHERE task_id = ?",
+            (staged_files, staged_bytes, task_id),
         )
     return cur.rowcount > 0
 
@@ -429,9 +448,19 @@ async def set_running_if_queued(task_id: str, platform: str) -> bool:
     return await asyncio.to_thread(_sync_set_running_if_queued, task_id, platform, int(time.time()))
 
 
-async def set_succeeded(task_id: str) -> bool:
+async def set_succeeded(task_id: str, *, cache_hit: bool = False) -> bool:
     """active → succeeded（不携带结果载荷；聊天来源任务的终态写法）。"""
-    return await asyncio.to_thread(_sync_set_succeeded, task_id, int(time.time()))
+    return await asyncio.to_thread(_sync_set_succeeded, task_id, int(time.time()), 1 if cache_hit else 0)
+
+
+async def update_staged(task_id: str, staged_files: list[dict[str, Any]], staged_bytes: int) -> bool:
+    """按主键无条件更新 staged 清单（聊天链路复用缓存的媒体记账）。"""
+    return await asyncio.to_thread(
+        _sync_update_staged,
+        task_id,
+        json.dumps(staged_files, ensure_ascii=False),
+        staged_bytes,
+    )
 
 
 async def set_result(

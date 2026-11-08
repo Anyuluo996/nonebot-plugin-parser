@@ -163,9 +163,15 @@ async def _convert_segments(obj: Any, stager: _Stager) -> Any:
 
 
 async def _message_to_segments(message: UniMessage[Any], stager: _Stager) -> list[dict[str, Any]]:
-    """UniMessage → OneBot V11 段数组（file 引用已改写为占位符）。"""
+    """UniMessage → OneBot V11 段数组（file 引用已改写为占位符）。
+
+    ``reply`` / ``at`` 段在导出后剥离：段里的 reply.id / at.qq 绑定的是**首次
+    发送会话**的消息与触发者，进了结果缓存会在跨会话/跨机重放时回复错消息、
+    @ 错人。当前渲染器本就不产这两种段，过滤是面向未来的写入侧不变量
+    （读取侧重建再剔除一次，见 matchers/rcache_link）。
+    """
     exported = await message.export(adapter=SupportAdapter.onebot11)
-    raw = [{"type": seg.type, "data": dict(seg.data)} for seg in exported]
+    raw = [{"type": seg.type, "data": dict(seg.data)} for seg in exported if seg.type not in ("reply", "at")]
     result: list[dict[str, Any]] = await _convert_segments(raw, stager)
     return result
 

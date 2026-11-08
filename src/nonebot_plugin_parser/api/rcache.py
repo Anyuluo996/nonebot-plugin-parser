@@ -1,8 +1,12 @@
 """跨机解析结果缓存（Redis 共享索引 + 本机文件复用 + 跨机媒体拉取）。
 
-一期仅接入 API 提交链路：``runner.submit_task`` 命中同链接（规范化后一致）时
+一期接入 API 提交链路：``runner.submit_task`` 命中同链接（规范化后一致）时
 直接复用上次的完整解析结果（不再解析、不再下载）；``runner._run`` 成功后写缓存。
-聊天链路二期接入（从缓存还原 ``ParseResult`` 走现有渲染管线）。
+二期接入聊天链路（``matchers/rcache_link``）：命中后**重放渲染产物**——
+``payload["messages"]`` 是一期序列化时已完成渲染+切片+转发组装的 OneBot V11
+段数组，重建为 UniMessage 直发即可，无需还原 ``ParseResult`` 重走渲染管线
+（metadata 路径有损：``extra`` 等渲染器输入未序列化）；聊天解析成功后也经
+同一套 ``serialize.build_result`` 管线种缓存。
 
 信任边界（**谁控制 Redis 谁控制交付内容**）：条目按半可信输入处理——
 五步流水线校验（前缀 → 受限解压 → JSON → HMAC 验签 → schema 强校验），
@@ -324,6 +328,37 @@ def _decode_entry(blob: bytes) -> dict[str, Any] | None:
     return entry
 
 
+def _refs_within_allowlist(obj: Any, staged_names: frozenset[str]) -> bool:
+    """payload 媒体引用白名单（深度防御，递归含 node content 嵌套）。
+
+    写路径（serialize）产出的合法形态只有两种 ``file`` 键值：``media://`` +
+    staged 清单内的文件名，以及保留原样的公开 ``http(s)://``。其余任何形态
+    （``file://``、裸路径、``base64://`` 等）都意味着条目被篡改或写路径行为
+    漂移——尤其 ``media://../../`` 之类穿越串，签名只保证完整性不保证语义，
+    必须在此按"已验签但结构违规 → 删键"拦截。``url``/``path`` 键禁本地形态
+    （``file://`` / ``base64://`` / 绝对路径），防宿主路径泄漏与协议端本地读面。
+    只查这三类键不查 text：正文里字面出现 ``media://`` 属合法内容，不误杀。
+    """
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if isinstance(v, str):
+                if k == "file":
+                    if v.startswith("media://"):
+                        if v[len("media://") :] not in staged_names:
+                            return False
+                    elif not v.startswith(("http://", "https://")):
+                        return False
+                elif k in ("url", "path"):
+                    if v.startswith(("file://", "base64://", "/")):
+                        return False
+            if not _refs_within_allowlist(v, staged_names):
+                return False
+        return True
+    if isinstance(obj, (list, tuple)):
+        return all(_refs_within_allowlist(item, staged_names) for item in obj)
+    return True
+
+
 def _validate_entry(entry: dict[str, Any], key_url_key: str) -> bool:
     """五步流水线第 5 步：schema 强校验（调用方保证已验签且版本/指纹已先行分流）。"""
     if entry.get("url_key") != key_url_key:  # 绑定键：整条复制到他键即死
@@ -357,6 +392,10 @@ def _validate_entry(entry: dict[str, Any], key_url_key: str) -> bool:
         or not isinstance(payload.get("metadata"), dict)
         or not isinstance(payload.get("messages"), list)
     ):
+        return False
+    # 媒体引用白名单：file 键值必须可追溯到 staged 清单或为公开 URL
+    staged_names = frozenset(f["filename"] for f in staged)
+    if not _refs_within_allowlist(payload, staged_names):
         return False
     return True
 

@@ -403,6 +403,8 @@ parser_api_media_quota_mb=2048
 parser_api_media_sig_ttl=3600
 
 # [可选] 跨机解析结果缓存（相同链接复用上次完整解析结果，不重复解析/下载）
+# 聊天链路与 API 自动共享：聊天命中直发渲染产物（跳过解析+渲染），解析成功也会种缓存；
+# 前提：API 完整启用（清理 job 存在）且协议端能读到 api_media/ 目录（共享 data_dir 挂载）
 # 详见 docs/features/FEATURE_ASYNC_API.md 与 deploy/rcache-redis/。需安装 extras: uv add "nonebot-plugin-parser[rcache]"
 # Redis 不可用时按未命中降级（熔断 30s），绝不影响解析主流程
 parser_rcache_enabled=false

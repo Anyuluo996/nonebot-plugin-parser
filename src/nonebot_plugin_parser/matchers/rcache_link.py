@@ -51,7 +51,7 @@ from ..config import pconfig
 from ..helper import UniHelper
 
 if TYPE_CHECKING:
-    from ..parsers import BaseParser, ParseResult
+    from ..parsers import ParseResult
 
 _MEDIA_PREFIX = "media://"
 """载荷媒体占位符前缀（与 api.serialize.PLACEHOLDER_PREFIX 同一约定；
@@ -293,7 +293,6 @@ async def seed_from_result(
     result: "ParseResult",
     raw_url: str,
     keyword: str,
-    parser: "BaseParser",
     chat_task_id: str | None,
 ) -> None:
     """聊天解析成功后种跨机缓存。尽力而为：任一门控不过 / 异常静默返回。
@@ -302,13 +301,17 @@ async def seed_from_result(
     **之后**调用 —— build_result 的长图重切片+压缩+Redis IO 可达数百毫秒，
     不挡用户完成反馈（P2-3）。此时下载已全部落地（发送阶段消费过），
     render_image 已落盘，二次渲染直接复用，仅长图重切片 + 媒体硬链转存。
+
+    skip 判定用**本次命中的 keyword** 与 API put 语义完全对齐（put 内部同样
+    按 keyword 精确匹配兜底）。勿改成 parser 实例全量 keyword 判定——B 站直播
+    （live.bili）与普通视频同属 BilibiliParser，全量判定会把整个平台的聊天
+    seed 全部误杀（2026-11-08 生产实测教训）；b23 短链直指直播的场景两侧
+    （API/聊天）行为一致地都会种缓存，一致性优先。
     """
     if not chat_task_id or not pconfig.rcache_enabled:
         return
-    # parser 级 skip：任一 keyword 命中即跳过 —— 文本命中关键词与 URL 命中
-    # 关键词可能不同（如 b23 短链），按实例全量判定才能拦住直播条目禁缓存
-    if any(kw in pconfig.rcache_skip_keywords for kw, _ in parser._key_patterns):
-        return
+    if keyword in pconfig.rcache_skip_keywords:
+        return  # 本次命中的 keyword 是直播类（与 API put 同一判定口径）
     if _SEED_SEM.locked():
         return  # P2-C：忙时直接跳过，种缓存是尽力而为，不排队不拖慢 bot
 

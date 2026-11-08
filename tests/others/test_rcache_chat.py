@@ -566,7 +566,7 @@ async def test_seed_success_writes_put_and_staged(rcache_env, chat_db, monkeypat
 
     await store.create_task(_CHAT_ID, _URL_NORM, _URL_NORM, status="running", source="chat", started=True)
     media.task_media_dir(_CHAT_ID).mkdir(parents=True, exist_ok=True)
-    await rcache_link.seed_from_result(object(), _URL_NORM, "bili", _FakeParser(["bili"]), _CHAT_ID)
+    await rcache_link.seed_from_result(object(), _URL_NORM, "bili", _CHAT_ID)
     assert calls["build"] == _CHAT_ID
     assert calls["put"] == (_URL_NORM, _CHAT_ID, "bili", False)
     assert await store.get_staged_files(_CHAT_ID) == [{"filename": _F_JPG, "size": 3}]
@@ -587,24 +587,26 @@ async def test_seed_gates(rcache_env, chat_db, monkeypatch):
 
     monkeypatch.setattr(serialize, "build_result", fake_build)
 
-    await rcache_link.seed_from_result(object(), _URL_NORM, "bili", _FakeParser(["bili"]), None)
+    await rcache_link.seed_from_result(object(), _URL_NORM, "bili", None)
     assert not calls, "chat_task_id=None 必须直接跳过（P2-D 的进程内缓存命中分支即此形态）"
 
     monkeypatch.setattr(pconfig, "parser_rcache_enabled", False)
-    await rcache_link.seed_from_result(object(), _URL_NORM, "bili", _FakeParser(["bili"]), _CHAT_ID)
+    await rcache_link.seed_from_result(object(), _URL_NORM, "bili", _CHAT_ID)
     assert not calls
     monkeypatch.setattr(pconfig, "parser_rcache_enabled", True)
 
     monkeypatch.setattr(pconfig, "parser_rcache_skip_keywords", ["live.bili"])
-    await rcache_link.seed_from_result(object(), _URL_NORM, "bili", _FakeParser(["live.bili", "bili"]), _CHAT_ID)
-    await rcache_link.seed_from_result(object(), _URL_NORM, "b23", _FakeParser(["b23", "live.bili"]), _CHAT_ID)
-    assert not calls, "parser 任一 keyword 命中 skip 即跳过"
+    await rcache_link.seed_from_result(object(), _URL_NORM, "live.bili", _CHAT_ID)
+    assert not calls, "本次命中的 keyword 是直播类 → 跳过（与 API put 同口径）"
+    await rcache_link.seed_from_result(object(), _URL_NORM, "b23", _CHAT_ID)
+    assert calls, "同平台普通视频 keyword（b23）不受直播 keyword 牵连（2026-11-08 生产教训）"
+    calls.clear()
     monkeypatch.setattr(pconfig, "parser_rcache_skip_keywords", [])
 
     await rcache_link._SEED_SEM.acquire()
     await rcache_link._SEED_SEM.acquire()
     try:
-        await rcache_link.seed_from_result(object(), _URL_NORM, "bili", _FakeParser(["bili"]), _CHAT_ID)
+        await rcache_link.seed_from_result(object(), _URL_NORM, "bili", _CHAT_ID)
         assert not calls, "信号量占满时忙跳过（P2-C）"
     finally:
         rcache_link._SEED_SEM.release()
@@ -627,7 +629,7 @@ async def test_seed_build_failure_cleans_dir(rcache_env, chat_db, monkeypatch):
     src.write_bytes(b"x")
     dir_ = media.task_media_dir(_CHAT_ID)
     await media.stage_path(src, dir_)
-    await rcache_link.seed_from_result(object(), _URL_NORM, "bili", _FakeParser(["bili"]), _CHAT_ID)
+    await rcache_link.seed_from_result(object(), _URL_NORM, "bili", _CHAT_ID)
     assert not dir_.exists()
     assert media.quota.used == base_used, "清场必须把 staging 占用完整归还"
 
@@ -648,7 +650,7 @@ async def test_seed_put_failure_keeps_dir(rcache_env, chat_db, monkeypatch):
     await store.create_task(_CHAT_ID, _URL_NORM, _URL_NORM, status="running", source="chat", started=True)
     dir_ = media.task_media_dir(_CHAT_ID)
     dir_.mkdir(parents=True)
-    await rcache_link.seed_from_result(object(), _URL_NORM, "bili", _FakeParser(["bili"]), _CHAT_ID)
+    await rcache_link.seed_from_result(object(), _URL_NORM, "bili", _CHAT_ID)
     assert dir_.exists(), "put 失败保留目录"
 
 

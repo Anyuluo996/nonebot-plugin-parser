@@ -399,7 +399,7 @@ async def parser_handler(
         try:
             from .rcache_link import seed_from_result
 
-            await seed_from_result(result, cache_key, sr.keyword, parser, chat_task_id)
+            await seed_from_result(result, cache_key, sr.keyword, chat_task_id)
         except Exception:
             logger.debug("种结果缓存失败（不影响聊天链路）", exc_info=True)
 

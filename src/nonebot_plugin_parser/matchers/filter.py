@@ -30,6 +30,7 @@ from ..platform_switch import (
 from ..platform_switch import (
     save_disabled_platforms as save_disabled_platforms,
 )
+from ..douyin_slides_switch import set_slides_legacy_mode
 
 PARSER_CONTROL_PERMISSION = SUPERUSER | OWNER() | ADMIN()
 
@@ -268,3 +269,46 @@ async def parser_status(matcher: Matcher, session: Session = UniSession()):
         await matcher.finish(f"当前已开启的平台: {enabled_list}")
     else:
         await matcher.finish("当前群组解析已关闭")
+
+
+# 抖音图文逐项发送模式的群级开关: 开启=图片合并转发 + 纯静态图文补发 BGM 音频
+# (不再合成单条轮播视频); 关闭(默认)=合成幻灯片视频。命令名跟随
+# parser_force_prefix(空前缀回退 par), 与授权类命令同一惯例。
+_SLIDES_LEGACY_PREFIX = pconfig.parse_prefix or "par"
+
+
+@on_command(
+    f"{_SLIDES_LEGACY_PREFIX}抖音图文开启", permission=PARSER_CONTROL_PERMISSION, rule=to_me(), block=True
+).handle()
+async def enable_slides_legacy(matcher: Matcher, session: Session = UniSession()):
+    """开启抖音图文逐项发送模式(旧模式, 本群生效)"""
+    try:
+        if session.scene.is_private:
+            await matcher.finish("私聊默认使用合成视频模式, 该开关仅群聊生效")
+        changed = set_slides_legacy_mode(session, True)
+        tip = "" if changed else "(本群已是该模式)"
+        await matcher.finish(f"抖音图文已开启逐项发送模式: 图片合并转发 + BGM 音频{tip}")
+    except MatcherException:
+        # NoneBot 控制流异常（Finished/Rejected/Paused 等）必须放行, 不能吞成"发生错误"
+        raise
+    except Exception as e:
+        logger.exception(f"[抖音图文开启] 发生异常: {e}")
+        await matcher.finish(f"发生错误: {e}")
+
+
+@on_command(
+    f"{_SLIDES_LEGACY_PREFIX}抖音图文关闭", permission=PARSER_CONTROL_PERMISSION, rule=to_me(), block=True
+).handle()
+async def disable_slides_legacy(matcher: Matcher, session: Session = UniSession()):
+    """关闭抖音图文逐项发送模式, 恢复合成视频(默认)"""
+    try:
+        if session.scene.is_private:
+            await matcher.finish("私聊默认使用合成视频模式, 该开关仅群聊生效")
+        changed = set_slides_legacy_mode(session, False)
+        tip = "" if changed else "(本群已是合成视频模式)"
+        await matcher.finish(f"抖音图文已恢复合成视频模式{tip}")
+    except MatcherException:
+        raise
+    except Exception as e:
+        logger.exception(f"[抖音图文关闭] 发生异常: {e}")
+        await matcher.finish(f"发生错误: {e}")

@@ -103,6 +103,10 @@ class Config(BaseModel):
     min(BGM 时长, ``parser_douyin_slideshow_max_duration``)。不再幻灯片 +
     实况各发一条。BGM 缺失时降级无声。关闭本开关或 ffmpeg 不可用时，回退为
     逐张发图 + 逐条实况视频（旧行为）。普通视频帖不受影响。
+
+    群管理员可用 ``par抖音图文开启`` 指令把本群切回「逐项发送」旧模式
+    （图片合并转发，纯静态图文额外补发一条 BGM 音频，持久化，优先于本全局
+    配置）；``par抖音图文关闭`` 恢复合成视频模式（默认）。
     """
     parser_douyin_slideshow_per_image: float = 5.0
     """图文幻灯片每张图的目标展示时长（秒）。

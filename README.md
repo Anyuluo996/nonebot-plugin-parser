@@ -438,6 +438,8 @@ parser_rcache_skip_keywords=["live.bili", "live.douyin"]
 | :------: | :-------------------: | :---: | :--: | :---------------: |
 | 开启解析 | SUPERUSER/OWNER/ADMIN |  是   | 群聊 |     开启解析      |
 | 关闭解析 | SUPERUSER/OWNER/ADMIN |  是   | 群聊 |     关闭解析      |
+| par抖音图文开启 | SUPERUSER/OWNER/ADMIN |  是   | 群聊 | 抖音图文切回逐项发送(图片合并转发+BGM音频) |
+| par抖音图文关闭 | SUPERUSER/OWNER/ADMIN |  是   | 群聊 | 恢复抖音图文合成视频模式(默认) |
 |    bm    |           -           |  否   | 群聊 |   下载 B 站音频   |
 |    ym    |           -           |  否   | 群聊 | 下载 youtube 音频 |
 |  tg授权  |       SUPERUSER       |  否   | 任意 | 授权用户使用 TG 解析 |
@@ -447,6 +449,8 @@ parser_rcache_skip_keywords=["live.bili", "live.douyin"]
 |  blogin  |       SUPERUSER       |  否   | 私聊 | 扫码获取 B 站凭证 |
 | qqmusic登录 |       SUPERUSER       |  否   | 任意 | QQ 音乐扫码登录(获取 VIP 凭证) |
 | qqmusic登出 |       SUPERUSER       |  否   | 任意 | 清除 QQ 音乐登录态 |
+
+> `par抖音图文开启/关闭` 命令名跟随 `parser_force_prefix`(未配置默认 `par`)。
 
 ### 👤 用户授权与黑名单
 

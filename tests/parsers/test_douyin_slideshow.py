@@ -260,6 +260,67 @@ async def test_slideshow_no_bgm_falls_back_to_images(monkeypatch):
     assert result.video_contents == []
 
 
+async def test_legacy_mode_sends_itemized_images_with_bgm_audio(monkeypatch):
+    """群级「逐项发送」开关开启 → 不合成, 图片逐项 + 纯静态图文补发一条 BGM 音频。
+
+    与全局配置关闭(``test_slideshow_disabled_falls_back_to_images``)不同:
+    逐项模式是管理员主动选择的形态, 纯静态图文的 BGM 否则无处安放, 要补发
+    音频让「图片和音频」完整。
+    """
+    from nonebot_plugin_parser import douyin_slides_switch as slides_switch
+    from nonebot_plugin_parser.parsers import AudioContent, ImageContent
+
+    parser, downloads = _make_parser(monkeypatch, ffmpeg_ok=True)
+
+    async def _legacy_on():
+        return True
+
+    # _build_slides_result 函数体内 `from ...douyin_slides_switch import` 为调用
+    # 时导入, patch 模块属性即可生效
+    monkeypatch.setattr(slides_switch, "current_slides_legacy_mode", _legacy_on)
+
+    result = await parser.parse_slides(_STATIC_NOTE_VID)
+
+    assert len(result.img_contents) == 3
+    assert all(isinstance(cont, ImageContent) for cont in result.img_contents)
+    assert result.video_contents == [], "逐项发送模式不应合成幻灯片视频"
+    assert len(result.audio_contents) == 1, "纯静态图文应补发一条 BGM 音频"
+    assert isinstance(result.audio_contents[0], AudioContent)
+    assert await result.audio_contents[0].get_path() == Path("/fake/bgm.mp3")
+    assert len(downloads["audio"]) == 1
+    assert "music_id=bgm_001" in downloads["audio"][0]
+
+
+async def test_legacy_mode_mixed_note_no_standalone_audio(monkeypatch):
+    """逐项模式 + 混排帖: 图片逐项 + 实况视频(BGM 已并入), 不再补发独立音频。"""
+    from nonebot_plugin_parser import douyin_slides_switch as slides_switch
+
+    payload = json.loads(json.dumps(_STATIC_NOTE_PAYLOAD))
+    payload["aweme_detail"]["images"] = [
+        {"url_list": ["https://p3-pc-sign.douyinpic.com/mix0.jpg"]},
+        {
+            "url_list": ["https://p3-pc-sign.douyinpic.com/live_pic.jpg"],
+            "video": {
+                "play_addr": {"url_list": ["https://www.douyin.com/aweme/v1/play/?file_id=live1"]},
+                "cover": {"url_list": ["https://p3-pc-sign.douyinpic.com/live1_cover.jpg"]},
+                "duration": 3000,
+            },
+        },
+    ]
+    parser, _ = _make_parser(monkeypatch, payload=payload)
+
+    async def _legacy_on():
+        return True
+
+    monkeypatch.setattr(slides_switch, "current_slides_legacy_mode", _legacy_on)
+
+    result = await parser.parse_slides(_STATIC_NOTE_VID)
+
+    assert len(result.img_contents) == 1
+    assert len(result.dynamic_contents) == 1, "实况照片应作为逐条视频内容"
+    assert result.audio_contents == [], "BGM 已并入实况视频, 不重复发独立音频"
+
+
 async def test_compose_slideshow_partial_failures(monkeypatch):
     """降级链: 单媒体失败用剩余项继续, BGM 失败降级无声。"""
     from nonebot_plugin_parser import utils as utils_mod

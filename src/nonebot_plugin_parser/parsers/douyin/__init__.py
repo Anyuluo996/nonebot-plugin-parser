@@ -386,7 +386,7 @@ class DouyinParser(BaseParser):
         if aweme_detail is None or aweme_detail.is_deleted:
             logger.warning(f"douyin app endpoint still filtered/unavailable for {video_id}")
             return None
-        return self._build_slides_result(aweme_detail, video_id)
+        return await self._build_slides_result(aweme_detail, video_id)
 
     async def parse_slides(self, video_id: str):
         from . import slides
@@ -437,12 +437,13 @@ class DouyinParser(BaseParser):
         if aweme_detail.is_deleted:
             raise TipException("该抖音作品已被删除，无法解析")
 
-        return self._build_slides_result(aweme_detail, video_id)
+        return await self._build_slides_result(aweme_detail, video_id)
 
-    def _build_slides_result(self, aweme_detail, video_id: str):
+    async def _build_slides_result(self, aweme_detail, video_id: str):
         """由解码后的 aweme_detail 构建 ParseResult (幻灯片合并/图文/实况/视频)。"""
         from ...utils import ffmpeg_available
         from ...config import pconfig
+        from ...douyin_slides_switch import current_slides_legacy_mode
 
         contents = []
 
@@ -450,11 +451,16 @@ class DouyinParser(BaseParser):
         # 同一 BGM 走同一缓存文件, 不重复下载
         bgm_url = aweme_detail.bgm_url
 
+        # 群级「逐项发送」开关 (<前缀>抖音图文开启): 本群不合成幻灯片, 回到
+        # 图片合并转发 + BGM 音频的旧形态; 默认 (未开启/私聊/无消息上下文) 合成
+        legacy_mode = await current_slides_legacy_mode()
+
         if (
             (media_items := aweme_detail.media_items)
             and bgm_url
             and pconfig.douyin_note_slideshow
             and ffmpeg_available()
+            and not legacy_mode
         ):
             # 图文(含实况照片混排)在 App 内是随 BGM 轮播的**单条**视频: 静态图
             # 按目标时长快切、实况照片按自身时长原速播放, 循环到 BGM 结束, 统一
@@ -506,6 +512,12 @@ class DouyinParser(BaseParser):
                         bgm_url=bgm_url,
                     )
                 )
+            elif legacy_mode and media_items and bgm_url:
+                # 逐项发送模式下纯静态图文补发一条 BGM 音频 (图片由渲染层合并
+                # 转发)。带实况的帖子 BGM 已并入实况视频, 不再重复发; 全局开关
+                # 关闭 / ffmpeg 缺失的降级路径维持原行为不补; 纯视频帖
+                # media_items 为空, 不进此分支。
+                contents.append(self.create_audio_content(bgm_url))
 
         # 普通视频 (images/dynamic 均空, 顶层 video 含 play_addr)
         # 自抖音 2026-08 改版, 普通视频改由 detail API 提供直链。

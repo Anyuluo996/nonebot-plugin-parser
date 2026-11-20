@@ -252,5 +252,5 @@ async def _music_select(matcher: Matcher, session: Session = UniSession()):
         try:
             await UniMessage("解析失败,请稍后重试").send()
         except Exception:
-            logger.debug("发送解析失败提示也失败了", exc_info=True)
+            logger.opt(exception=True).debug("发送解析失败提示也失败了")
         await safe_reaction(event, "fail")

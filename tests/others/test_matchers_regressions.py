@@ -355,3 +355,74 @@ async def test_l2_generic_exception_still_retries(monkeypatch):
     assert calls
     assert calls[0][0] == "retried"
     assert ("reported", "https://example.com/y") not in calls
+
+
+@pytest.mark.asyncio
+async def test_safe_reaction_respects_toggle(monkeypatch):
+    """parser_reaction_enabled=false 时 safe_reaction 短路，不发协议端调用。"""
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.helper import UniHelper
+    from nonebot_plugin_parser.matchers import safe_reaction
+
+    calls: list[str] = []
+
+    async def fake_reaction(event, emoji):
+        calls.append(emoji)
+
+    monkeypatch.setattr(UniHelper, "message_reaction", fake_reaction)
+
+    monkeypatch.setattr(pconfig, "parser_reaction_enabled", False)
+    await safe_reaction(object(), "done")
+    assert calls == []
+
+    monkeypatch.setattr(pconfig, "parser_reaction_enabled", True)
+    await safe_reaction(object(), "resolving")
+    await safe_reaction(object(), "done")
+    assert calls == ["resolving", "done"]
+
+
+@pytest.mark.asyncio
+async def test_safe_reaction_swallows_adapter_errors(monkeypatch):
+    """表情回应异常只记日志不上抛（纯装饰，不能影响解析主流程）。"""
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.helper import UniHelper
+    from nonebot_plugin_parser.matchers import safe_reaction
+
+    async def boom(event, emoji):
+        raise RuntimeError("adapter boom")
+
+    monkeypatch.setattr(pconfig, "parser_reaction_enabled", True)
+    monkeypatch.setattr(UniHelper, "message_reaction", boom)
+    await safe_reaction(object(), "fail")  # 不抛
+
+
+@pytest.mark.asyncio
+async def test_with_reaction_respects_toggle(monkeypatch):
+    """with_reaction 装饰器（bm/ym 命令）在 parser_reaction_enabled=false 时不回应。"""
+    from nonebot.matcher import current_event
+
+    from nonebot_plugin_parser.config import pconfig
+    from nonebot_plugin_parser.helper import UniHelper
+
+    reactions: list[str] = []
+
+    async def fake_reaction(event, status):
+        reactions.append(status)
+
+    monkeypatch.setattr(UniHelper, "message_reaction", fake_reaction)
+
+    @UniHelper.with_reaction
+    async def handler():
+        return "ok"
+
+    token = current_event.set(object())
+    try:
+        monkeypatch.setattr(pconfig, "parser_reaction_enabled", False)
+        assert await handler() == "ok"
+        assert reactions == []
+
+        monkeypatch.setattr(pconfig, "parser_reaction_enabled", True)
+        assert await handler() == "ok"
+        assert reactions == ["resolving", "done"]
+    finally:
+        current_event.reset(token)

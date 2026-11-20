@@ -155,7 +155,7 @@
    - `prek`（pre-commit：ruff-check/ruff-format/uv-lock/uv-sync）
    - `typos`
    - `basedpyright`
-   - `pytest tests/others`（矩阵：Python 3.10–3.14 × pydantic-v1/v2，3.14 排除 v1）
+   - `pytest tests/others`（矩阵：Python 3.10–3.14；仓库已固定 pydantic-v2，无 v1 矩阵）
    - `pytest tests/parsers`（需 FFmpeg + Deno）
    - `pytest tests/renders`（需 Playwright chromium）
 3. 修改 `src/`、`tests/`、`.github/`、`uv.lock`、`pyproject.toml` 时，要默认会影响 CI。

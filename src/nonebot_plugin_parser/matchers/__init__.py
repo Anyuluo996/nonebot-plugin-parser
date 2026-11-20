@@ -108,11 +108,14 @@ async def safe_reaction(event: object, emoji: str) -> None:
 
     供本模块与 ``matchers.music`` 等发送流程复用，收敛各处
     ``try: message_reaction(...) except Exception: pass`` 样板。
+    ``parser_reaction_enabled=false`` 时整体关闭（纯装饰功能，省一次协议端调用）。
     """
+    if not pconfig.reaction_enabled:
+        return
     try:
         await UniHelper.message_reaction(event, emoji)  # type: ignore[arg-type]
     except Exception:
-        logger.debug(f"表情回应失败(适配器可能不支持): {emoji}", exc_info=True)
+        logger.opt(exception=True).debug(f"表情回应失败(适配器可能不支持): {emoji}")
 
 
 # 合并转发发送失败时，降级为逐条直发的上限条数，避免数百节点刷屏
@@ -313,7 +316,7 @@ async def parser_handler(
 
                 replay = await try_replay(cache_key, chat_task_id)
             except Exception:
-                logger.debug("结果缓存重放探测失败（不影响聊天链路）", exc_info=True)
+                logger.opt(exception=True).debug("结果缓存重放探测失败（不影响聊天链路）")
             if replay is not None:
                 sent_flag: list[bool] = []
                 try:
@@ -354,7 +357,7 @@ async def parser_handler(
                         await remove_task_dir(chat_task_id)
                         await update_staged(chat_task_id, [], 0)
                     except Exception:
-                        logger.debug("重放零发出清场失败（不影响回源）", exc_info=True)
+                        logger.opt(exception=True).debug("重放零发出清场失败（不影响回源）")
             try:
                 result = await parse_with_retry(parser, sr.keyword, sr.searched)
             except asyncio.TimeoutError:
@@ -401,7 +404,7 @@ async def parser_handler(
 
             await seed_from_result(result, cache_key, sr.keyword, chat_task_id)
         except Exception:
-            logger.debug("种结果缓存失败（不影响聊天链路）", exc_info=True)
+            logger.opt(exception=True).debug("种结果缓存失败（不影响聊天链路）")
 
     except TipException as e:
         # 可恢复的用户提示：发消息，不冒泡成 ERROR

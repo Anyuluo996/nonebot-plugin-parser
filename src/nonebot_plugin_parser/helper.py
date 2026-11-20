@@ -181,14 +181,16 @@ class UniHelper:
         try:
             await uniseg.message_reaction(emoji, message_id=message_id)
         except Exception:
-            logger.warning(f"reaction {emoji} to {message_id} failed, maybe not support")
+            logger.debug(f"reaction {emoji} to {message_id} failed, maybe not support")
 
     @classmethod
     def with_reaction(cls, func: Callable[..., Awaitable[Any]]):
-        """自动回应装饰器"""
+        """自动回应装饰器（parser_reaction_enabled=false 时不做任何回应）"""
 
         @wraps(func)
         async def wrapper(*args, **kwargs):
+            if not pconfig.reaction_enabled:
+                return await func(*args, **kwargs)
             event = current_event.get()
             await cls.message_reaction(event, "resolving")
 

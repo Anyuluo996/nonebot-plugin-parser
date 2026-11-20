@@ -338,6 +338,10 @@ parser_render_type="common"
 # [可选] 是否在解析结果中附加原始URL
 parser_append_url=False
 
+# [可选] 解析状态表情回应（resolving/done/fail）开关，默认 true
+# 纯装饰功能（解析时给消息加表情回应），不需要可设为 false 关闭
+parser_reaction_enabled=true
+
 # [可选] Telegram 解析所用 tdl 二进制路径，默认走 PATH 查找
 # 部署前需安装 tdl 并执行 `tdl login` 登录 Telegram 账号
 parser_tdl_path="tdl"

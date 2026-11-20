@@ -218,6 +218,8 @@ class Config(BaseModel):
     """解析重试基础间隔（秒），按失败次数指数退避：1x → 2x → 4x；0 表示不等待"""
     parser_append_url: bool = False
     """是否在解析结果中附加原始URL"""
+    parser_reaction_enabled: bool = True
+    """解析状态表情回应（resolving/done/fail）开关，纯装饰，不需要可关闭"""
     parser_disabled_platforms: list[PlatformEnum] = Field(default_factory=list)
     """禁止的解析器"""
     parser_bili_video_codes: list[VideoCodecs] = Field(
@@ -599,6 +601,11 @@ class Config(BaseModel):
     def append_url(self) -> bool:
         """是否在解析结果中附加原始URL"""
         return self.parser_append_url
+
+    @property
+    def reaction_enabled(self) -> bool:
+        """解析状态表情回应开关"""
+        return self.parser_reaction_enabled
 
     @property
     def custom_font(self) -> Path | None:

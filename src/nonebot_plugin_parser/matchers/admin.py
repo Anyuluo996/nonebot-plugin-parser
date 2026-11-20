@@ -211,7 +211,9 @@ def _register_admin_commands() -> None:
             await matcher.finish("当前黑名单为空")
         await matcher.finish("全局黑名单:\n" + "\n".join(blacklist))
 
-    # ── 结果缓存管理（查看/删除） ──────────────────────────────────
+    # ── 结果缓存管理（查看/删除/统计） ─────────────────────────────
+
+    _RCACHE_DISABLED_HINT = "结果缓存未启用（需配置 PARSER_RCACHE_ENABLED=true + REDIS_URL + INSTANCE_ID）"
 
     def _cache_age(created_at: int) -> str:
         delta = max(int(time.time()) - created_at, 0)
@@ -283,7 +285,7 @@ def _register_admin_commands() -> None:
         if not arg:
             await matcher.finish(f"用法: {prefix}删除缓存 <链接|序号|关键词|全部>")
         if not rcache.is_enabled():
-            await matcher.finish("结果缓存未启用（需配置 PARSER_RCACHE_ENABLED=true + REDIS_URL + INSTANCE_ID）")
+            await matcher.finish(_RCACHE_DISABLED_HINT)
         try:
             if arg == "全部":
                 n = await rcache.clear_all()
@@ -310,6 +312,29 @@ def _register_admin_commands() -> None:
         except Exception:
             logger.opt(exception=True).debug("删除缓存命令执行失败")
             await matcher.finish("结果缓存删除失败(Redis 异常), 稍后再试")
+
+    @on_command(f"{prefix}缓存统计", block=True, permission=SUPERUSER).handle()
+    async def _par_cache_stats(matcher: Matcher):
+        """SUPERUSER: 查看结果缓存运行状态(实例/对端/熔断/命中计数)。"""
+        from ..api import rcache
+
+        if not rcache.is_enabled():
+            await matcher.finish(_RCACHE_DISABLED_HINT)
+        # 对端只列实例名: 群聊输出全员可见, 内网地址不入聊天面
+        peers = "、".join(pconfig.rcache_peer_map) or "无"
+        lines = [
+            "结果缓存状态:",
+            f"  本机实例: {pconfig.rcache_instance_id}",
+            f"  配置指纹: {rcache.cfg_fingerprint()}  生效 TTL: {rcache.eff_ttl()}s",
+            f"  对端实例: {peers}",
+            f"  熔断: {'是(按未命中处理)' if rcache.breaker_active() else '否'}",
+        ]
+        summary = rcache.metrics_summary()
+        if summary:
+            lines.append(f"  命中统计(自启动累计): {summary}")
+        else:
+            lines.append("  命中统计(自启动累计): 暂无观测数据")
+        await matcher.finish("\n".join(lines))
 
 
 # 模块加载时即注册（与原 __init__.py 行为一致）

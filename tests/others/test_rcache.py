@@ -775,3 +775,22 @@ async def test_disabled_cache_degrades_quietly(rcache_env, monkeypatch):
     assert await rcache.delete_url(_URL_NORM) is False
     assert await rcache.delete_keys(["any"]) == 0
     assert await rcache.clear_all() == 0
+
+
+async def test_metrics_summary_and_breaker_toggle(rcache_env, monkeypatch):
+    """metrics_summary: 全零返回空串, 有观测后可格式化; breaker_active 随熔断态翻转。"""
+    from nonebot_plugin_parser.api import rcache
+
+    assert rcache.metrics_summary() == ""
+
+    rcache.metrics["hit_local"] = 3
+    rcache.metrics["hit_pull"] = 1
+    rcache.metrics["miss"] = 5
+    summary = rcache.metrics_summary()
+    assert "hit_local=3" in summary
+    assert "hit_pull=1" in summary
+    assert "miss=5" in summary
+
+    assert rcache.breaker_active() is False
+    monkeypatch.setattr(rcache, "_fail_until", 9e9)
+    assert rcache.breaker_active() is True

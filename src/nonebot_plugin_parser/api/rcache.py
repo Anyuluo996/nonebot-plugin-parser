@@ -256,6 +256,11 @@ def _breaker_active() -> bool:
     return time.monotonic() < _fail_until
 
 
+def breaker_active() -> bool:
+    """是否处于 Redis 异常熔断期（供管理命令展示状态）。"""
+    return _breaker_active()
+
+
 def _trip_breaker() -> None:
     global _fail_until
     _fail_until = time.monotonic() + _BREAKER_COOLDOWN

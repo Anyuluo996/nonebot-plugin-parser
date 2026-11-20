@@ -500,6 +500,7 @@ parser_rcache_skip_keywords=["live.bili", "live.douyin"]
 | `par删除缓存 <序号>` | SUPERUSER | 任意 | 按「查看缓存」列表序号删除 |
 | `par删除缓存 <关键词>` | SUPERUSER | 任意 | 按 url/标题/平台子串删除全部命中 |
 | `par删除缓存 全部` | SUPERUSER | 任意 | 清空当前配置指纹下所有缓存条目 |
+| `par缓存统计` | SUPERUSER | 任意 | 查看缓存运行状态(本机实例/对端/熔断/命中计数) |
 
 **典型用法 1 ——「关闭解析 + 前缀强制解析授权」组合:**
 

@@ -761,3 +761,17 @@ async def test_delete_url_and_clear_all(rcache_env):
     n = await rcache.clear_all()
     assert n == 1
     assert not fake.store
+
+
+async def test_disabled_cache_degrades_quietly(rcache_env, monkeypatch):
+    """缓存未启用：is_enabled() False，管理函数静默空结果（命令层据此提示未启用）。"""
+    from nonebot_plugin_parser.api import rcache
+
+    monkeypatch.setattr(rcache, "_get_client", lambda: None)
+    assert rcache.is_enabled() is False
+    entries, counts = await rcache.list_entries("")
+    assert entries == []
+    assert counts["error"] == 1
+    assert await rcache.delete_url(_URL_NORM) is False
+    assert await rcache.delete_keys(["any"]) == 0
+    assert await rcache.clear_all() == 0

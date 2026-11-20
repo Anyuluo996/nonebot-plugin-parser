@@ -243,6 +243,15 @@ def _get_client() -> Any:
     return _client
 
 
+def is_enabled() -> bool:
+    """结果缓存是否可用：启用开关、redis_url、instance_id 齐备且 redis 包可导入。
+
+    供管理命令区分「未启用」（配置问题，重试无意义）与「临时不可用」（熔断等，
+    稍后重试有意义）；熔断不在此判定。
+    """
+    return _get_client() is not None
+
+
 def _breaker_active() -> bool:
     return time.monotonic() < _fail_until
 

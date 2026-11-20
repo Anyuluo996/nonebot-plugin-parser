@@ -238,6 +238,12 @@ def _register_admin_commands() -> None:
         from ..api import rcache
 
         keyword = args.extract_plain_text().strip()
+        if not rcache.is_enabled():
+            await matcher.finish(
+                "结果缓存未启用（跨机缓存只在配置 PARSER_RCACHE_ENABLED=true + "
+                "REDIS_URL + INSTANCE_ID 后生效；本地文件缓存粒度为单个媒体文件，"
+                "无法按链接管理，也不需要清理——重发链接即重新解析）"
+            )
         try:
             entries, counts = await rcache.list_entries(keyword)
         except Exception:
@@ -276,6 +282,8 @@ def _register_admin_commands() -> None:
         arg = args.extract_plain_text().strip()
         if not arg:
             await matcher.finish(f"用法: {prefix}删除缓存 <链接|序号|关键词|全部>")
+        if not rcache.is_enabled():
+            await matcher.finish("结果缓存未启用（需配置 PARSER_RCACHE_ENABLED=true + REDIS_URL + INSTANCE_ID）")
         try:
             if arg == "全部":
                 n = await rcache.clear_all()

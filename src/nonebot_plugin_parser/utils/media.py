@@ -136,9 +136,33 @@ async def probe_media_duration(path: Path) -> float | None:
     try:
         output = await exec_ffprobe_cmd(cmd)
         return float(output.strip())
-    except (RuntimeError, ValueError):
+    except (RuntimeError, ValueError, asyncio.TimeoutError):
         logger.debug(f"探测媒体时长失败: {path.name}")
         return None
+
+
+async def probe_video_fps(path: Path) -> float | None:
+    """ffprobe 探测视频流平均帧率（fps），失败或无有效值返回 None"""
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=avg_frame_rate",
+        "-of",
+        "csv=p=0",
+        str(path),
+    ]
+    try:
+        output = await exec_ffprobe_cmd(cmd)
+        num, _, den = output.strip().partition("/")
+        rate = float(num) / float(den)
+    except (RuntimeError, ValueError, ZeroDivisionError, asyncio.TimeoutError):
+        logger.debug(f"探测视频帧率失败: {path.name}")
+        return None
+    return rate if rate > 0 else None
 
 
 async def _probe_image_size(path: Path) -> tuple[int, int] | None:
@@ -459,7 +483,7 @@ async def extract_video_thumbnail(video_path: Path, output_path: Path | None = N
 async def convert_video_to_gif(
     video_path: Path,
     output_path: Path | None = None,
-    fps: int = 15,
+    fps: float = 15,
     width: int = 480,
     optimize: bool = False,
 ) -> Path:
@@ -468,7 +492,7 @@ async def convert_video_to_gif(
     Args:
         video_path (Path): 输入视频路径
         output_path (Path | None): 输出 GIF 路径，默认为视频同目录的 .gif 文件
-        fps (int): 输出 GIF 的帧率，默认 15
+        fps (float): 输出 GIF 的帧率，默认 15；超短源（<1s）帧率更高时按源帧率输出（上限 50）
         width (int): 输出 GIF 的宽度，默认 480（高度自动计算）
         optimize (bool): 是否优化 GIF，默认 False
 
@@ -479,6 +503,17 @@ async def convert_video_to_gif(
         output_path = video_path.with_suffix(".gif")
 
     logger.info(f"转换视频到 GIF: {video_path.name} -> {output_path.name}")
+
+    # 超短循环源（如 X 的抖动 meme GIF：仅 2-8 帧 / 0.1-0.4s / 25-33fps）会被 fps
+    # 抽帧按 CFR 重采样塌缩成单帧静态图；仅对这类源（<1s）升到源帧率保住播放节奏
+    # （上限 50：GIF delay 粒度为 1/100s，>50fps 会低于 2cs 使播放节奏失真），
+    # 正常长度视频维持 fps 抽帧压缩体积
+    src_fps = await probe_video_fps(video_path)
+    if src_fps is not None and src_fps > fps:
+        duration = await probe_media_duration(video_path)
+        if duration is not None and duration < 1:
+            logger.debug(f"超短源({duration:.2f}s)帧率 {src_fps:.2f}fps, 升帧率防塌缩: {video_path.name}")
+            fps = min(round(src_fps, 3), 50)
 
     # 生成调色板的临时文件
     palette_path = video_path.with_name(f"{video_path.stem}_palette.png")

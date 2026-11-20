@@ -5,13 +5,19 @@
 (SUPERUSER 不可被拉黑)。受控项语义键见 ``auth.py``, 当前生效的是
 "强制解析"(前缀强制解析授权)。
 
+另含跨机结果缓存管理命令(查看缓存/删除缓存): 重放命中坏产物(如渲染缺陷
+修复上线前的旧缓存)时, 无需登机手工清 Redis。
+
 本模块还导出共享 helper ``_normalize_user_id``, 供 ``tg_login.py`` 复用。
 """
 
-from nonebot import on_command
+import time
+
+from nonebot import logger, on_command
 from nonebot.params import CommandArg
 from nonebot.matcher import Matcher
 from nonebot.adapters import Message
+from nonebot.exception import FinishedException
 from nonebot.permission import SUPERUSER
 from nonebot_plugin_uninfo import Session, UniSession
 
@@ -204,6 +210,98 @@ def _register_admin_commands() -> None:
         if not blacklist:
             await matcher.finish("当前黑名单为空")
         await matcher.finish("全局黑名单:\n" + "\n".join(blacklist))
+
+    # ── 结果缓存管理（查看/删除） ──────────────────────────────────
+
+    def _cache_age(created_at: int) -> str:
+        delta = max(int(time.time()) - created_at, 0)
+        if delta < 60:
+            return f"{delta}秒前"
+        if delta < 3600:
+            return f"{delta // 60}分钟前"
+        if delta < 86400:
+            return f"{delta // 3600}小时前"
+        return f"{delta // 86400}天前"
+
+    def _cache_size(n: int) -> str:
+        return f"{n / 1048576:.1f}MB" if n >= 1048576 else f"{n / 1024:.0f}KB" if n >= 1024 else f"{n}B"
+
+    def _cache_label(entry: dict) -> str:
+        """条目可读标识: 平台 + 标题/url 摘要(标题优先, 截断 40 字)。"""
+        text = entry.get("title") or entry.get("url") or "(无元数据)"
+        return f"[{entry.get('platform') or '?'}] {text[:40]}"
+
+    @on_command(f"{prefix}查看缓存", block=True, permission=SUPERUSER).handle()
+    async def _par_cache_view(matcher: Matcher, args: Message = CommandArg()):
+        """SUPERUSER: 查看跨机结果缓存条目(最近优先, 最多 15 条)。
+        用法: <prefix>查看缓存 [关键词]"""
+        from ..api import rcache
+
+        keyword = args.extract_plain_text().strip()
+        try:
+            entries, counts = await rcache.list_entries(keyword)
+        except Exception:
+            await matcher.finish("结果缓存查询失败(Redis 异常), 稍后再试")
+        if counts.get("error"):
+            await matcher.finish("结果缓存查询失败(Redis 不可用), 稍后再试")
+        if keyword:
+            head = f"结果缓存命中 {len(entries)} 条"
+        elif not entries:
+            head = "结果缓存无条目"
+        else:
+            head = f"结果缓存共 {counts['total']} 条"
+        extra = f" (外来 {counts.get('foreign', 0)}, 损坏 {counts.get('broken', 0)})" if counts.get("total") else ""
+        if not entries:
+            await matcher.finish(f"{head}{extra}")
+        lines = [f"{head}{extra}, 最近 {min(len(entries), 15)} 条:"]
+        for i, e in enumerate(entries[:15], 1):
+            info = f"{_cache_size(e['staged_bytes'])} {_cache_age(e['created_at'])} {e['host']}"
+            lines.append(f"{i}. {_cache_label(e)} {info}")
+        if len(entries) > 15:
+            lines.append(f"(仅展示 15 条, 请用关键词过滤: {prefix}查看缓存 <关键词>)")
+        lines.append(f"删除: {prefix}删除缓存 <序号|链接|关键词|全部>")
+        await matcher.finish("\n".join(lines))
+
+    @on_command(f"{prefix}删除缓存", block=True, permission=SUPERUSER).handle()
+    async def _par_cache_delete(matcher: Matcher, args: Message = CommandArg()):
+        """SUPERUSER: 删除跨机结果缓存条目。
+        用法: <prefix>删除缓存 <链接|序号|关键词|全部>
+
+        链接=按 URL 精确删; 序号=「查看缓存」列表中的条目; 关键词=按
+        url/标题/平台子串匹配删全部命中; 全部=清空当前配置指纹下所有条目。
+        """
+        from ..api import rcache
+        from ..api.runner import normalize_loose_url
+
+        arg = args.extract_plain_text().strip()
+        if not arg:
+            await matcher.finish(f"用法: {prefix}删除缓存 <链接|序号|关键词|全部>")
+        try:
+            if arg == "全部":
+                n = await rcache.clear_all()
+                await matcher.finish(f"✅ 已清空结果缓存 {n} 条")
+            if "://" in arg:
+                if await rcache.delete_url(normalize_loose_url(arg)):
+                    await matcher.finish("✅ 已删除该链接的缓存条目")
+                await matcher.finish("该链接无缓存条目(可能已过期)")
+            if arg.isdigit():
+                entries, _ = await rcache.list_entries("")
+                idx = int(arg)
+                if idx < 1 or idx > len(entries):
+                    await matcher.finish(f"序号超出范围(当前共 {len(entries)} 条, 先用 {prefix}查看缓存 确认)")
+                target = entries[idx - 1]
+                await rcache.delete_keys([target["key"]])
+                await matcher.finish(f"✅ 已删除 [{idx}] {_cache_label(target)}")
+            entries, _ = await rcache.list_entries(arg)
+            if not entries:
+                await matcher.finish(f"关键词「{arg}」未命中任何缓存条目")
+            n = await rcache.delete_keys([e["key"] for e in entries])
+            await matcher.finish(f"✅ 关键词「{arg}」已删除 {n} 条")
+        except FinishedException:
+            raise
+        except Exception:
+            logger.opt(exception=True).debug("删除缓存命令执行失败")
+            await matcher.finish("结果缓存删除失败(Redis 异常), 稍后再试")
 
 
 # 模块加载时即注册（与原 __init__.py 行为一致）

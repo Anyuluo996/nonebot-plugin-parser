@@ -56,6 +56,10 @@ _PULL_DEADLINE = 10.0
 """对端拉取整体 deadline（秒）：排队 + 拉取合计，超时按未命中走原解析。"""
 _PULL_CONCURRENCY = 2
 """对端拉取并发闸门（与解析并发闸门独立，避免抢占正常解析的下载资源）。"""
+_SCAN_KEY_CAP = 2000
+"""管理命令（查看/删除缓存）单次 SCAN 扫过的键数上限，防大库拖住聊天指令。"""
+_LIST_DECODE_CAP = 200
+"""管理命令单次解码进列表的条目数上限（内存界）。"""
 _BREAKER_COOLDOWN = 30.0
 """Redis 异常后熔断时长：期间 get/put 直接 no-op，解析零感知。"""
 _REDIS_OP_TIMEOUT = 0.5
@@ -789,6 +793,122 @@ async def heartbeat() -> None:
         return
     except Exception:
         logger.debug("结果缓存心跳写入失败", exc_info=True)
+
+
+# ── 管理命令支撑（查看/删除缓存，仅供 SUPERUSER 指令消费） ───────────
+
+
+def _scan_keys(pattern: str) -> Any:
+    return _get_client().scan_iter(match=pattern, count=100)
+
+
+async def list_entries(keyword: str = "") -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """SCAN 当前配置指纹下的条目并解码，按创建时间倒序。
+
+    返回 ``(条目列表, 计数)``。条目字段：key/url_key/host/origin_task_id/
+    created_at/staged_bytes/platform/title/url。``keyword`` 非空时按
+    url/title/platform 大小写不敏感子串过滤。外来信任域与损坏条目不进
+    列表，分别计入计数的 foreign/broken；Redis 不可用时置计数 error=1。
+    """
+    counts: dict[str, int] = {"total": 0, "foreign": 0, "broken": 0, "error": 0}
+    client = _get_client()
+    if client is None or _breaker_active():
+        counts["error"] = 1
+        return [], counts
+    pattern = f"{_KEY_PREFIX}{cfg_fingerprint()}:*"
+    kw = keyword.strip().lower()
+    entries: list[dict[str, Any]] = []
+    scanned = 0
+    try:
+        async for key in _scan_keys(pattern):
+            scanned += 1
+            if scanned > _SCAN_KEY_CAP or len(entries) >= _LIST_DECODE_CAP:
+                break
+            counts["total"] += 1
+            key_str = key if isinstance(key, str) else bytes(key).decode()
+            try:
+                blob = await _redis_op(lambda k=key_str: client.get(k))
+            except _RedisDown:
+                counts["error"] = 1
+                return entries, counts
+            if not isinstance(blob, (bytes, bytearray)):
+                counts["total"] -= 1  # SCAN 与 GET 之间过期，不算库内条目
+                continue
+            try:
+                entry = _decode_entry(bytes(blob))
+            except _EntryForeign:
+                counts["foreign"] += 1
+                continue
+            if entry is None:
+                counts["broken"] += 1
+                continue
+            payload = entry.get("payload")
+            meta = payload.get("metadata") if isinstance(payload, dict) else None
+            if not isinstance(meta, dict):
+                meta = {}
+            url = meta.get("url")
+            title = meta.get("title")
+            platform = meta.get("platform")
+            url = url if isinstance(url, str) else ""
+            title = title if isinstance(title, str) else ""
+            platform = platform if isinstance(platform, str) else ""
+            if kw and kw not in url.lower() and kw not in title.lower() and kw not in platform.lower():
+                continue
+            entries.append(
+                {
+                    "key": key_str,
+                    "url_key": entry.get("url_key", ""),
+                    "host": entry.get("host", "?"),
+                    "origin_task_id": entry.get("origin_task_id", ""),
+                    "created_at": entry.get("created_at", 0),
+                    "staged_bytes": entry.get("staged_bytes", 0),
+                    "platform": platform,
+                    "title": title,
+                    "url": url,
+                }
+            )
+    except Exception:
+        logger.debug("结果缓存列表扫描失败", exc_info=True)
+        counts["error"] = 1
+        return entries, counts
+    entries.sort(key=lambda e: e["created_at"], reverse=True)
+    return entries, counts
+
+
+async def delete_url(url_norm: str) -> bool:
+    """按规范化 URL 精确删除条目；Redis 不可用抛 :class:`_RedisDown`。"""
+    client = _get_client()
+    if client is None:
+        return False
+    n = await _redis_op(lambda: client.delete(make_key(url_norm)))
+    return bool(n)
+
+
+async def delete_keys(keys: list[str]) -> int:
+    """批量删除指定键，返回实际删除数；Redis 不可用抛 :class:`_RedisDown`。"""
+    if not keys:
+        return 0
+    client = _get_client()
+    if client is None:
+        return 0
+    n = await _redis_op(lambda: client.delete(*keys))
+    return int(n or 0)
+
+
+async def clear_all() -> int:
+    """清空当前配置指纹下的全部条目（含外来/损坏），返回删除数。"""
+    client = _get_client()
+    if client is None or _breaker_active():
+        return 0
+    pattern = f"{_KEY_PREFIX}{cfg_fingerprint()}:*"
+    keys: list[str] = []
+    scanned = 0
+    async for key in _scan_keys(pattern):
+        scanned += 1
+        if scanned > _SCAN_KEY_CAP:
+            break
+        keys.append(key if isinstance(key, str) else bytes(key).decode())
+    return await delete_keys(keys)
 
 
 def metrics_summary() -> str:

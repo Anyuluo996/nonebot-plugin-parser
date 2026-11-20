@@ -69,6 +69,14 @@ class FakeRedis:
     async def ping(self):
         return True
 
+    async def scan_iter(self, match=None, count=None):
+        """SCAN 桩：fnmatch 语义与 redis SCAN glob 一致。"""
+        import fnmatch
+
+        for k in list(self.store):
+            if match is None or fnmatch.fnmatch(k, match):
+                yield k
+
 
 @pytest.fixture
 def rcache_env(tmp_path, monkeypatch):
@@ -678,3 +686,78 @@ async def test_concurrent_same_url_local_reuse(rcache_env):
     assert all(r is not None for r in results)
     for tid in ("k" * 22, "l" * 22):
         assert (media.task_media_dir(tid) / _FILENAME).is_file()
+
+
+# ── 管理命令支撑（list_entries / delete_url / delete_keys / clear_all） ──
+
+
+async def test_list_entries_order_filter_and_counts(rcache_env):
+    from nonebot_plugin_parser.api import rcache
+
+    fake = rcache_env
+
+    def _meta(title: str, url: str, platform: str) -> dict:
+        return {"metadata": {"title": title, "url": url, "platform": platform}, "messages": []}
+
+    _make_entry(
+        fake,
+        url_norm="https://example.com/a",
+        created_at=int(time.time()) - 100,
+        payload=_meta("t", "https://example.com/a", "twitter"),
+    )
+    _make_entry(
+        fake,
+        url_norm="https://v.douyin.com/xxx",
+        created_at=int(time.time()),
+        payload=_meta("抖音视频", "https://v.douyin.com/xxx", "douyin"),
+    )
+    entries, counts = await rcache.list_entries("")
+    assert len(entries) == 2
+    assert counts["total"] == 2
+    assert counts["foreign"] == 0
+    assert counts["broken"] == 0
+    assert not counts["error"]
+    # created_at 倒序：抖音条目在前
+    assert entries[0]["platform"] == "douyin"
+    assert entries[0]["staged_bytes"] == 10
+
+    # 关键词过滤: url/标题/平台 大小写不敏感子串
+    hits, _ = await rcache.list_entries("DOUYIN")
+    assert len(hits) == 1
+    assert hits[0]["platform"] == "douyin"
+    hits, _ = await rcache.list_entries("example.com/a")
+    assert len(hits) == 1
+    assert "example.com" in hits[0]["url"]
+    hits, _ = await rcache.list_entries("抖音")
+    assert len(hits) == 1
+
+
+async def test_list_entries_excludes_foreign_and_broken(rcache_env):
+    from nonebot_plugin_parser.api import rcache
+
+    fake = rcache_env
+    _make_entry(fake, url_norm="https://example.com/ok")
+    _make_entry(fake, url_norm="https://example.com/foreign", bad_sig=True)
+    broken_key = rcache.make_key("https://example.com/broken")
+    fake.store[broken_key] = b"R{not-json"
+    entries, counts = await rcache.list_entries("")
+    assert len(entries) == 1
+    assert entries[0]["url"] == ""
+    assert counts["total"] == 3
+    assert counts["foreign"] == 1
+    assert counts["broken"] == 1
+
+
+async def test_delete_url_and_clear_all(rcache_env):
+    from nonebot_plugin_parser.api import rcache
+
+    fake = rcache_env
+    _make_entry(fake, url_norm=_URL_NORM)
+    _make_entry(fake, url_norm="https://example.com/foreign", bad_sig=True)
+    assert await rcache.delete_url(_URL_NORM) is True
+    # 再删一次：已不存在
+    assert await rcache.delete_url(_URL_NORM) is False
+    # clear_all 连外来/损坏条目一起清（只按键模式匹配，不依赖解码）
+    n = await rcache.clear_all()
+    assert n == 1
+    assert not fake.store

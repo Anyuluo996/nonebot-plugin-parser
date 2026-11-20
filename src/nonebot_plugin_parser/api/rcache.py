@@ -868,7 +868,7 @@ async def list_entries(keyword: str = "") -> tuple[list[dict[str, Any]], dict[st
                 }
             )
     except Exception:
-        logger.debug("结果缓存列表扫描失败", exc_info=True)
+        logger.opt(exception=True).debug("结果缓存列表扫描失败")
         counts["error"] = 1
         return entries, counts
     entries.sort(key=lambda e: e["created_at"], reverse=True)

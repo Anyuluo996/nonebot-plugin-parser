@@ -6,9 +6,10 @@ port 6379
 protected-mode yes
 
 # 关闭默认用户，启用插件专用 ACL 用户：
-# 只允许访问 pcache:* 键与所需命令（与"半可信输入"威胁模型一致）
+# 只允许访问 pcache:* 键与所需命令（与"半可信输入"威胁模型一致）；
+# scan 供 <prefix>查看缓存/<prefix>删除缓存 管理命令枚举条目（只读）
 user default off
-user pcache on >密码 ~pcache:* +@connection +get +set +setex +del +ttl +eval
+user pcache on >密码 ~pcache:* +@connection +get +set +setex +del +ttl +eval +scan
 
 rename-command FLUSHALL ""
 rename-command FLUSHDB ""

@@ -22,6 +22,9 @@ bilibili:
 - https://live.bilibili.com/23585383
 - https://bili2233.cn/rnrwIyU
 - https://www.bilibili.com/video/BV1VLk9YDEzB
+- https://www.bilibili.com/zh-Hans/video/BV1ZLx46TExv/?share_source=copy_web
+- https://www.bilibili.com/zh-Hans/video/BV1VLk9YDEzB?p=3
+- https://bilibili.com/zh-Hans/video/av1234567
 - https://bilibili.com/av1234567
 - https://bilibili.com/BV1uCzoYEEir
 - BV1uCzoYEEir

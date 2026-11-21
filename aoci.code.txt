@@ -1,0 +1,274 @@
+#AOCI-CODE-VOLUME: 1
+
+===/<repository>/===
+.env.test.example[FQ4T]: F:测试环境配置模板：fastapi driver、本地存储、默认禁用全部平台、B站/抖音/YouTube 凭据占位符与代理示例 | R:- | A:复制为 .env.test 供单测与本地验证 | S:.env.test 已被 .gitignore 忽略，禁止提交真实凭据；异步 API 单测需要 fastapi driver
+.gitattributes[OV4T]: F:仓库行尾策略：文本文件强制 LF，防 Windows autocrlf 改写 | R:- | A:- | S:AOCI 基线按原始字节判定指纹，检出行尾改写会令全树 stale
+.gitignore[XS5M]: F:忽略运行时产物与机器绑定资产：.env.test(真实凭据)、本地缓存与数据目录、.scratch 调试产物、htmlrender 浏览器数据目录等 | R:- | A:- | S:.env.test 含真实凭据严禁重新跟踪；data/ 下浏览器数据体积大且机器绑定，换机会失效
+.pre-commit-config.yaml[FQ5T]: F:pre-commit 钩子：ruff-check(--fix)+ruff-format+uv-lock+uv-sync；CI 侧 autofix PR 与月度 hook 自动升级 | R:code:.github/workflows/ci.yml | A:提交前本地等价检查入口(prek) | S:ruff-check 带 --exit-non-zero-on-fix，自动修复后须重新暂存再提交
+AGENTS.md[SC8M]: F:仓库开发合同：风格(ruff 120/LF)、导入组织、异步资源、NoneBot 注入约定、解析器健壮性(超时/重试/限流/单飞)、凭据安全、测试规范与调试脚本纪律、CI 对齐、Git 分支与 Conventional Commits、发版流程、公开发布内容规范 | R:code:.github/workflows/ci.yml,code:README.md | A:代码修改/测试/提交/发版行为的权威约束 | S:公开发布内容禁个人信息/内网拓扑/密钥/部署状态；本地验证未全绿不推送；basedpyright 的 reportPossiblyUnbound 要求 except 分支引用的变量在 try 前初始化
+LICENSE[FZ3T]: F:MIT 许可证全文 | R:- | A:- | S:-
+README.md[SG7L]: F:项目主文档：支持平台与功能清单、安装部署、完整 .env 配置样例、命令总表(平台开关/授权黑名单/凭据登录/抖音图文开关/结果缓存管理/音乐点歌)与各专项命令细则 | R:code:src/nonebot_plugin_parser/config.py,code:src/nonebot_plugin_parser/matchers/admin.py,code:src/nonebot_plugin_parser/matchers/filter.py | A:用户可见行为与配置的权威说明；改配置项/命令/权限规则时须同步 | S:配置样例即配置文档，字段默认值须与 config.py 一致；命令名跟随 parser_force_prefix(未配置默认 par)；示例一律占位符，遵守公开发布内容规范
+pyproject.toml[FP7M]: F:项目元数据与工具配置：插件信息(Python 3.10–3.14)、依赖、ruff(120/LF/extend-exclude)、basedpyright、pytest(asyncio auto)、bump-my-version | R:- | A:uv 全部命令入口；uv run poe bump 发版 | S:ruff 与 basedpyright 的 extend-exclude 用 tests/*.py 目录级 glob，tests 树实际不在 lint/类型检查范围；bump 自动改版本+提交+打 tag
+renovate.json[FV4T]: F:Renovate 依赖升级配置：schedule、分组合并策略、lockFileMaintenance | R:- | A:- | S:-
+typos.toml[FQ3T]: F:typos 拼写检查配置：排除 pipeline_output/render_output 等数据目录 | R:- | A:- | S:-
+uv.lock[FL3L]: F:uv 依赖锁文件：全量依赖精确版本 | R:- | A:- | S:由 uv-lock 钩子与 uv 命令维护勿手改；bump 发版会自动同步版本字段
+
+===/<repository>/.github/===
+.codecov.yml[FQ3T]: F:Codecov 覆盖率配置：项目整体目标 20%、补丁目标 0%、round down 精度 2 | R:- | A:- | S:补丁目标 0% 表示不因新增代码覆盖率拉低合并判定
+release-drafter.yml[OV3T]: F:Release Drafter 配置：按分支前缀(fix/change/feat/improve)与文件路径自动打标，分类生成 changelog 模板 | R:- | A:PR 自动打标与 Release 草稿分类 | S:dependencies 与 skip-changelog 标签的 PR 不进 changelog
+
+===/<repository>/.github/ISSUE_TEMPLATE/===
+bug-report.yml[SQ3T]: F:Bug 反馈 issue 表单：问题描述/复现步骤/期望结果三项必填 | R:- | A:GitHub issue 表单模板 | S:-
+config.yml[SQ3T]: F:issue 模板全局配置：禁用空白 issue，引导先去讨论区求助 | R:- | A:- | S:-
+feature_request.yml[SQ3T]: F:功能建议 issue 表单：待解决问题与所需功能双必填 | R:- | A:- | S:-
+
+===/<repository>/.github/workflows/===
+ci.yml[OV7S]: F:CI 主工作流：prek(ruff+uv)、typos、basedpyright、tests/others 矩阵(Py 3.10–3.14)、parsers(FFmpeg+Deno)、renders(Playwright) | R:code:.pre-commit-config.yaml,code:pyproject.toml | A:push/PR 质量检查 | S:本地验证须与 CI 等价且未全绿不推送；parsers/renders job 依赖外部二进制与浏览器，按 AGENTS.md 工具链说明本地模拟
+release-draft.yml[OV3T]: F:发版草稿工作流：tag 推送后构建并起草 Release | R:code:.github/release-drafter.yml | A:- | S:-
+release.yml[OV4T]: F:发版工作流：tag 推送后构建发布产物并发布 Release | R:code:pyproject.toml | A:- | S:发版动作只在 master，由 bump-my-version 打 tag 触发
+renovate.yml[OV3T]: F:自托管 Renovate 周任务：每周一 UTC 0 点扫描依赖升级，配置读 renovate.json | R:code:renovate.json | A:workflow_dispatch 支持手动触发 | S:RENOVATE_REPOSITORIES 须显式指定目标仓库，否则会空跑
+
+===/<repository>/audio_sources/===
+MANIFEST.md[TM3T]: F:抖音音频源测试数据清单：视频 ID 与各来源(play/download/bit_rate/music)文件的流信息表(编码/时长/码率/声道/采样率/分辨率/fps) | R:- | A:音频相关解析测试的素材说明 | S:-
+
+===/<repository>/deploy/failure-server/===
+.env.example[FS4T]: F:失败上报服务环境模板：仅 API_KEY 一项 | R:- | A:复制为 .env 填入随机密钥 | S:密钥用 openssl rand -hex 32 生成(≥32 字节)，只写服务器 .env 不入任何仓库
+.gitignore[FS3T]: F:忽略服务端运行产物(.env 与数据目录) | R:- | A:- | S:-
+Dockerfile[OV4T]: F:失败上报服务镜像：python slim、非 root 运行、/data 卷、回环 healthcheck、uvicorn 监听 127.0.0.1:8317 | R:code:deploy/failure-server/server.py | A:docker build 入口 | S:默认只监听回环，对外由宿主 nginx 反代；国内拉不动 docker.io 先手动拉镜像源再 tag
+README.md[SV5T]: F:失败上报服务部署文档：部署步骤、API key 生成、nginx 反代示例、插件侧 .env 对接、端点清单与安全要点 | R:code:deploy/failure-server/server.py,code:src/nonebot_plugin_parser/failure_reporter.py | A:部署与对接权威说明 | S:API key 只存服务器 .env；对外暴露一律经宿主反代
+docker-compose.yml[OV4T]: F:失败上报服务编排：host 网络+127.0.0.1 监听、API_KEY 注入、/data 持久化、no-new-privileges | R:code:deploy/failure-server/Dockerfile | A:docker compose up -d 部署入口 | S:host 网络下端口不对外暴露，对外一律走宿主反代
+requirements.txt[FV3T]: F:服务端依赖清单：fastapi/uvicorn[standard]/pydantic v2 | R:- | A:- | S:-
+server.py[EO7L]: F:失败上报接收服务(FastAPI)：POST /api/report(Bearer 鉴权+URL 域名白名单+IP 令牌桶限流+sqlite 落盘)、GET /api/failures 查询、/ HTML 看板、/health 健康检查、保留期清理与周期维护循环 | R:code:src/nonebot_plugin_parser/failure_reporter.py | A:app；/api/report、/api/failures、/、/health | S:鉴权失败与超限请求静默拒绝；数据落 DATA_DIR 下 sqlite，启动建表并起周期清理任务；docs/redoc/openapi 已关闭减少暴露面
+
+===/<repository>/deploy/rcache-redis/===
+.gitignore[FS4T]: F:忽略 redis.conf(含明文密码) | R:- | A:- | S:redis.conf 是唯一密码源，严禁提交
+README.md[SC6T]: F:跨机结果缓存 Redis 部署文档：模板复制与密码生成、compose 部署、插件侧各机 .env 配置(ENABLED/REDIS_URL/INSTANCE_ID/SHARED_SECRET/PEER_MAP)、聊天链路复用前提 | R:code:deploy/rcache-redis/redis.conf.example,code:src/nonebot_plugin_parser/api/rcache.py | A:跨机缓存基础设施部署权威说明 | S:SHARED_SECRET 各机一致且独立于 API token，轮换使全部条目失效；appendonly no，Redis 可丢按未命中降级
+docker-compose.yml[OO5T]: F:rcache Redis 单实例编排：redis:8.2-alpine、host 网络、redis.conf 只读挂载 | R:code:deploy/rcache-redis/redis.conf.example | A:docker compose up -d | S:bind 内网地址监听，须与配置文件 bind 一致
+redis.conf.example[FS6T]: F:跨机缓存 Redis 配置模板：default 用户关闭，pcache 用户限定 pcache:* 键与最小命令集(connection/get/set/setex/del/ttl/eval/scan)，FLUSHALL/FLUSHDB 禁用，256MB volatile-lru | R:- | A:cp 为 redis.conf 后填入密码 | S:ACL 按"半可信输入"最小权限设计，scan 供缓存管理命令枚举(只读)；密码唯一，插件以 pcache 用户连接
+
+===/<repository>/docs/features/===
+FEATURE_ASYNC_API.md[SB5S]: F:异步解析 API 特性文档：提交链接→任务 ID→轮询、双形态结果与签名媒体 URL、配额预留与回滚、两层失败隔离、结果缓存复用 | R:code:src/nonebot_plugin_parser/api/routes.py,code:src/nonebot_plugin_parser/api/runner.py | A:API 设计与行为权威说明 | S:部署需 API 三项配置与任务 TTL；result_json 只存 media:// 占位符不落真实路径
+FEATURE_DOWNLOAD_RESUME_DEFERRED.md[SR3T]: F:下载续传特性缓做方案文档：现状、可行路径与决策记录 | R:- | A:后续实现参考 | S:-
+FEATURE_FORCE_PARSE.md[SI5S]: F:强制解析特性文档：par+链接 绕过平台开关的授权模型、受控项语义、授权命令联动 | R:code:src/nonebot_plugin_parser/matchers/admin.py,code:src/nonebot_plugin_parser/matchers/auth.py | A:强制解析行为权威说明 | S:绕过仅对 SUPERUSER 与被授权用户生效
+FEATURE_PLATFORM_CONTROL_COMMAND_ARG_FIX.md[SI4S]: F:平台控制命令参数注入缺陷修复记录：注入签名错误导致开关命令失效的根因与回归测试 | R:code:src/nonebot_plugin_parser/matchers/filter.py | A:平台开关命令实现参考 | S:-
+FEATURE_TWITTER_MIXED_API.md[SN5M]: F:推特混合 API 特性文档：GraphQL 直连主路径与 fxtwitter/vxtwitter 回退链、鉴权与 UA 策略、GIF 转换链路 | R:code:src/nonebot_plugin_parser/parsers/x/__init__.py,code:src/nonebot_plugin_parser/parsers/x/model.py | A:推特解析行为权威说明 | S:guest token 有 TTL；两家第三方 API 的 Cloudflare UA 规则相反
+
+===/<repository>/docs/issues/===
+DOuyin_Note_Slides_Decode_Failure.md[SM3M]: F:抖音图文/实况解析失败问题报告(已修)：PC detail 接口无鉴权返回 200 空 body，msgspec 截断异常未被窄 fallback 捕获的根因链与修复记录 | R:code:src/nonebot_plugin_parser/parsers/douyin/__init__.py | A:抖音 fallback 设计参考 | S:note 类型 fallback 的异常类型必须覆盖 msgspec 截断类错误
+USER_GRANT_AND_BLACKLIST.md[SI6M]: F:用户授权与黑名单设计实现记录：细粒度授权(用户+受控项,全局/群组两层)、全局黑名单、前缀强制解析授权、堵 force_parse 绕过关闭解析漏洞 | R:code:src/nonebot_plugin_parser/matchers/admin.py,code:src/nonebot_plugin_parser/matchers/auth.py | A:授权体系设计权威记录 | S:SUPERUSER 不可被拉黑防锁死；受控项语义键经 auth.resolve_item 归一化
+
+===/<repository>/docs/merge-analysis/===
+NGA_PARSER_COMPARISON.md[SD4S]: F:NGA 解析模块对比：本地文本解析+图列 vs 上游 graphics 图文混排 | R:code:src/nonebot_plugin_parser/parsers/nga.py | A:合并裁决参考 | S:-
+README.md[SG3T]: F:merge-analysis 目录说明：v2.4.0 合并相关文档列表与用途 | R:- | A:- | S:-
+RENDERER_COMPARISON.md[SD4S]: F:渲染器模块对比：本地完整注释+异常处理版 vs 上游 v2.4.0 简化版 | R:code:src/nonebot_plugin_parser/renders | A:合并裁决参考 | S:-
+
+===/<repository>/docs/merge-history/===
+CHANGES_SUMMARY.md[SG4M]: F:代码更新总结：历次上游合并总览 | R:code:docs/merge-analysis/README.md | A:- | S:-
+MERGE_LOG_v2.4.0.md[SV4S]: F:上游 v2.4.0 合并日志：合并概述与冲突解决记录 | R:code:docs/merge-analysis/README.md | A:- | S:-
+MERGE_LOG_v2.4.2.md[SV4M]: F:上游 v2.4.2 合并日志：合并概述与条目记录 | R:code:docs/merge-history/MERGE_LOG_v2.4.0.md | A:- | S:-
+UPSTREAM_MERGE_ANALYSIS.md[SV5L]: F:主仓库合并分析报告：已合并的非冲突更新、依赖升级、冲突裁决分类 | R:code:docs/merge-history/CHANGES_SUMMARY.md | A:- | S:-
+UPSTREAM_MERGE_PLAN_v2.4.0.md[SV4S]: F:上游 v2.4.0 合并计划：不冲突直并/需改写/不采纳三类划分 | R:code:docs/merge-history/MERGE_LOG_v2.4.0.md | A:- | S:-
+
+===/<repository>/src/nonebot_plugin_parser/===
+__init__.py[EE8S]: F:插件入口：PluginMetadata 与适配器声明、driver 启动检测与耗时打点、定时清理注册、模块级装配 | R:code:src/nonebot_plugin_parser/config.py,code:src/nonebot_plugin_parser/matchers/__init__.py | A:插件加载入口与元数据 | S:API 全开时任何 startup hook 回归会炸整个 bot 会话；delcache 清理任务随插件注册
+browser.py[IN5T]: F:浏览器截图模块：htmlrender 渲染取页面截图，直播/专栏等无法直取媒体场景的兜底 | R:code:src/nonebot_plugin_parser/browser_retry.py | A:- | S:timeout_ms 默认 30s 控制页面加载；传输断连走 browser_retry 重启重试
+browser_retry.py[RR4S]: F:Playwright 传输断连兜底：with_browser_retry 重启浏览器并重试一次 | R:code:src/nonebot_plugin_parser/browser.py | A:with_browser_retry | S:只重试一次，防止级联重启
+config.py[FC9L]: F:全部配置项定义：解析/平台/凭据/下载/渲染/API/跨机缓存各分区，Field 描述即配置文档；底部 property 短名出口 | R:- | A:pconfig 全字段与 property 短名 | S:加配置项必须字段+底部 property 两处都写；排查配置改动无效先打运行时属性再怪缓存；仓库固定 pydantic-v2
+constants.py[RC4T]: F:共享常量：PlatformEnum/VideoCodecs/VideoQuality 枚举与 httpx Timeout | R:- | A:- | S:-
+douyin_slides_switch.py[AC4T]: F:抖音图文逐项发送群级开关：存储/判定放中立模块，matchers 写 parsers 读 | R:code:src/nonebot_plugin_parser/platform_switch.py | A:is_slides_legacy_mode/set_slides_legacy_mode/current_slides_legacy_mode | S:私聊恒为合成模式；current_* 拿不到会话上下文返回 False 回落默认
+exception.py[RC4T]: F:异常族：ParseException 基类、DownloadException(下载/转换失败终态)、IgnoreException(下架/无版权等语义性忽略) | R:- | A:- | S:L2 语义异常(Tip/Ignore)直接终止记录，不进重试计数
+failure_reporter.py[IO4T]: F:L3 失败链接上报客户端：fire-and-forget POST 到 failure_report_url，Bearer 鉴权 | R:code:deploy/failure-server/server.py | A:- | S:上报失败仅记日志不影响主流程；L2 语义异常(Tip/Ignore)不上报
+failure_retry.py[RR5S]: F:L2 失败链接定时重试：retries 计数推进、语义异常直接终止不上报 | R:code:src/nonebot_plugin_parser/failure_store.py | A:_retry_one 与重试循环 | S:Tip/Ignore 类语义异常标记 reported 不进重试计数
+failure_store.py[PO5S]: F:解析失败链接本地记录与重试状态机持久化 | R:code:src/nonebot_plugin_parser/failure_retry.py | A:记录/查询/清理 | S:-
+helper.py[RC7M]: F:UniHelper：图片/音频/视频/文件段构造(use_base64 分流)、message_reaction、合并转发构造、with_reaction 装饰器 | R:code:src/nonebot_plugin_parser/config.py | A:img_seg/record_seg/file_seg/message_reaction/with_reaction | S:parser_reaction_enabled=false 时 with_reaction 不做任何回应；文件段 base64 经 to_thread 读盘；reaction 失败仅 debug 不上抛
+music_order.py[DW4T]: F:点歌选择状态存储：窗口期+用户隔离 | R:- | A:- | S:-
+music_render.py[AM5S]: F:点歌搜索列表的 PIL 图片渲染 | R:code:src/nonebot_plugin_parser/music_search.py | A:- | S:-
+music_search.py[IB7M]: F:音乐搜索聚合层：网易云/QQ 音乐/酷狗三源统一接口 | R:code:src/nonebot_plugin_parser/music_render.py,code:src/nonebot_plugin_parser/music_order.py | A:三源搜索聚合 | S:付费/VIP 歌曲过滤后不下发 URL；酷狗无 token/v5 不下发 url 是硬约束
+parse_retry.py[RW4T]: F:解析层即时重试：偶发风控失败按指数退避重试 | R:- | A:parse_retry | S:-
+persist.py[PP5T]: F:JSON 持久化小工具：原子写(临时文件+替换)+容错读(load_json_or) | R:- | A:atomic_write_json/load_json_or | S:进程崩溃时直接覆写会留半截 JSON，必须走原子写
+platform_switch.py[PC5T]: F:群组级平台开关(关闭解析)的存储与判定；从 matchers/filter.py 下沉的中立模块 | R:code:src/nonebot_plugin_parser/matchers/filter.py | A:is_platform_enabled/get_group_key/save_disabled_platforms | S:短链跨 parser 路由(parsers 层)也复用判定，parsers 层不得反向依赖 matchers
+
+===/<repository>/src/nonebot_plugin_parser/api/===
+__init__.py[EE7S]: F:异步解析 API 包入口：HTTP 路由注册、启动收尾、定时清理 job | R:code:src/nonebot_plugin_parser/api/routes.py | A:API 栈装配；chat.is_recording_enabled 供聊天缓存门控 | S:API 全开会话级 lifespan，任何 startup hook 回归当场炸会话
+chat.py[AO4T]: F:聊天链路任务记录(轻量方案)：只记状态与失败原因，不存结果载荷 | R:code:src/nonebot_plugin_parser/api/store.py | A:chat_task_id 生成与记录 | S:chat_task_id 为 None 即聊天缓存门控关闭
+media.py[PD6M]: F:API 媒体转存层：MEDIA_ROOT 任务目录、token_urlsafe 文件名、magic bytes 定扩展名、配额预留-扣减-回滚、stage_path 原子转存、remove_task_dir 幂等清场 | R:code:src/nonebot_plugin_parser/api/store.py | A:task_media_dir/stage_path/remove_task_dir/MediaQuota | S:配额先预留后回滚，失败路径必须 remove_task_dir 清场——残留目录既占配额又与后续转存混在同一任务目录
+rcache.py[IN9L]: F:跨机解析结果缓存：Redis 共享索引+HMAC 五步流水线验签+本机硬链复用+跨机媒体拉取(CAS 回写)+实例心跳+熔断降级；聊天重放与 API 复用同源；管理命令支撑(枚举/删除/清空) | R:code:src/nonebot_plugin_parser/api/media.py,code:src/nonebot_plugin_parser/api/store.py,code:src/nonebot_plugin_parser/matchers/rcache_link.py | A:get/put 信任模型与流水线；list_entries/delete_url/delete_keys/clear_all；is_enabled/breaker_active | S:信任边界=谁控制 Redis 谁控制交付，条目按半可信处理：前缀→受限解压→JSON→HMAC→schema 五步，结构违规删键而验签失败不删键(防升级期互删)；版本/配置指纹不匹配未命中不删键；条目年龄超 eff_ttl 删键防 SETEX 续命；Redis 异常熔断 30s 按未命中，解析零感知；pcache 用户 ACL 无 scan 时管理命令 NOPERM
+routes.py[EA7M]: F:异步解析 API 路由：POST 提交(零抓取校验)、GET 任务查询、DELETE 取消、媒体端点(自签 URL 防穿越) | R:code:src/nonebot_plugin_parser/api/runner.py,code:src/nonebot_plugin_parser/api/media.py | A:HTTP 端点全契约 | S:校验阶段只做 pattern 匹配不发网络请求，即 SSRF 边界；媒体 URL 带时效签名免 header
+runner.py[AW7M]: F:API 任务执行器：submit_task 同链接复用、registry 任务表、执行成功种缓存；normalize_loose_url 与 validate_url | R:code:src/nonebot_plugin_parser/api/rcache.py,code:src/nonebot_plugin_parser/api/store.py | A:submit_task/DELETE 取消/normalize_loose_url/validate_url | S:DELETE 经 registry 取消并 await 任务结束防孤儿；同 URL succeeded 再提交走结果缓存不占并发额度
+serialize.py[AD6M]: F:结果序列化：metadata 映射+渲染消息转 OneBot V11 段数组；媒体转 media:// 占位符并产出 staged 清单 | R:code:src/nonebot_plugin_parser/api/media.py | A:build_result | S:降级(媒体转存失败)产物不进结果缓存；渲染期失败的媒体项走 media_failed 标记不抛错
+store.py[PD8L]: F:API 任务存储(SQLite)：任务行与状态机、staged 清单、配额账本、保留期清理 | R:code:src/nonebot_plugin_parser/api/media.py | A:store 全套读写契约 | S:多进程共享时 stale 标记与配额计数互相干扰，本功能仅支持单进程部署；启动检测到 pid 变化即打警告
+
+===/<repository>/src/nonebot_plugin_parser/download/===
+__init__.py[IN9L]: F:统一下载器：StreamDownloader(httpx/curl_cffi 双通道)、并发闸门 8、.part 临时文件+原子发布、失败重试、文件缓存命中、域名路由(_use_curl/_bypass_proxy/_auto_referer) | R:code:src/nonebot_plugin_parser/download/tdl.py,code:src/nonebot_plugin_parser/download/ytdlp.py | A:DOWNLOADER.download_file 与配套路由判定 | S:curl_cffi 静默忽略 httpx.Timeout，必须传 tuple/int/float；缓存命中在闸门外不占并发额度；抖音 CDN 直连(curl 域名白名单)，其余走 parser_proxy
+task.py[RW3T]: F:auto_task 装饰器：协程函数调用即调度并返回 Task | R:- | A:auto_task | S:-
+tdl.py[IM7L]: F:tdl(Telegram Downloader)二进制封装：登录态检测、Telegram 媒体下载、子进程超时控制 | R:code:src/nonebot_plugin_parser/download/__init__.py | A:tdl 下载入口 | S:_run 显式 timeout 超时抛 ParseException；tdl 进程清理只按 argv[0] 文件名精确匹配，防误杀命令行含 tdl 的无关进程
+ytdlp.py[IM6S]: F:yt-dlp 封装：YouTube 等平台媒体下载，per-key 并发锁表与会话生命周期管理 | R:code:src/nonebot_plugin_parser/download/__init__.py | A:yt-dlp 下载入口 | S:-
+
+===/<repository>/src/nonebot_plugin_parser/matchers/===
+__init__.py[EA9L]: F:解析主入口 matcher：URL 提取与 parser 匹配、强制解析前缀(纯前缀=引用回复提取)、群平台开关、缓存重放探测、结果发送(直发/合并转发降级/逐条兜底/重试)、safe_reaction | R:code:src/nonebot_plugin_parser/parsers/base.py,code:src/nonebot_plugin_parser/matchers/rcache_link.py,code:src/nonebot_plugin_parser/helper.py | A:parser_handler；safe_reaction；_send_message_list | S:合并转发失败降级逐条上限 20 节点；单节点失败重试等待 3s；重放命中即直发跳过解析渲染；block=True 停传播
+admin.py[SI7M]: F:管理命令族：授权/全局授权/取消授权/授权查看、拉黑/解除拉黑/黑名单、查看缓存/删除缓存/缓存统计 | R:code:src/nonebot_plugin_parser/matchers/auth.py,code:src/nonebot_plugin_parser/api/rcache.py | A:授权与黑名单命令族；缓存管理命令族 | S:全部 SUPERUSER；api 包函数级懒导入防顶层成环；matcher.finish 抛 FinishedException 不得被宽 except 吞
+auth.py[II7M]: F:用户授权与黑名单存储：授权(用户+受控项,全局/群组两层)、黑名单、resolve_item 语义键归一 | R:code:src/nonebot_plugin_parser/matchers/admin.py | A:grant/revoke/list_grants/add_blacklist/resolve_item | S:SUPERUSER 命中黑名单直接放行防锁死；受控项语义键与带前缀真实命令名等价
+credential.py[II6M]: F:凭据管理命令：网易云/QQ 音乐扫码登录登出、抖音 ttwid/cookie/uifid 登记与查看 | R:code:src/nonebot_plugin_parser/config.py | A:各凭据命令注册 | S:凭据值只入 localstore，不入日志明文
+filter.py[EA7M]: F:群平台开关命令：开启/关闭解析(平台粒度)、解析状态；is_enabled 判定(私聊恒开、force_prefix 直通)；TG 白名单存储 | R:code:src/nonebot_plugin_parser/platform_switch.py | A:is_enabled/开启解析/关闭解析/解析状态 | S:MatcherException 必须放行不能吞成发生错误；平台名支持中文别名
+music.py[EU6M]: F:音乐点歌 matcher：搜索(列表图渲染)、窗口期选择、播放派发；safe_reaction 状态回应 | R:code:src/nonebot_plugin_parser/music_search.py,code:src/nonebot_plugin_parser/music_render.py,code:src/nonebot_plugin_parser/music_order.py | A:bm/ym 命令族 | S:点歌状态窗口期+用户隔离，防跨用户抢歌
+rcache_link.py[AW7M]: F:聊天与跨机缓存双向桥：try_replay 重放缓存渲染产物(OneBot 段数组重建 UniMessage 直发)、seed_from_result 解析成功种缓存 | R:code:src/nonebot_plugin_parser/api/rcache.py,code:src/nonebot_plugin_parser/api/media.py | A:try_replay/seed_from_result | S:任何环节失败返回 None 回源解析，缓存永不影响主链路；重放剥离 reply/at 段防跨会话错位；node uid/name 本机化；顶层不得 import api 包(会成环)
+rule.py[SU6M]: F:消息内容解析规则：小程序/卡片/JSON 消息段的链接提取(msgspec Struct 解码) | R:- | A:链接提取规则 | S:卡片 JSON 字段漂移须宽容解码并捕获 DecodeError
+tg_login.py[II6M]: F:Telegram 授权白名单管理+tdl 扫码登录(含 2FA 两步验证会话) | R:code:src/nonebot_plugin_parser/download/tdl.py,code:src/nonebot_plugin_parser/matchers/filter.py | A:tg授权/tg取消授权/tg白名单/tg登录 | S:2FA 等待与会话两阶段状态机；pending 会话的 re-export 字典须保持同一对象
+
+===/<repository>/src/nonebot_plugin_parser/parsers/===
+__init__.py[EC5T]: F:PARSERS 注册表：全平台 Parser 类自动派生登记 | R:code:src/nonebot_plugin_parser/parsers/base.py | A:PARSERS 映射 | S:勿手工登记，注册表自动派生；base 必须最先导入(导入顺序敏感, noqa I001)
+_format.py[KL3T]: F:format_num 数字格式化工具(移植自 parser-lite) | R:- | A:- | S:-
+base.py[ED9L]: F:解析器基类：handle 模式注册与 search_url、parse 流程编排、内容模型工厂(create_dynamic_contents)、GIF 转换任务、平台开关判定、下载任务生命周期 | R:code:src/nonebot_plugin_parser/download/__init__.py,code:src/nonebot_plugin_parser/config.py | A:BaseParser/handle/create_dynamic_contents/convert_to_gif | S:平台开关判定经 current_bot/current_event 构造会话，拿不到回落放行；GIF 转换失败是终态(_gif_failed)重复取值仍抛 DownloadException；有音轨视频跳过 GIF 转换
+cookie.py[IS5T]: F:netscape 格式 cookie 持久化工具(MozillaCookieJar) | R:- | A:save_cookies_with_netscape | S:凭据文件只写 localstore 缓存目录，不入库不入日志明文
+data.py[DD9L]: F:解析结果内容模型：MediaContent 基类与 Audio/Video/Image/Dynamic 四类内容(懒下载 Task 协作)、Platform/Author、ParseResult 主体与 ensure_downloads_complete | R:code:src/nonebot_plugin_parser/parsers/base.py | A:ParseResult/各 Content 类/Platform/Author | S:DynamicContent.get_path 失败为终态(_gif_failed)不回退 zip；VideoContent 超时取消后 cover 置 None 且二次取值不抛 CancelledError；路径 repr 供日志与 API 序列化
+kugou.py[IB5T]: F:酷狗音乐解析器：直连官方接口(无需 Meting/外部容器)，分享链接与 mixsong 重定向提取 hash | R:code:src/nonebot_plugin_parser/parsers/kugou_api.py | A:- | S:无 token/v5 时不下发 url 是硬约束；登录态返回 mgg+en_ekey 须下载解密
+kugou_api.py[IN6M]: F:酷狗音乐 SDK：直连官方 Web/Mobile 端公开接口(歌曲详情 getSongInfo/搜索等，无签名 httpx) | R:code:src/nonebot_plugin_parser/parsers/kugou.py | A:SDK 接口集 | S:MD5 签名+curl_cffi 绕过 SSA 反爬；签名盐值被服务端配置证实
+nga.py[DB6M]: F:NGA 论坛解析器：帖子图文混排(graphics)解析 | R:- | A:- | S:图床 2026-10 从 img.nga.178.com 迁到 img.nga.cn，旧域名 DNS 已删除，拼 URL 必须用新域名
+pixiv.py[DB6M]: F:Pixiv 插画解析：经 PixivNow API 取作品/页集/动图 ugoira 元数据 | R:- | A:- | S:国内访问走 parser_proxy；R18 默认拒绝需 parser_pixivR18 开启；API 地址可自建
+tiktok.py[DB3T]: F:TikTok 解析器：链接模式与 yt-dlp 下载 | R:code:src/nonebot_plugin_parser/download/ytdlp.py | A:- | S:生产环境常在 parser_disabled_platforms 中禁用
+
+===/<repository>/src/nonebot_plugin_parser/parsers/acfun/===
+__init__.py[EN4T]: F:AcFun 解析器入口：链接模式注册 | R:code:src/nonebot_plugin_parser/parsers/acfun/video.py | A:- | S:-
+video.py[DN4T]: F:AcFun 视频解析：用户/清晰度 Representation(m3u8) 结构与取流 | R:code:src/nonebot_plugin_parser/parsers/acfun/__init__.py | A:- | S:-
+
+===/<repository>/src/nonebot_plugin_parser/parsers/bilibili/===
+__init__.py[DB9L]: F:B站解析器入口：BV/av(含 zh-Hans 前缀)/短链(b23.tv/bili2233 重定向复搜)/直播/专栏/opus/动态/收藏夹模式分发，截图兜底 | R:code:src/nonebot_plugin_parser/parsers/bilibili/streams.py,code:src/nonebot_plugin_parser/parsers/base.py | A:_parse_bv/_parse_av/_parse_short_link 等模式 | S:分P 参数必须由 URL 形式一并捕获，否则 group 抛 IndexError 被吞成第 1 P(内容/封面/时长全错)；短链解析跟随重定向后复搜模式
+article.py[DD5S]: F:B站专栏(read/cv)解析：TextNode/ImageNode 文档树与图文混排结构 | R:code:src/nonebot_plugin_parser/parsers/bilibili/common.py | A:- | S:-
+common.py[DD4T]: F:B站共享结构：Upper(作者)等公共 msgspec Struct | R:- | A:- | S:-
+credential.py[IS6S]: F:B站凭据管理：持久化、二维码登录、有效期校验与自动刷新 | R:code:src/nonebot_plugin_parser/config.py | A:- | S:SESSDATA 被服务端踢时 nav isLogin=false 但 cookie 仍在，须区分态；blogin 扫码恢复登录态
+dynamic.py[DD6M]: F:B站动态解析：动态类型分发(图文/视频/转发)与作者信息结构 | R:code:src/nonebot_plugin_parser/parsers/bilibili/common.py | A:- | S:-
+favlist.py[DD4T]: F:B站收藏夹解析：FavItem 列表结构 | R:- | A:- | S:-
+live.py[DD4T]: F:B站直播解析：RoomInfo(标题/封面/关键帧)直播间卡片 | R:- | A:- | S:-
+opus.py[DD5S]: F:B站 opus 图文解析：段落结构(图/文)与混排内容 | R:code:src/nonebot_plugin_parser/parsers/bilibili/common.py | A:- | S:-
+streams.py[KD6M]: F:B站视频流选择：P2P 节点回避+detect_best_streams 上游 bug 兜底 | R:code:src/nonebot_plugin_parser/parsers/bilibili/__init__.py | A:detect_best_streams | S:上游 detect_best_streams 存在 bug 需兜底；编码识别有 hvc1/hev1 兜底
+video.py[DD5S]: F:B站视频 Stats 与详情辅助结构 | R:- | A:- | S:-
+
+===/<repository>/src/nonebot_plugin_parser/parsers/buff/===
+__init__.py[DB4T]: F:网易 BUFF 解析器：news 图文与 gallery 玩家秀(适配自 parser-lite) | R:code:src/nonebot_plugin_parser/parsers/buff/models.py | A:- | S:-
+models.py[DD4T]: F:BUFF 数据模型 | R:- | A:- | S:-
+share.py[DD3T]: F:BUFF 分享数据 ShareData 结构 | R:- | A:- | S:-
+
+===/<repository>/src/nonebot_plugin_parser/parsers/coolapk/===
+__init__.py[DB4T]: F:酷安解析器：动态 feed(message 为 HTML,picArr 图列)(适配自 parser-lite) | R:code:src/nonebot_plugin_parser/parsers/coolapk/feed.py | A:- | S:-
+feed.py[DD4T]: F:酷安动态 FeedData 结构 | R:- | A:- | S:-
+
+===/<repository>/src/nonebot_plugin_parser/parsers/douyin/===
+__init__.py[DB9L]: F:抖音解析器入口：分享页/PC detail/App 端点多路径、图文+实况+幻灯片合成、a_bogus 签名、解析层即时重试、story_25 渠道探测 | R:code:src/nonebot_plugin_parser/parsers/douyin/slides.py,code:src/nonebot_plugin_parser/parsers/douyin/websign.py,code:src/nonebot_plugin_parser/parsers/douyin/ttwid.py | A:DouyinParser | S:风控形态为 200 空 body；note fallback 异常须覆盖 msgspec 截断类；video.duration 是毫秒；幻灯片合成总长 min(BGM,60s) 且 -loop 1 必须 -framerate 1
+_abogus.py[KN8L]: F:a_bogus 签名算法(vendored 第三方实现,Evil0ctal/JoeanAmier) | R:- | A:- | S:vendored 保持原始实现原貌不重构，仅供抖音解析签名调用
+appapi.py[IN6S]: F:抖音安卓 App detail 端点免签名直连形态 | R:code:src/nonebot_plugin_parser/parsers/douyin/__init__.py | A:- | S:设备参数走 parser_douyin_app_device_profile；曾误判 App 端点必空 body，实为可用形态
+slides.py[DB8L]: F:抖音图文幻灯片合成：图片下载→ffmpeg 每段独立输入+concat 滤镜→BGM 合并(x264 veryfast crf28+aac96k,30fps) | R:code:src/nonebot_plugin_parser/parsers/douyin/__init__.py | A:幻灯片视频合成 | S:concat demuxer 混编丢图须每段独立输入；-loop 1 必须 -framerate 1；合成超时约 30s 贴线，失败文案勿误报媒体下载失败
+ttwid.py[IS5S]: F:抖音凭据(ttwid/完整 cookie)持久化与读取 | R:code:src/nonebot_plugin_parser/config.py | A:- | S:凭据只存 localstore 目录
+websign.py[KN5T]: F:抖音 Web API x-secsdk-web-signature 风控签名(ArgusSecurityPlugin) | R:- | A:- | S:预映像=md5(uifid_ts_SALT_query) 加三 header；配置 uifid 才启用 websign 形态
+
+===/<repository>/src/nonebot_plugin_parser/parsers/duitang/===
+__init__.py[DB4S]: F:堆糖解析器：blog/atlas 图集(适配自 parser-lite) | R:code:src/nonebot_plugin_parser/parsers/duitang/model.py | A:- | S:-
+model.py[DD4T]: F:堆糖数据模型(Sender 等) | R:- | A:- | S:-
+
+===/<repository>/src/nonebot_plugin_parser/parsers/heybox/===
+__init__.py[DB5S]: F:小黑盒解析器(实验性)：签名已实现但存在 IP 级风控(show_captcha) | R:code:src/nonebot_plugin_parser/parsers/heybox/encrypt.py | A:- | S:同一出口 IP 频繁请求触发验证码，需配合代理或更换出口 IP
+encrypt.py[KN5S]: F:小黑盒请求签名(移植自 parser-lite，参考 rconsole-plugin 方案优化 nonce) | R:- | A:- | S:严禁非法滥用或用于渗透测试
+model.py[DD4T]: F:小黑盒数据模型：表情占位符 [xxx] 剥离为纯文本(不下载表情图) | R:- | A:- | S:-
+
+===/<repository>/src/nonebot_plugin_parser/parsers/hongguo/===
+__init__.py[DB7L]: F:红果短剧解析：作品信息与剧集取流，走 App 接口(设备注册+TT 签名) | R:code:src/nonebot_plugin_parser/parsers/hongguo/_device.py,code:src/nonebot_plugin_parser/parsers/hongguo/_sign.py | A:- | S:游客渠道曾两度全灭(200 空 body)，测试以 skip 兜底；CENC 加密流需媒体密钥推导
+_crypto.py[KD4T]: F:红果 CENC 加密流的媒体密钥推导 | R:- | A:- | S:-
+_device.py[IN6L]: F:红果 App 接口的 TT 设备标识：注册、持久化与换新 | R:code:src/nonebot_plugin_parser/parsers/hongguo/__init__.py | A:- | S:设备注册成功不代表渠道可用，渠道可用性以实测为准
+_sign.py[KN4T]: F:红果(番茄小说系)App 接口的 TTNet 轻量签名 | R:- | A:- | S:-
+
+===/<repository>/src/nonebot_plugin_parser/parsers/hupu/===
+__init__.py[DB4T]: F:虎扑解析器：BBS 帖子主楼+回复(适配自 parser-lite) | R:code:src/nonebot_plugin_parser/parsers/hupu/bbs.py | A:- | S:评论数据放入 extra，本项目暂不渲染评论
+bbs.py[DD4S]: F:虎扑 BBS 帖子数据结构 | R:- | A:- | S:-
+
+===/<repository>/src/nonebot_plugin_parser/parsers/illu/===
+__init__.py[DB4S]: F:ILLU 解析器：文章(Article)与图集(Drawing)，Bmob 签名 API | R:code:src/nonebot_plugin_parser/parsers/illu/encrypt.py | A:- | S:-
+articleByIdV2.py[DD3T]: F:ILLU 文章接口结构 | R:- | A:- | S:-
+drawingDetail.py[DD3T]: F:ILLU 图集详情结构 | R:- | A:- | S:-
+encrypt.py[KN3T]: F:ILLU 请求签名：16 位随机 nonce 生成(移植自 parser-lite) | R:- | A:- | S:-
+models.py[DD3T]: F:ILLU 共享数据模型(File 等) | R:- | A:- | S:-
+
+===/<repository>/src/nonebot_plugin_parser/parsers/kuaishou/===
+__init__.py[DB4T]: F:快手解析器：短链与作品链接取视频 | R:code:src/nonebot_plugin_parser/parsers/kuaishou/states.py | A:- | S:高频请求会返回空作品数据(空 init_state)间歇性，同一 URL 时好时坏；CI 测试已转 skip
+states.py[DN4T]: F:快手作品数据结构(CdnUrl 等) | R:- | A:- | S:-
+
+===/<repository>/src/nonebot_plugin_parser/parsers/lofter/===
+__init__.py[DB4T]: F:LOFTER 解析器：图文/音乐帖(适配自 parser-lite) | R:code:src/nonebot_plugin_parser/parsers/lofter/post.py | A:- | S:评论数据放入 extra，本项目暂不渲染评论
+post.py[DD4T]: F:LOFTER 帖子数据结构 | R:- | A:- | S:-
+
+===/<repository>/src/nonebot_plugin_parser/parsers/netease/===
+__init__.py[IB5T]: F:网易云音乐解析器：直连官方公开接口，开箱即用无需配置；长链/短链模式 | R:code:src/nonebot_plugin_parser/parsers/netease/api.py,code:src/nonebot_plugin_parser/parsers/netease/credential.py | A:- | S:登录态可选，仅影响 VIP 歌曲可用性
+api.py[IN5S]: F:网易云音乐 SDK：直连官方公开 Web 端三接口(歌曲详情/歌词/播放地址)，无加密无外部容器 | R:code:src/nonebot_plugin_parser/parsers/netease/__init__.py | A:SDK 接口集 | S:三接口均来自公开 Web 端已实测稳定
+credential.py[IS4T]: F:网易云登录凭证持久化：MUSIC_U 等 cookie 手动导入序列化到本地 JSON 并自动加载 | R:code:src/nonebot_plugin_parser/parsers/netease/__init__.py | A:- | S:凭据文件只在 localstore，不入库不入日志
+
+===/<repository>/src/nonebot_plugin_parser/parsers/qqmusic/===
+__init__.py[IB5T]: F:QQ 音乐解析器：App 协议直连，增强引擎(qqmusic-protocol)缺失时自动回退内置实现 | R:code:src/nonebot_plugin_parser/parsers/qqmusic/api.py,code:src/nonebot_plugin_parser/parsers/qqmusic/credential.py | A:- | S:VIP/付费歌曲需 parqq登录 扫码授权；私有增强引擎不进公共仓库走私有 wheel
+api.py[IN7L]: F:QQ 音乐 App 协议 SDK：增强引擎封装与内置回退实现 | R:code:src/nonebot_plugin_parser/parsers/qqmusic/__init__.py | A:SDK 接口集 | S:sentinel 类型需 typing_extensions>=4.16.0(显式兜底保留)；免费歌曲可直连，VIP 走登录态
+credential.py[IS5M]: F:QQ 音乐登录凭证持久化：parqq登录 扫码写入本地 JSON(musickey/musicid/refresh_key)并自动加载 | R:code:src/nonebot_plugin_parser/parsers/qqmusic/__init__.py | A:- | S:凭据只在 localstore；refresh_key 用于续期
+
+===/<repository>/src/nonebot_plugin_parser/parsers/qsmusic/===
+__init__.py[DB5T]: F:汽水音乐解析器：分享页 _ROUTER_DATA 提取歌曲资源与歌词(适配自 parser-lite) | R:code:src/nonebot_plugin_parser/parsers/qsmusic/share.py | A:- | S:页面 script 带 nonce 属性会使正则失配，探测断言须用生产同款提取逻辑
+share.py[DN4T]: F:汽水分享页数据结构(歌词 Word 等) | R:- | A:- | S:页面 JSON 数值形态漂移出过浮点时间戳，msgspec 不做 float→int，字段须显式宽容
+
+===/<repository>/src/nonebot_plugin_parser/parsers/telegram/===
+__init__.py[IB5S]: F:Telegram 解析器：经本机 tdl CLI 下载 t.me 媒体并提取元数据(文件名/文案/时间)；频道帖作者=频道用户名 | R:code:src/nonebot_plugin_parser/download/tdl.py | A:- | S:需先 tdl login 登录；parser_tdl_path/proxy 可配
+
+===/<repository>/src/nonebot_plugin_parser/parsers/tieba/===
+PbPageReqIdl.desc[FN3T]: F:贴吧 PbPage 请求 protobuf 描述文件 | R:- | A:- | S:-
+PbPageResIdl.desc[FN4M]: F:贴吧 PbPage 响应 protobuf 描述文件 | R:- | A:- | S:-
+__init__.py[DB4T]: F:贴吧解析器入口：帖子链接模式注册 | R:code:src/nonebot_plugin_parser/parsers/tieba/utils.py,code:src/nonebot_plugin_parser/parsers/tieba/models.py | A:- | S:-
+models.py[DN7L]: F:贴吧 protobuf 全量模型：PbContent/媒体/作者等结构 | R:code:src/nonebot_plugin_parser/parsers/tieba/utils.py | A:- | S:PbContent 无视频字段，type=5 视频贴必炸；视频贴走 origin_thread_info.video_info
+utils.py[AN5S]: F:贴吧 protobuf 请求/解析工具：全局 httpx client 替换为 BaseParser.request，create_image 等回调用参数传入(适配自 parser-lite) | R:code:src/nonebot_plugin_parser/parsers/tieba/models.py | A:- | S:-
+
+===/<repository>/src/nonebot_plugin_parser/parsers/weibo/===
+__init__.py[DB6M]: F:微博解析器：帖子 id 解析(无 Cookie+伪装 XHR+不跟随重定向，避免二跳携 cookie) | R:code:src/nonebot_plugin_parser/parsers/weibo/common.py,code:src/nonebot_plugin_parser/parsers/weibo/article.py | A:- | S:不带 cookie 且不跟随重定向是防拦截关键；文章页走 article 子模块
+article.py[DN4T]: F:微博文章页数据结构(UserInfo 等) | R:- | A:- | S:-
+common.py[DN5S]: F:微博公共数据结构(LargeInPic 等) | R:- | A:- | S:-
+show.py[DN4T]: F:微博 show 接口数据结构(User 等) | R:- | A:- | S:-
+
+===/<repository>/src/nonebot_plugin_parser/parsers/x/===
+__init__.py[DB8L]: F:X(Twitter) 解析器：GraphQL TweetResultByRestId 直连主路径+guest token 缓存、fxtwitter/vxtwitter 回退链、GIF 转换与引用链递归 | R:code:src/nonebot_plugin_parser/parsers/x/model.py | A:TwitterParser | S:两家第三方 API 的 Cloudflare UA 规则相反(vx 用 httpx UA，fx 用浏览器 UA)；转推链递归深度上限防循环；GIF 源可能为超短循环需按源帧率转换
+model.py[DD8L]: F:X GraphQL/回退双源数据模型：TweetResult legacy 结构、fx/vx 响应、媒体 medias() 选择(最高码率 mp4/原图)与正文裁剪 | R:code:src/nonebot_plugin_parser/parsers/x/__init__.py | A:各 Struct 与 medias()/text 转换 | S:GIF 的 video_info 常只有裸 tweet_url 且 duration 缺失；display_text_range 裁剪须反转义 HTML 实体
+util.py[DD6M]: F:X 卡片解析：unified_card 新版 JSON 与 legacy binding_values 多形态 | R:code:src/nonebot_plugin_parser/parsers/x/model.py | A:- | S:卡片形态不止一种，须按 unified_card 有无分流
+
+===/<repository>/src/nonebot_plugin_parser/parsers/xiaohongshu/===
+__init__.py[DB5S]: F:小红书解析器：xhslink 短链(.com/.cn)与 explore 链接(含 xsec_token 跟踪参数) | R:code:src/nonebot_plugin_parser/parsers/xiaohongshu/explore.py,code:src/nonebot_plugin_parser/parsers/xiaohongshu/discovery.py | A:- | S:WAF 按 UA 拦截须现代浏览器 UA；explore 空 note 时需 discovery 兜底
+common.py[DN4T]: F:小红书公共结构 | R:- | A:- | S:-
+discovery.py[DN4T]: F:小红书 discovery 接口结构(explore 空 note 的兜底源) | R:code:src/nonebot_plugin_parser/parsers/xiaohongshu/__init__.py | A:- | S:-
+explore.py[DN4T]: F:小红书 explore 接口结构(Image.urlDefault 等) | R:- | A:- | S:-
+
+===/<repository>/src/nonebot_plugin_parser/parsers/youtube/===
+__init__.py[IB5S]: F:YouTube 解析器：yt-dlp 下载，cookie 可选(parser_ytb_ck)抗人机检测 | R:code:src/nonebot_plugin_parser/parsers/youtube/meta.py,code:src/nonebot_plugin_parser/download/ytdlp.py | A:- | S:无 cookie 时因人机检测下载可能失败；下载走 parser_proxy
+meta.py[DN4T]: F:YouTube 元数据结构(Thumbnail 等) | R:- | A:- | S:-
+
+===/<repository>/src/nonebot_plugin_parser/parsers/zhihu/===
+__init__.py[DB5S]: F:知乎解析器：answer/article/question/feeds 多类型分发 | R:code:src/nonebot_plugin_parser/parsers/zhihu/util.py,code:src/nonebot_plugin_parser/parsers/zhihu/sign.py | A:- | S:-
+answer.py[DD4T]: F:知乎回答接口结构 | R:- | A:- | S:-
+article.py[DD4T]: F:知乎文章接口结构 | R:- | A:- | S:-
+feeds.py[DD4T]: F:知乎想法(feeds)接口结构 | R:- | A:- | S:-
+question.py[DD4T]: F:知乎问题接口结构 | R:- | A:- | S:-
+sign.py[KN5S]: F:知乎 zse96 签名算法(移植自 parser-lite，源自 zly2006/zhihu-plus-plus) | R:- | A:- | S:vendored 移植保持原貌
+util.py[AD5S]: F:知乎正文富内容解析：HTML→有序的文本行/图片/视频列表(graphics) | R:code:src/nonebot_plugin_parser/parsers/base.py | A:- | S:Creator 工厂已替换为本项目 create_image_content/create_video_content，产出格式对齐 graphics
+
+===/<repository>/src/nonebot_plugin_parser/renders/===
+__init__.py[EC4T]: F:渲染器注册表：按平台分发渲染器 | R:code:src/nonebot_plugin_parser/renders/base.py | A:get_renderer | S:-
+base.py[EA7M]: F:渲染器基类：ParseResult→UniMessage 消息流编排、长图切片与转发组装的公共契约 | R:code:src/nonebot_plugin_parser/renders/common.py | A:BaseRenderer | S:长图超限切片与 forward 分批是 WS 50MiB 断连的修复产物，改渲染输出形态前先看该约束
+common.py[KA8L]: F:渲染公共层：HTML 模板渲染(Playwright 截图)、模板上下文构造、切片重叠与尺寸计算等共享实现 | R:code:src/nonebot_plugin_parser/renders/base.py | A:模板渲染与切片工具集 | S:card 模板的 backdrop-filter 大图层曾致超 ~8192px 不绘制(截断)，分页+紧凑+切片重叠为此修复；NGA/贴吧/知乎专用模板无此属性
+default.py[EA4T]: F:默认渲染器：通用平台的结果渲染 | R:code:src/nonebot_plugin_parser/renders/base.py | A:- | S:-
+htmlrender.py[IM6M]: F:htmlrender 渲染通道：Playwright 页面截图(经 nonebot_plugin_htmlrender) | R:code:src/nonebot_plugin_parser/renders/common.py | A:- | S:容器栈钉在 htmlrender 0.6.7+Playwright 1.57.0；0.8 线因 file:// 图片与敏感目录拒绝回退未启用
+nga.py[ED4T]: F:NGA 专用渲染器：优先 htmlrender，回退 htmlkit | R:code:src/nonebot_plugin_parser/renders/htmlrender.py | A:- | S:-
+tieba.py[ED4S]: F:贴吧专用渲染器：优先 htmlrender，回退 htmlkit | R:code:src/nonebot_plugin_parser/renders/htmlrender.py | A:- | S:-
+zhihu.py[ED4S]: F:知乎专用渲染器：优先 htmlrender，回退 htmlkit | R:code:src/nonebot_plugin_parser/renders/htmlrender.py | A:- | S:-
+
+===/<repository>/src/nonebot_plugin_parser/renders/resources/===
+__init__.py[RL3T]: F:渲染资源包标识 | R:- | A:- | S:-
+
+===/<repository>/src/nonebot_plugin_parser/renders/templates/===
+card.html.jinja[FS6L]: F:通用卡片渲染模板：作者/正文/媒体/互动数据布局 | R:code:src/nonebot_plugin_parser/renders/common.py | A:- | S:backdrop-filter 大图层曾致超 ~8192px 不绘制截断，勿再加高消耗滤镜
+nga.html.jinja[FS5M]: F:NGA 帖子渲染模板 | R:code:src/nonebot_plugin_parser/renders/nga.py | A:- | S:-
+tieba.html.jinja[FS5M]: F:贴吧帖子渲染模板 | R:code:src/nonebot_plugin_parser/renders/tieba.py | A:- | S:-
+zhihu.html.jinja[FS5M]: F:知乎渲染模板 | R:code:src/nonebot_plugin_parser/renders | A:- | S:-
+
+===/<repository>/src/nonebot_plugin_parser/utils/===
+__init__.py[RC4T]: F:utils 包出口：safe_unlink/is_module_available 等公共工具再导出 | R:- | A:- | S:-
+_common.py[RC3T]: F:公共小工具：fmt_size/safe_unlink 等 | R:- | A:- | S:-
+imaging.py[KM5S]: F:PIL 图像处理工具：图片合成与绘制(点歌列表渲染等使用) | R:- | A:- | S:-
+media.py[IM9L]: F:ffmpeg/ffprobe/gifsicle 子进程封装与音视频处理：统一 _run_subprocess(超时+取消 kill)、时长/帧率/音轨探测、convert_video_to_gif(palettegen)、缩略图抽取、merge_av 合并 BGM、H264 转码、幻灯片合成底层 | R:code:src/nonebot_plugin_parser/download/__init__.py,code:src/nonebot_plugin_parser/parsers/douyin/slides.py | A:convert_video_to_gif/probe_media_duration/probe_video_fps/has_audio_stream/merge_av/encode_video_to_h264/media_to_slideshow | S:全部子进程显式 FFMPEG_TIMEOUT(300s) 且取消时强杀防孤儿；GIF 转换对 <1s 高帧率源(抖动 meme)升到源帧率防 fps=15 抽帧塌缩成单帧；loguru 异常栈必须 logger.opt(exception=True)，debug(exc_info=True) 不生效

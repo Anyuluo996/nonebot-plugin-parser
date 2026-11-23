@@ -11,7 +11,7 @@
 
 services:
   rcache-redis:
-    image: redis:8.2-alpine
+    image: redis:8.10-alpine
     container_name: rcache-redis
     restart: unless-stopped
     command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
